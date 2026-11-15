@@ -319,7 +319,7 @@ export class SqliteSheetCloneRepository {
     });
     return { ok: true };
   }
-  edit(user, sheetCloneId, input) {
+  edit(user, sheetCloneId, input, options) {
     const row = this.db
       .prepare("SELECT team_id FROM sheet_clones WHERE id=?")
       .get(sheetCloneId);
@@ -328,6 +328,6 @@ export class SqliteSheetCloneRepository {
     retentionView(this.db, row.team_id).requireVisible("sheetClone", [
       sheetCloneId,
     ]);
-    return editSheetClone(this, user, sheetCloneId, input);
+    return editSheetClone(this, user, sheetCloneId, input, options);
   }
 }

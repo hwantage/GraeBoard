@@ -35,7 +35,7 @@ export const SHEET_CLONE_ROUTES = routes([
   ["DELETE", "/sheet-clones", "remove", ["body"]],
   ["GET", "/sheet-clones/:id", "read", ["id"]],
   ["PATCH", "/sheet-clones/:id/name", "rename", ["id", "body"]],
-  ["PATCH", "/sheet-clones/:id", "edit", ["id", "body"]],
+  ["PATCH", "/sheet-clones/:id", "edit", ["id", "body", "query"]],
 ]);
 export const FILTER_ROUTES = routes([
   ["GET", "/filters", "list", ["query"]],

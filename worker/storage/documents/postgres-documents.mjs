@@ -27,25 +27,37 @@ async function annualHidden(s, scope) {
     (await excludedYears(s)).has(Number(scope.prefix[1]))
   );
 }
-// The live record a document belongs to, or null. A copy memo's parent is the
-// copy, whose payload (megabytes) is not needed: copies have no deletedAt.
-async function liveParent(s, scope) {
+// Whether the live record a document belongs to exists. A copy memo's parent
+// is the copy and a copy row's document belongs to that row: neither needs
+// the copy's payload (megabytes); copies have no deletedAt.
+async function requireLiveParent(s, scope) {
+  if (scope.kind === "sheetClone") {
+    assert(
+      await s.alive("sheetClone", [scope.prefix[1]]),
+      404,
+      "문서의 원본 자료를 찾을 수 없습니다.",
+    );
+    return assert(
+      (await s.copyRowsAmong(scope.prefix[1], [scope.prefix[2]])).size,
+      404,
+      "사본 업무를 찾을 수 없습니다.",
+    );
+  }
   if (scope.kind === "sheetCloneMemo")
-    return (await s.alive("sheetClone", [scope.prefix[1]])) || null;
+    return assert(
+      await s.alive("sheetClone", [scope.prefix[1]]),
+      404,
+      "문서의 원본 자료를 찾을 수 없습니다.",
+    );
   const parent = await s.get(scope.kind, [scope.prefix[1]]);
-  return parent && !parent.deleted && !parent.payload.deletedAt ? parent : null;
+  assert(
+    parent && !parent.deleted && !parent.payload.deletedAt,
+    404,
+    "문서의 원본 자료를 찾을 수 없습니다.",
+  );
 }
 export async function requireUploadDocument(s, scope) {
-  if (scope.kind !== "annual") {
-    const parent = await liveParent(s, scope);
-    assert(parent, 404, "문서의 원본 자료를 찾을 수 없습니다.");
-    if (scope.kind === "sheetClone")
-      assert(
-        parent.payload.data.tasks.some((task) => task.id === scope.prefix[2]),
-        404,
-        "사본 업무를 찾을 수 없습니다.",
-      );
-  }
+  if (scope.kind !== "annual") await requireLiveParent(s, scope);
   assert(
     !(await annualHidden(s, scope)),
     409,
@@ -153,29 +165,45 @@ export async function documentList(s, scope, { content = false } = {}) {
 // documentList for every owner directly under `parent` (each task of a sheetClone),
 // read with one query and grouped once instead of one read per owner. Owners
 // are tasks or sheetClone tasks, never annual memos. `rows` are the live rows read.
-export async function documentListsUnder(s, parent, kind) {
-  const rows = await s.listChildren("document", parent),
-    owners = new Map(),
+export async function documentListsUnder(s, parent, kind, { owners } = {}) {
+  // `owners` limits the read to those owners' documents.
+  const under = owners && [...owners].map((owner) => [...parent, owner]),
+    rows = under
+      ? await s.listChildrenOf("document", under)
+      : await s.listChildren("document", parent),
+    grouped = new Map(),
     ownerOf = (key) =>
       key.length === parent.length + 2 ? key[parent.length] : undefined;
   for (const row of rows) {
     const owner = ownerOf(row.key);
     if (owner === undefined) continue;
-    if (!owners.has(owner)) owners.set(owner, []);
-    owners.get(owner).push(row);
+    if (!grouped.has(owner)) grouped.set(owner, []);
+    grouped.get(owner).push(row);
   }
   let deleted;
   const used = async (owner) => {
-    deleted ||= documentKeysUnder(s, parent, { deleted: true }).then(
-      (keys) => new Set(keys.map(ownerOf)),
-    );
+    deleted ||= (
+      under
+        ? s.tx
+            .query(
+              "SELECT entity_key FROM site_entities WHERE team_id=$1 AND entity='document' AND deleted=1 AND EXISTS(SELECT 1 FROM unnest($2::text[]) AS parent(prefix) WHERE left(entity_key,length(parent.prefix))=parent.prefix)",
+              [
+                s.teamId,
+                under.map((key) => JSON.stringify(key).slice(0, -1) + ","),
+              ],
+            )
+            .then((found) =>
+              found.rows.map((row) => JSON.parse(row.entity_key)),
+            )
+        : documentKeysUnder(s, parent, { deleted: true })
+    ).then((keys) => new Set(keys.map(ownerOf)));
     return (await deleted).has(owner);
   };
   return {
     rows,
     list: (owner, { content = false } = {}) =>
       listView(
-        [...(owners.get(owner) || [])],
+        [...(grouped.get(owner) || [])],
         kind,
         () => used(owner),
         content,
@@ -209,23 +237,21 @@ export class PostgresDocumentRepository {
       return { teamId, prefix: ["task", target.taskId], documentId, kind };
     }
     if (["sheetClone", "sheetCloneMemo"].includes(kind)) {
-      // A copy memo needs only the copy's team; only a copy row's documents
-      // read the copy to find the row.
-      let teamId;
-      if (kind === "sheetClone") {
-        const located = await ctx.locate("sheetClone", target.sheetCloneId, {
-          write,
-        });
-        teamId = located.teamId;
+      // Only the copy's team: the copy's payload is not read, and a copy
+      // row's document asks for that row alone.
+      const teamId = await ctx.locateTeam("sheetClone", target.sheetCloneId, {
+        write,
+      });
+      if (kind === "sheetClone")
         assert(
-          located.row.payload.data.tasks.some((t) => t.id === target.taskId),
+          (
+            await ctx.data(teamId, (s) =>
+              s.copyRowsAmong(target.sheetCloneId, [target.taskId]),
+            )
+          ).size,
           404,
           "사본 업무를 찾을 수 없습니다.",
         );
-      } else
-        teamId = await ctx.locateTeam("sheetClone", target.sheetCloneId, {
-          write,
-        });
       return {
         teamId,
         prefix:
@@ -374,16 +400,7 @@ export class PostgresDocumentRepository {
     return ctx.data(
       teamId,
       async (s) => {
-        if (kind !== "annual") {
-          const parent = await liveParent(s, scope);
-          assert(parent, 404, "문서의 원본 자료를 찾을 수 없습니다.");
-          if (kind === "sheetClone")
-            assert(
-              parent.payload.data.tasks.some((t) => t.id === prefix[2]),
-              404,
-              "사본 업무를 찾을 수 없습니다.",
-            );
-        }
+        if (kind !== "annual") await requireLiveParent(s, scope);
         if (await annualHidden(s, scope)) {
           if (method === "GET" && !documentId) return { documents: [] };
           assert(

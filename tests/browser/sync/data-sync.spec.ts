@@ -477,7 +477,7 @@ test("초기 게시 오류는 실행 버튼 아래에 붉게 표시하고 성공
       },
     }),
   );
-  await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+  await page.route(`**/api/teams/${teamId}/sync/conflicts?*`, (route) =>
     route.fulfill({ json: { conflicts: [] } }),
   );
   await page.route(`**/api/teams/${teamId}/sync/check`, (route) =>
@@ -728,7 +728,7 @@ test("충돌 보관함은 먼저 수정과 나중에 수정을 줄 단위로 비
           },
         }
       : conflict;
-  await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+  await page.route(`**/api/teams/${teamId}/sync/conflicts?*`, (route) =>
     route.fulfill({ json: { conflicts: [saved(), large] } }),
   );
   await page.route(
@@ -883,6 +883,260 @@ test("충돌 보관함은 먼저 수정과 나중에 수정을 줄 단위로 비
   await expect(actions).toHaveCount(0);
 });
 
+for (const site of ["internal", "external"] as const) {
+  test(`${site} 설정에서 완료된 충돌을 해결 내역으로 다시 열고 읽기 전용으로 비교한다`, async ({
+    page,
+  }, testInfo) => {
+    const bootstrap = await configuredBootstrap(page);
+    let phase: "open" | "pending" | "resolved" = "open";
+    const opened: string[] = [];
+    const resolutions: string[] = [];
+    const listRequests: string[] = [];
+    let nextGate: Promise<void> | null = null;
+    const conflict = (id: string) => {
+      const key = [id + "-task", "title"];
+      return {
+        conflictId: id,
+        opId: id,
+        createdAt: "2026-11-04T00:14:00.000Z",
+        target: "cell " + key.join("/"),
+        result: "Concurrent field change",
+        base: [{ value: "원래 값" }],
+        current: {
+          [JSON.stringify(["cell", key])]: {
+            entity: "cell",
+            key,
+            generation: "g".repeat(64),
+            version: "v".repeat(64),
+            deleted: false,
+            payload: { value: "먼저 값" },
+          },
+        },
+        desired: [{ value: "나중 값" }],
+        expectedHead: "head-1",
+        frontier: [id],
+        resolved: id === "past" || phase === "resolved",
+        pendingResolution:
+          id === "current" && phase === "pending"
+            ? {
+                opId: "resolution-1",
+                createdAt: "2026-11-15T03:52:32.000Z",
+                choice: "submitted",
+              }
+            : null,
+      };
+    };
+    await page.route("**/api/bootstrap", (route) =>
+      route.fulfill({
+        json: {
+          ...bootstrap,
+          site,
+          ...(site === "external" ? { authMode: "access" } : {}),
+        },
+      }),
+    );
+    await page.route(`**/api/admin/teams/${teamId}/connection`, (route) =>
+      route.fulfill({
+        json: {
+          profileId: "local",
+          revision: 1,
+          profiles: [
+            {
+              profileId: "local",
+              teamId,
+              name: "동기화 연결",
+              repository: "test/local",
+            },
+          ],
+        },
+      }),
+    );
+    await page.route(`**/api/teams/${teamId}/sync`, (route) =>
+      route.fulfill({
+        json: {
+          mode: "active",
+          profileId: "local",
+          pending: phase === "pending" ? 1 : 0,
+          conflicts: phase === "resolved" ? 0 : 1,
+          canonicalHead: "head-1",
+        },
+      }),
+    );
+    await page.route(
+      `**/api/teams/${teamId}/sync/conflicts?*`,
+      async (route) => {
+        const query = new URL(route.request().url()).searchParams;
+        const status = query.get("status"),
+          after = query.get("after") || "";
+        listRequests.push(`${status}:${after}`);
+        const summaries = ["current", "past"]
+          .map((id) => {
+            const {
+              base: _base,
+              current: _current,
+              desired: _desired,
+              ...summary
+            } = conflict(id);
+            return summary;
+          })
+          .filter(
+            (c) =>
+              c.resolved === (status === "resolved") && c.conflictId > after,
+          );
+        if (after && nextGate) await nextGate;
+        return route.fulfill({
+          json: {
+            conflicts: summaries.slice(0, 1),
+            next: summaries.length > 1 ? summaries[0].conflictId : null,
+          },
+        });
+      },
+    );
+    await page.route(`**/api/teams/${teamId}/sync/conflicts/*`, (route) => {
+      const id = route.request().url().split("/").at(-1)!;
+      opened.push(id);
+      return route.fulfill({ json: conflict(id) });
+    });
+    await page.route(
+      `**/api/teams/${teamId}/sync/conflicts/*/resolve`,
+      (route) => {
+        resolutions.push(route.request().url().split("/").at(-2)!);
+        phase = "pending";
+        return route.fulfill({ json: { opId: "resolution-1" } });
+      },
+    );
+    await page.reload();
+    await page
+      .locator(".topbar")
+      .getByRole("button", { name: "충돌 보관함" })
+      .click();
+    const box = page.getByRole("dialog", { name: "충돌 보관함" });
+    const items = box.locator(".team-sync-conflict");
+    const needed = box.getByRole("tab", { name: "해결 필요", exact: true });
+    const history = box.getByRole("tab", { name: "해결 내역", exact: true });
+    await expect(needed).toHaveAttribute("aria-selected", "true");
+    await expect(items).toHaveCount(1);
+    expect(listRequests).toEqual(["open:"]);
+    await box.getByLabel("전체 선택").check();
+    await history.click();
+    await expect(items).toHaveCount(1);
+    await expect(items.locator("summary")).toContainText("해결 완료");
+    await expect(box.getByRole("checkbox")).toHaveCount(0);
+    await expect(
+      box.getByRole("group", { name: "선택한 충돌 일괄 해결" }),
+    ).toHaveCount(0);
+    expect(opened).toEqual([]);
+    await items.locator(":scope > summary").click();
+    await expect(
+      box.getByRole("button", { name: "두 수정 비교", exact: true }),
+    ).toBeVisible();
+    await expect(items).toContainText("충돌 당시의 수정 내용");
+    await expect(items.locator(".sync-diff-line")).toHaveText([
+      /먼저 값/,
+      /나중 값/,
+    ]);
+    await expect(items.locator(".form-actions")).toHaveCount(0);
+    await expect(items.locator("time")).toContainText("발생");
+    await items.getByText("원본 JSON 보기", { exact: true }).click();
+    await expect(items.locator(".sync-conflict-raw dt")).toHaveText([
+      "원래 내용",
+      "충돌 당시 먼저 수정",
+      "나중에 수정",
+    ]);
+    await items.getByText("원본 JSON 보기", { exact: true }).click();
+    expect(opened).toEqual(["past"]);
+    expect(resolutions).toEqual([]);
+    await history.press("Home");
+    await expect(needed).toBeFocused();
+    await expect(box.getByLabel("전체 선택")).not.toBeChecked();
+    await items.locator(":scope > summary").click();
+    await items
+      .getByRole("button", { name: "나중에 수정으로 덮어쓰기", exact: true })
+      .click();
+    await expect(items.locator(".team-sync-conflict-notice")).toContainText(
+      `다음 동기화 때 ${site === "internal" ? "외부 사이트" : "내부 사이트"}에도 반영되고`,
+    );
+    await expect(items.locator(".team-sync-conflict-notice")).toContainText(
+      "해결 내역에서 볼 수 있습니다",
+    );
+    await expect(items.getByRole("checkbox")).toBeDisabled();
+    await expect(items.locator(".form-actions")).toHaveCount(0);
+    expect(resolutions).toEqual(["current"]);
+    await box.getByRole("button", { name: "닫기", exact: true }).click();
+    // A later sync publishes the saved resolution. Reopen through settings
+    // with no remaining header warning, without erasing the stored records.
+    phase = "resolved";
+    await page.reload();
+    await expect(
+      page.locator(".topbar").getByRole("button", { name: "충돌 보관함" }),
+    ).toHaveCount(0);
+    await page.getByRole("button", { name: "설정", exact: true }).click();
+    await panel(page)
+      .getByRole("tab", { name: "외부 동기화", exact: true })
+      .click();
+    await panel(page)
+      .getByRole("button", { name: "충돌 보관함", exact: true })
+      .click();
+    await expect(needed).toHaveAttribute("aria-selected", "true");
+    await expect(box).toContainText("해결이 필요한 충돌이 없습니다.");
+    await needed.press("ArrowRight");
+    await expect(history).toBeFocused();
+    await expect(items).toHaveCount(1);
+    // A delayed More response from the old tab must not replace the new tab.
+    let releaseNext!: () => void;
+    nextGate = new Promise<void>((resolve) => {
+      releaseNext = resolve;
+    });
+    try {
+      await box.getByRole("button", { name: "더 보기", exact: true }).click();
+      await expect.poll(() => listRequests.at(-1)).toBe("resolved:current");
+      await needed.click();
+      await expect(box).toContainText("해결이 필요한 충돌이 없습니다.");
+      const late = page.waitForResponse((response) =>
+        response.url().includes("status=resolved&after=current"),
+      );
+      releaseNext();
+      await (await late).finished();
+      await expect(items).toHaveCount(0);
+    } finally {
+      releaseNext();
+      nextGate = null;
+    }
+    await history.click();
+    await expect(items).toHaveCount(1);
+    const beforeMore = listRequests.length;
+    await expect(
+      box.getByRole("button", { name: "더 보기", exact: true }),
+    ).toBeVisible();
+    expect(listRequests.length).toBe(beforeMore);
+    await box.getByRole("button", { name: "더 보기", exact: true }).click();
+    await expect(items).toHaveCount(2);
+    expect(listRequests.at(-1)).toBe("resolved:current");
+    await items.first().locator(":scope > summary").click();
+    await expect(
+      box.getByRole("button", { name: "두 수정 비교", exact: true }),
+    ).toBeVisible();
+    await expect(box.getByRole("checkbox")).toHaveCount(0);
+    await expect(items.locator(".form-actions")).toHaveCount(0);
+    expect(resolutions).toEqual(["current"]);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(history).toBeVisible();
+    await expect(needed).toBeVisible();
+    await testInfo.attach(`conflict-history-${site}`, {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
+    await box.getByRole("button", { name: "닫기", exact: true }).click();
+    await panel(page)
+      .getByRole("button", { name: "충돌 보관함", exact: true })
+      .click();
+    await history.click();
+    await expect(items).toHaveCount(1);
+    await box.getByRole("button", { name: "더 보기", exact: true }).click();
+    await expect(items).toHaveCount(2);
+  });
+}
+
 test("외부 충돌 보관함에서 큰 사본을 포함한 겹치지 않은 항목 12개를 펼쳐도 화면이 유지된다", async ({
   page,
 }, testInfo) => {
@@ -946,7 +1200,7 @@ test("외부 충돌 보관함에서 큰 사본을 포함한 겹치지 않은 항
       },
     }),
   );
-  await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+  await page.route(`**/api/teams/${teamId}/sync/conflicts?*`, (route) =>
     route.fulfill({
       json: {
         conflicts: [
@@ -1120,7 +1374,7 @@ for (const site of ["internal", "external"] as const)
         },
       }),
     );
-    await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+    await page.route(`**/api/teams/${teamId}/sync/conflicts?*`, (route) =>
       route.fulfill({
         json: {
           conflicts: [
@@ -1272,7 +1526,7 @@ test("충돌 보관함은 체크박스로 고른 충돌을 한꺼번에 해결�
       },
     }),
   );
-  await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+  await page.route(`**/api/teams/${teamId}/sync/conflicts?*`, (route) =>
     route.fulfill({
       json: { conflicts: ["c1", "c2", "c3"].map(cellConflict) },
     }),
@@ -1451,7 +1705,7 @@ test("충돌 보관함은 큰 사본 충돌 15개를 멈추지 않고 열어 전
       },
     }),
   );
-  await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+  await page.route(`**/api/teams/${teamId}/sync/conflicts?*`, (route) =>
     route.fulfill({ contentType: "application/json", body }),
   );
   await page.route(`**/api/teams/${teamId}/sync/conflicts/*`, (route) => {
@@ -1510,7 +1764,7 @@ test("충돌 보관함은 큰 사본 충돌 15개를 멈추지 않고 열어 전
     .getByRole("button", { name: "나중에 수정으로 덮어쓰기", exact: true })
     .click();
   await expect(box.locator(".team-sync-conflict-batch-status")).toHaveText(
-    "충돌 15개의 해결 방법을 저장했습니다. 다음 동기화 때 상대 사이트에도 반영됩니다.",
+    "충돌 15개의 해결 방법을 저장했습니다. 다음 동기화 때 외부 사이트에도 반영됩니다.",
   );
   expect(resolved).toHaveLength(15);
   // An expanded copy compares the renamed field only.
@@ -1594,7 +1848,7 @@ test("충돌 보관함은 다시 충돌할 덮어쓰기를 거절된 항목으�
       },
     }),
   );
-  await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+  await page.route(`**/api/teams/${teamId}/sync/conflicts?*`, (route) =>
     route.fulfill({
       json: { conflicts: ["c1", "c2"].map(copyConflict) },
     }),
@@ -1701,7 +1955,7 @@ test("외부 연결 이관 실패 후 기존 프로필을 유지하고 저장된
       },
     }),
   );
-  await page.route(`**/api/teams/${teamId}/sync/conflicts`, (route) =>
+  await page.route(`**/api/teams/${teamId}/sync/conflicts?*`, (route) =>
     route.fulfill({ json: { conflicts: [] } }),
   );
   await page.route(`**/api/teams/${teamId}/sync/refresh`, (route) =>
@@ -1854,7 +2108,11 @@ test("프로필 없는 팀은 상태 요청 없이 설정 진입점과 서비스
 }) => {
   let syncReads = 0;
   page.on("request", (request) => {
-    if (/\/api\/teams\/[^/]+\/sync(?:\/conflicts)?$/.test(request.url()))
+    if (
+      /\/api\/teams\/[^/]+\/sync(?:\/conflicts)?$/.test(
+        new URL(request.url()).pathname,
+      )
+    )
       syncReads++;
   });
   await page.clock.install();
@@ -1899,7 +2157,11 @@ test("프로필만 있는 팀은 연결 폼만 읽고 다른 팀으로 전환하
   });
   let syncReads = 0;
   page.on("request", (request) => {
-    if (/\/api\/teams\/[^/]+\/sync(?:\/conflicts)?$/.test(request.url()))
+    if (
+      /\/api\/teams\/[^/]+\/sync(?:\/conflicts)?$/.test(
+        new URL(request.url()).pathname,
+      )
+    )
       syncReads++;
   });
   await page.clock.install();
@@ -2005,7 +2267,7 @@ test("Git 게시와 검증되지 않은 상대 상태를 실제 내부 반영으
       },
     });
   });
-  await page.route(`${base}/api/teams/${teamId}/sync/conflicts`, (route) =>
+  await page.route(`${base}/api/teams/${teamId}/sync/conflicts?*`, (route) =>
     route.fulfill({ json: { conflicts: [] } }),
   );
   await page.reload();

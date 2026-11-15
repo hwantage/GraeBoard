@@ -1,12 +1,27 @@
-import { splitSheetCloneRecord } from "../../server/sync/core/versions.mjs";
+import {
+  composeSheetClone,
+  isSheetCloneChild,
+  isSheetCloneRowParent as isRowParent,
+  sheetCloneFormattings,
+  sheetCloneRowOrder,
+  splitSheetCloneRecord,
+  splitSheetCloneRows,
+} from "../../server/sync/core/versions.mjs";
 import { pack, unpack } from "../../shared/formatting/compact.js";
 import {
   protocolVersion,
   PROTOCOL,
+  ROW_PROTOCOL,
   SPLIT_PROTOCOL,
 } from "../../server/sync/core/protocol.mjs";
 import pg from "pg";
-import { capacityLimits, CapacityError, capacityTotals } from "./capacity.mjs";
+import {
+  assertCapacityTotals,
+  capacityLimits,
+  CapacityError,
+  capacityTotals,
+  KEPT_TOTALS_SQL,
+} from "./capacity.mjs";
 import {
   assertReceiptCapacity,
   recordBytes,
@@ -97,7 +112,14 @@ export function controlPool(env) {
     site: !!siteTeamId(env),
   });
 }
+// Counts this isolate's control writes, when one starts and when it ends, so
+// a value read before or during one is read again after it (see
+// PostgresControlStore.members). Another isolate's write is seen by the next
+// request, which reads anew.
+let controlWriteCount = 0;
+export const controlWrites = () => controlWriteCount;
 export async function controlTransaction(env, work, { write = false } = {}) {
+  if (write) controlWriteCount++;
   const team = siteTeamId(env);
   const client = await controlPool(env).connect();
   try {
@@ -131,6 +153,7 @@ export async function controlTransaction(env, work, { write = false } = {}) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
+    if (write) controlWriteCount++;
     await client.release();
   }
 }
@@ -158,6 +181,23 @@ const rowEntity = (row) => ({
   revision: Number(row.revision),
   deleted: !!row.deleted,
 });
+// Under protocol 5 a copy's site rows are its parent, format and row records
+// (see siteEntities).
+const COPY_RECORDS = ["sheetCloneTask", "sheetCloneFormat", "sheetCloneRule"];
+// Where a session keeps each kind of a copy's stored records.
+const COPY_STORE = {
+  sheetCloneTask: "rows",
+  sheetCloneFormat: "formats",
+  sheetCloneRule: "rules",
+};
+const childPrefix = (key) => JSON.stringify(key).slice(0, -1) + ",";
+const LINK_SQL = "SELECT * FROM team_sync_links WHERE team_id=$1",
+  OUTBOX_SQL =
+    "SELECT op_id,status,payload,payload_hash FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq",
+  // The same rows when together they are small: a write that changes
+  // nothing, or is refused, must not pay for a backlog of megabytes.
+  SMALL_OUTBOX_BYTES = 256 * 1024,
+  SMALL_OUTBOX_SQL = `SELECT op_id,status,payload,payload_hash FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' AND (SELECT COALESCE(SUM(octet_length(payload)),0) FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged')<${256 * 1024} ORDER BY local_seq`;
 export class DataSession {
   constructor(tx, teamId, { limits = capacityLimits() } = {}) {
     this.limits = limits;
@@ -172,6 +212,189 @@ export class DataSession {
     // Stored form of each payload put in this session: a sheetClone packs once,
     // not again when the capture writes the same payload into its operation.
     this.storedForms = new WeakMap();
+    // The stored records of each copy read in row form, by copy ID, and the
+    // records this session changed in them. `changes` keeps one entry for the
+    // whole copy (audit, events); the capture sends `records`.
+    this.copies = new Map();
+    this.records = new Map();
+  }
+  // Whether this team's copies are stored as row records: C is at protocol 5.
+  async rowRecords() {
+    if (this.rowMode === undefined) {
+      const row = (
+        await this.tx.query(
+          "SELECT payload FROM sync_entities WHERE team_id=$1 AND entity='protocol' AND entity_key='[]'",
+          [this.teamId],
+        )
+      ).rows[0];
+      this.rowMode =
+        protocolVersion({
+          entities: row?.payload
+            ? {
+                [entityId("protocol", [])]: {
+                  payload: JSON.parse(row.payload),
+                },
+              }
+            : {},
+        }) === ROW_PROTOCOL;
+    }
+    return this.rowMode;
+  }
+  // A copy stored as row records, as the one record the application reads:
+  // its live rows in sheet order (every row of a deleted copy).
+  async composed(parent) {
+    const known = { rows: new Map(), formats: new Map(), rules: new Map() };
+    for (const row of (
+      await this.tx.query(
+        "SELECT entity,entity_key,payload,deleted FROM site_entities WHERE team_id=$1 AND entity=ANY($2::text[]) AND left(entity_key,length($3))=$3",
+        [this.teamId, COPY_RECORDS, childPrefix(parent.key)],
+      )
+    ).rows)
+      known[COPY_STORE[row.entity]].set(JSON.parse(row.entity_key)[1], {
+        payload: JSON.parse(row.payload),
+        deleted: !!row.deleted,
+      });
+    const view = this.copyView(parent, known);
+    this.copies.set(parent.key[0], {
+      parent: { payload: parent.payload, deleted: parent.deleted },
+      ...known,
+      view,
+    });
+    return view;
+  }
+  copyView(parent, { rows, formats, rules }) {
+    return {
+      ...parent,
+      payload: composeSheetClone(
+        parent.payload,
+        sheetCloneRowOrder(
+          [...rows]
+            .filter(([, row]) => parent.deleted || !row.deleted)
+            .map(([id, row]) => [id, row.payload]),
+        ),
+        sheetCloneFormattings(
+          (format) => formats.get(format)?.payload,
+          (rule) => rules.get(rule)?.payload,
+        ),
+      ),
+    };
+  }
+  // A live copy stored as row records with only the named rows, so an edit
+  // of some rows does not read the others. The result is the copy as get()
+  // gives it, with those rows alone; putCopyRows() saves it. Null when the
+  // copy is not stored as row records.
+  async getCopyRows(key, rowIds) {
+    const stored = (
+      await this.tx.query(
+        "SELECT * FROM site_entities WHERE team_id=$1 AND entity='sheetClone' AND entity_key=$2",
+        [this.teamId, JSON.stringify(key)],
+      )
+    ).rows[0];
+    if (!stored) return null;
+    const parent = rowEntity(stored);
+    if (!isRowParent(parent.payload)) return null;
+    // get() and list() must not answer the copy read before this edit.
+    this.cache.delete(entityId("sheetClone", key));
+    this.lists.delete("sheetClone");
+    this.listIndex.delete("sheetClone");
+    const ids = [...new Set(rowIds)],
+      wanted = new Set(
+        ids.map((id) => parent.payload.formats[id]).filter(Boolean),
+      ),
+      known = { rows: new Map(), formats: new Map(), rules: new Map() },
+      read = (rows) => {
+        for (const row of rows)
+          known[COPY_STORE[row.entity]].set(JSON.parse(row.entity_key)[1], {
+            payload: row.payload == null ? null : JSON.parse(row.payload),
+            deleted: !!row.deleted,
+          });
+      };
+    read(
+      (
+        await this.tx.query(
+          // A format's payload is read only when one of these rows uses it;
+          // the others are known by ID, which is their content's hash.
+          "SELECT entity,entity_key,deleted,CASE WHEN entity='sheetCloneTask' OR entity_key=ANY($4::text[]) THEN payload END AS payload FROM site_entities WHERE team_id=$1 AND ((entity='sheetCloneTask' AND entity_key=ANY($2::text[])) OR (entity='sheetCloneFormat' AND left(entity_key,length($3))=$3))",
+          [
+            this.teamId,
+            ids.map((id) => JSON.stringify([key[0], id])),
+            childPrefix(key),
+            [...wanted].map((id) => JSON.stringify([key[0], id])),
+          ],
+        )
+      ).rows,
+    );
+    // Likewise the rules: those of the formats read, the others by ID.
+    const named = new Set(
+      [...wanted].flatMap((id) => known.formats.get(id)?.payload?.rules || []),
+    );
+    read(
+      (
+        await this.tx.query(
+          "SELECT entity,entity_key,deleted,CASE WHEN entity_key=ANY($3::text[]) THEN payload END AS payload FROM site_entities WHERE team_id=$1 AND entity='sheetCloneRule' AND left(entity_key,length($2))=$2",
+          [
+            this.teamId,
+            childPrefix(key),
+            [...named].map((id) => JSON.stringify([key[0], id])),
+          ],
+        )
+      ).rows,
+    );
+    const view = this.copyView(parent, known);
+    this.copies.set(key[0], {
+      parent: { payload: parent.payload, deleted: parent.deleted },
+      ...known,
+      view,
+      partial: true,
+    });
+    return view;
+  }
+  // The live rows of a copy stored as row records without their content:
+  // each row's ID and site revision, and with `positions` what orders it.
+  // A payload jsonb cannot read (see sheetCloneSummaries) is parsed here.
+  async copyRowIndex(key, { positions = false } = {}) {
+    return (
+      await this.tx.query(
+        positions
+          ? "SELECT entity_key,revision,CASE WHEN payload ~ $3 THEN payload END AS whole,CASE WHEN payload ~ $3 THEN NULL ELSE payload::jsonb #>> '{data,position}' END AS position,CASE WHEN payload ~ $3 THEN NULL ELSE payload::jsonb #>> '{data,createdAt}' END AS created FROM site_entities WHERE team_id=$1 AND entity='sheetCloneTask' AND deleted=0 AND left(entity_key,length($2))=$2 ORDER BY entity_key"
+          : "SELECT entity_key,revision FROM site_entities WHERE team_id=$1 AND entity='sheetCloneTask' AND deleted=0 AND left(entity_key,length($2))=$2 ORDER BY entity_key",
+        [
+          this.teamId,
+          childPrefix(key),
+          ...(positions ? ["\\\\u(0000|[dD][89a-fA-F])"] : []),
+        ],
+      )
+    ).rows.map((row) => {
+      const data = row.whole ? JSON.parse(row.whole).data : null;
+      return {
+        id: JSON.parse(row.entity_key)[1],
+        revision: String(row.revision),
+        ...(positions
+          ? {
+              position: Number(data ? data.position : row.position),
+              createdAt: data ? data.createdAt : row.created,
+            }
+          : {}),
+      };
+    });
+  }
+  // What an editor of a row-record copy holds to detect another change: the
+  // parent's sheet settings and format assignment, and each live row's site
+  // revision. The copy must have been read in this session.
+  async copyRevision(key) {
+    const { parent } = this.copies.get(key[0]);
+    return digest([
+      "sheet-clone-rows",
+      parent.payload.data,
+      parent.payload.formats,
+      (await this.copyRowIndex(key)).map((row) => [row.id, row.revision]),
+    ]);
+  }
+  async read(row) {
+    const record = rowEntity(row);
+    return record.entity === "sheetClone" && isRowParent(record.payload)
+      ? this.composed(record)
+      : record;
   }
   storedText(entity, payload) {
     const stored = this.stored(entity, payload);
@@ -195,7 +418,7 @@ export class DataSession {
         "SELECT * FROM site_entities WHERE team_id=$1 AND entity=$2 AND entity_key=$3",
         [this.teamId, entity, JSON.stringify(key)],
       );
-      this.cache.set(id, q.rows[0] ? rowEntity(q.rows[0]) : null);
+      this.cache.set(id, q.rows[0] ? await this.read(q.rows[0]) : null);
     }
     return this.cache.get(id);
   }
@@ -213,9 +436,52 @@ export class DataSession {
     );
     return !!q.rows[0] && !Number(q.rows[0].deleted);
   }
+  // A live record's site revision, without reading its payload; null when
+  // there is no live record.
+  async revisionOf(entity, key) {
+    const row = (
+      await this.tx.query(
+        "SELECT revision FROM site_entities WHERE team_id=$1 AND entity=$2 AND entity_key=$3 AND deleted=0",
+        [this.teamId, entity, JSON.stringify(key)],
+      )
+    ).rows[0];
+    return row ? Number(row.revision) : null;
+  }
+  // Which of the given rows a live copy has. A copy stored as row records
+  // answers from the rows' keys, without reading the copy.
+  async copyRowsAmong(copyId, rowIds) {
+    if (!(await this.rowRecords())) {
+      const copy = await this.get("sheetClone", [copyId]),
+        wanted = new Set(rowIds);
+      return new Set(
+        copy && !copy.deleted
+          ? copy.payload.data.tasks
+              .map((task) => task.id)
+              .filter((id) => wanted.has(id))
+          : [],
+      );
+    }
+    return new Set(
+      (
+        await this.tx.query(
+          "SELECT entity_key FROM site_entities WHERE team_id=$1 AND entity='sheetCloneTask' AND deleted=0 AND entity_key=ANY($2::text[]) AND EXISTS(SELECT 1 FROM site_entities parent WHERE parent.team_id=$1 AND parent.entity='sheetClone' AND parent.entity_key=$3 AND parent.deleted=0)",
+          [
+            this.teamId,
+            [...rowIds].map((id) => JSON.stringify([copyId, id])),
+            JSON.stringify([copyId]),
+          ],
+        )
+      ).rows.map((row) => JSON.parse(row.entity_key)[1]),
+    );
+  }
   // Several records of one entity in one query. They land in the cache get()
   // reads, so a per-item get() afterwards costs no round trip.
   async getMany(entity, keys) {
+    if (entity === "sheetClone") {
+      const found = [];
+      for (const key of keys) found.push(await this.get(entity, key));
+      return found;
+    }
     const missing = new Map();
     for (const key of keys) {
       const id = entityId(entity, key);
@@ -246,7 +512,8 @@ export class DataSession {
         " ORDER BY entity_key",
       [this.teamId, entity],
     );
-    const rows = q.rows.map(rowEntity);
+    const rows = [];
+    for (const row of q.rows) rows.push(await this.read(row));
     this.lists.set(entity, rows);
     this.listIndex.set(
       entity,
@@ -270,6 +537,29 @@ export class DataSession {
       await this.tx.query(
         "SELECT * FROM site_entities WHERE team_id=$1 AND entity=$2 AND deleted=0 AND left(entity_key,length($3))=$3 ORDER BY entity_key",
         [this.teamId, entity, JSON.stringify(parent).slice(0, -1) + ","],
+      )
+    ).rows.map(rowEntity);
+    for (const row of found) {
+      const id = entityId(entity, row.key);
+      if (!this.cache.has(id)) this.cache.set(id, row);
+    }
+    return found.map((row) => this.cache.get(entityId(entity, row.key)));
+  }
+  // listChildren() for several parents in one query.
+  async listChildrenOf(entity, parents) {
+    if (!parents.length) return [];
+    const prefixes = parents.map(childPrefix);
+    if (this.lists.has(entity))
+      return this.lists.get(entity).filter((row) => {
+        const key = JSON.stringify(row.key);
+        return (
+          !row.deleted && prefixes.some((prefix) => key.startsWith(prefix))
+        );
+      });
+    const found = (
+      await this.tx.query(
+        "SELECT * FROM site_entities WHERE team_id=$1 AND entity=$2 AND deleted=0 AND EXISTS(SELECT 1 FROM unnest($3::text[]) AS parent(prefix) WHERE left(entity_key,length(parent.prefix))=parent.prefix) ORDER BY entity_key",
+        [this.teamId, entity, prefixes],
       )
     ).rows.map(rowEntity);
     for (const row of found) {
@@ -304,6 +594,8 @@ export class DataSession {
       locallyHidden = false,
     } = {},
   ) {
+    if (entity === "sheetClone" && (await this.rowRecords()))
+      return this.putCopy(key, payload, { deleted, locallyHidden });
     const id = entityId(entity, key),
       before = await this.get(entity, key);
     const storedDeleted = deleted || locallyHidden;
@@ -315,22 +607,20 @@ export class DataSession {
       return before;
     if (shared && !this.changes.has(id))
       this.changes.set(id, { entity, key, before });
+    // The next revision and the record in one statement: one round trip
+    // per record written.
     const result = await this.tx.query(
-      `INSERT INTO site_entity_revisions(team_id,entity,entity_key,revision) VALUES($1,$2,$3,$4) ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET revision=GREATEST(site_entity_revisions.revision+1,EXCLUDED.revision) RETURNING revision`,
-      [this.teamId, entity, JSON.stringify(key), Date.now()],
-    );
-    const revision = Number(result.rows[0].revision);
-    await this.tx.query(
-      `INSERT INTO site_entities(team_id,entity,entity_key,payload,revision,deleted) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET payload=EXCLUDED.payload,revision=EXCLUDED.revision,deleted=EXCLUDED.deleted`,
+      `WITH next AS (INSERT INTO site_entity_revisions(team_id,entity,entity_key,revision) VALUES($1,$2,$3,$4::bigint) ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET revision=GREATEST(site_entity_revisions.revision+1,EXCLUDED.revision) RETURNING revision) INSERT INTO site_entities(team_id,entity,entity_key,payload,revision,deleted) SELECT $1,$2,$3,$5,next.revision,$6::integer FROM next ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET payload=EXCLUDED.payload,revision=EXCLUDED.revision,deleted=EXCLUDED.deleted RETURNING revision`,
       [
         this.teamId,
         entity,
         JSON.stringify(key),
+        Date.now(),
         this.storedText(entity, payload),
-        revision,
         storedDeleted ? 1 : 0,
       ],
     );
+    const revision = Number(result.rows[0].revision);
     const after = { entity, key, payload, revision, deleted: storedDeleted };
     if (this.lists.has(entity)) {
       const rows = this.lists.get(entity),
@@ -347,6 +637,204 @@ export class DataSession {
         ? { ...after, deleted }
         : after;
     return after;
+  }
+  // put("sheetClone") for a team whose copies are row records: the copy is
+  // split as C splits it and only the records that differ from the stored
+  // ones are written, so an edit to one row writes that row. A row the copy
+  // no longer has becomes a deleted row; deleting the copy deletes every
+  // record. Format records are never removed while the copy lives.
+  async putCopy(key, payload, { deleted, locallyHidden, part = false }) {
+    const id = entityId("sheetClone", key),
+      before = part
+        ? this.copies.get(key[0]).view
+        : await this.get("sheetClone", key),
+      known = this.copies.get(key[0]) || {
+        parent: null,
+        rows: new Map(),
+        formats: new Map(),
+        rules: new Map(),
+      },
+      storedDeleted = deleted || locallyHidden;
+    assert(Array.isArray(payload?.data?.tasks), 400, "사본 내용을 확인하세요.");
+    // A copy read whole since getCopyRows() would lose the rows left out here.
+    if (part && !known.partial)
+      throw new Error("A copy read whole cannot be saved by its rows");
+    const [parent, ...children] = splitSheetCloneRows({
+        entity: "sheetClone",
+        key,
+        payload,
+      }),
+      writes = [],
+      consider = (entity, recordKey, value, previous) => {
+        if (
+          !previous ||
+          previous.deleted !== storedDeleted ||
+          // A format's or rule's ID is its content's hash: a stored one is
+          // the same.
+          (!["sheetCloneFormat", "sheetCloneRule"].includes(entity) &&
+            !equal(previous.payload, value))
+        )
+          writes.push({ entity, key: recordKey, payload: value, previous });
+      },
+      kept = new Set();
+    // Only some rows were read: the rows not read keep their assignment.
+    if (part) {
+      const formats = { ...known.parent.payload.formats };
+      for (const rowId of known.rows.keys()) delete formats[rowId];
+      parent.payload = {
+        ...parent.payload,
+        formats: { ...formats, ...parent.payload.formats },
+      };
+    }
+    consider("sheetClone", key, parent.payload, known.parent);
+    for (const child of children) {
+      kept.add(child.entity + child.key[1]);
+      consider(
+        child.entity,
+        child.key,
+        child.payload,
+        known[COPY_STORE[child.entity]].get(child.key[1]),
+      );
+    }
+    const removed = [];
+    for (const [entity, stored] of [
+      ["sheetCloneTask", known.rows],
+      ["sheetCloneFormat", known.formats],
+      ["sheetCloneRule", known.rules],
+    ])
+      for (const [childId, previous] of stored)
+        if (
+          !kept.has(entity + childId) &&
+          !previous.deleted &&
+          (storedDeleted || entity === "sheetCloneTask")
+        )
+          removed.push({
+            entity,
+            key: [key[0], childId],
+            payload: previous.payload,
+            previous,
+          });
+    if (!writes.length && !removed.length) return before;
+    // The copy's revision moves with any of its records: viewers watch it.
+    const batch = [
+        ...writes.map((write) => ({ ...write, deleted: storedDeleted })),
+        ...removed.map((write) => ({ ...write, deleted: true })),
+      ],
+      revised = [
+        ...batch,
+        ...(writes[0]?.entity === "sheetClone"
+          ? []
+          : [{ entity: "sheetClone", key }]),
+      ].map((row) => ({
+        entity: row.entity,
+        entity_key: JSON.stringify(row.key),
+      })),
+      revisions = new Map(
+        (
+          await this.tx.query(
+            `INSERT INTO site_entity_revisions(team_id,entity,entity_key,revision) SELECT $1,r.entity,r.entity_key,$3 FROM jsonb_to_recordset($2::jsonb) AS r(entity text,entity_key text) ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET revision=GREATEST(site_entity_revisions.revision+1,EXCLUDED.revision) RETURNING entity,entity_key,revision`,
+            [this.teamId, JSON.stringify(revised), Date.now()],
+          )
+        ).rows.map((row) => [
+          row.entity + ":" + row.entity_key,
+          Number(row.revision),
+        ]),
+      ),
+      revision = revisions.get("sheetClone:" + JSON.stringify(key));
+    await this.tx.query(
+      `INSERT INTO site_entities(team_id,entity,entity_key,payload,revision,deleted) SELECT $1,r.entity,r.entity_key,r.payload,r.revision,r.deleted FROM jsonb_to_recordset($2::jsonb) AS r(entity text,entity_key text,payload text,revision bigint,deleted integer) ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET payload=EXCLUDED.payload,revision=EXCLUDED.revision,deleted=EXCLUDED.deleted`,
+      [
+        this.teamId,
+        JSON.stringify(
+          batch.map((row) => ({
+            entity: row.entity,
+            entity_key: JSON.stringify(row.key),
+            payload: canonical(row.payload),
+            revision: revisions.get(row.entity + ":" + JSON.stringify(row.key)),
+            deleted: row.deleted ? 1 : 0,
+          })),
+        ),
+      ],
+    );
+    if (writes[0]?.entity !== "sheetClone")
+      await this.tx.query(
+        "UPDATE site_entities SET revision=$3 WHERE team_id=$1 AND entity='sheetClone' AND entity_key=$2",
+        [this.teamId, JSON.stringify(key), revision],
+      );
+    if (!this.changes.has(id))
+      this.changes.set(id, {
+        entity: "sheetClone",
+        key,
+        before,
+        rowIds: new Set(),
+      });
+    const change = this.changes.get(id),
+      formatsBefore = known.parent?.payload.formats || {};
+    for (const rowId of new Set([
+      ...Object.keys(formatsBefore),
+      ...Object.keys(parent.payload.formats),
+    ]))
+      if (formatsBefore[rowId] !== parent.payload.formats[rowId])
+        change.rowIds.add(rowId);
+    for (const row of batch) {
+      const recordId = entityId(row.entity, row.key),
+        stored = { payload: row.payload, deleted: row.deleted };
+      if (row.entity === "sheetCloneTask") change.rowIds.add(row.key[1]);
+      if (!this.records.has(recordId))
+        this.records.set(recordId, {
+          entity: row.entity,
+          key: row.key,
+          before: row.previous || null,
+        });
+      // A locally hidden record stays live in C (see put).
+      this.records.get(recordId).after = {
+        payload: row.payload,
+        deleted: row.deleted && !(locallyHidden && !deleted),
+      };
+      if (row.entity === "sheetClone") known.parent = stored;
+      else known[COPY_STORE[row.entity]].set(row.key[1], stored);
+    }
+    const after = {
+      entity: "sheetClone",
+      key,
+      payload,
+      revision,
+      deleted: storedDeleted,
+    };
+    known.view = after;
+    this.copies.set(key[0], known);
+    change.after = locallyHidden ? { ...after, deleted } : after;
+    // A copy held with some of its rows is not what get() and list() answer.
+    if (part) return after;
+    if (this.lists.has("sheetClone")) {
+      const rows = this.lists.get("sheetClone"),
+        positions = this.listIndex.get("sheetClone"),
+        index = positions.get(id);
+      if (index === undefined) positions.set(id, rows.push(after) - 1);
+      else rows[index] = after;
+    }
+    this.cache.set(id, after);
+    return after;
+  }
+  // Saves a copy read with getCopyRows(): `payload` holds the rows that were
+  // read and stay, changed or not, and the rows the edit adds. A row that was
+  // read and is absent is removed; the rows not read are untouched.
+  putCopyRows(key, payload) {
+    return this.putCopy(key, payload, {
+      deleted: false,
+      locallyHidden: false,
+      part: true,
+    });
+  }
+  // What the capture sends: each changed record, a copy as its row records.
+  captured() {
+    if (!this.records.size) return new Map(this.changes);
+    const captured = new Map();
+    for (const [id, change] of this.changes)
+      if (change.entity !== "sheetClone" || !change.rowIds)
+        captured.set(id, change);
+    for (const [id, record] of this.records) captured.set(id, record);
+    return captured;
   }
   async touch(entity, key) {
     const old = await this.get(entity, key);
@@ -412,14 +900,12 @@ export class DataSession {
   // replaceable(link) names the last pending operation this capture replaces
   // (see replaceableOperation); the projection then leaves it out, so the new
   // operation runs from that operation's base to this capture's result.
-  async projectedFor(replaceable = () => null) {
+  async projectedFor(replaceable = () => null, changes = this.changes) {
     let rows = (
-        await this.tx.query(
-          "SELECT op_id,status,payload,payload_hash FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq",
-          [this.teamId],
-        )
+        this.opened?.outbox || (await this.tx.query(OUTBOX_SQL, [this.teamId]))
       ).rows,
       pending = rows.map((row) => JSON.parse(row.payload));
+    if (this.opened) this.opened.outbox = null;
     const replaced = rows.length
       ? replaceable(rows.at(-1), pending.at(-1))
       : null;
@@ -428,8 +914,16 @@ export class DataSession {
       pending = pending.slice(0, -1);
     }
     const slice = new CanonicalSlice(this.tx, this.teamId);
-    for (const change of this.changes.values())
-      slice.touch(change.entity, change.key);
+    // A copy's row records name every row they change; the copy's other rows
+    // are not read (see CanonicalSlice.touch).
+    for (const change of changes.values())
+      slice.touch(
+        change.entity,
+        change.key,
+        this.records.size && change.entity === "sheetClone"
+          ? "edit"
+          : undefined,
+      );
     const state = await slice.include(pending).load();
     const { state: projectedState, context } = reduceSlice(
       state,
@@ -443,7 +937,7 @@ export class DataSession {
       })),
     );
     // This capture restores what the projection still holds deleted.
-    for (const change of this.changes.values())
+    for (const change of changes.values())
       if (projectedState.entities[entityId(change.entity, change.key)]?.deleted)
         slice.restored(change.entity, change.key);
     for (const [id, record] of await slice.readChildren(state))
@@ -472,6 +966,8 @@ export class DataSession {
       link.lease_owner ||
       others.length ||
       !["sheetClone", "document"].includes(change.entity) ||
+      // Row records already send only the rows an edit changed.
+      change.rowIds ||
       !change.before ||
       change.before.deleted ||
       change.after.deleted
@@ -480,7 +976,7 @@ export class DataSession {
     return (row, operation) => {
       const [previous, ...rest] = operation.changes;
       return row.status === "pending" &&
-        operation.protocol === PROTOCOL &&
+        [PROTOCOL, ROW_PROTOCOL].includes(operation.protocol) &&
         operation.writerEpoch === link.writer_epoch &&
         !operation.objects.length &&
         !rest.length &&
@@ -499,7 +995,9 @@ export class DataSession {
     const limited =
         Number.isFinite(this.limits.maxEntities) ||
         Number.isFinite(this.limits.maxBytes),
-      totals = await capacityTotals(this.tx, this.teamId),
+      // Read when the transaction opened (see withData): nothing since
+      // changed what it sums.
+      totals = this.capacity || (await capacityTotals(this.tx, this.teamId)),
       delta = (before, after) => {
         let bytes = 0,
           count = 0;
@@ -547,10 +1045,10 @@ export class DataSession {
   }
   async capture(actorId) {
     if (!this.changes.size) return;
+    // The link and the unsent operations were read when the transaction
+    // opened (see withData); the team lock keeps both as they were.
     const link = (
-      await this.tx.query("SELECT * FROM team_sync_links WHERE team_id=$1", [
-        this.teamId,
-      ])
+      this.opened?.link || (await this.tx.query(LINK_SQL, [this.teamId]))
     ).rows[0];
     if (!link || link.mode === "disconnected") return;
     assert(
@@ -558,27 +1056,31 @@ export class DataSession {
       409,
       "팀 데이터를 준비하고 있습니다. 잠시 후 다시 저장하세요.",
     );
-    const { state, projectedState, pending, entities, context, replaced } =
-      await this.projectedFor(this.replaceableOperation(link));
+    const captured = this.captured(),
+      { state, projectedState, pending, entities, context, replaced } =
+        await this.projectedFor(this.replaceableOperation(link), captured);
     const opId = crypto.randomUUID(),
       dependsOn = new Set(),
       pendingIds = new Set(pending.map((op) => op.opId));
     const changes = [],
       version = protocolVersion(projectedState);
-    const captured = new Map(this.changes);
-    if (version === SPLIT_PROTOCOL)
+    // Protocol 4 splits the copy here; under protocol 5 the changes already
+    // are its row records.
+    const split = version === SPLIT_PROTOCOL ? splitSheetCloneRecord : null,
+      records = split || version === ROW_PROTOCOL;
+    if (split)
       for (const [id, change] of this.changes) {
         if (change.entity !== "sheetClone") continue;
         captured.delete(id);
         const after = new Map(
-          splitSheetCloneRecord(change.after).map((record) => [
+          split(change.after).map((record) => [
             entityId(record.entity, record.key),
             record,
           ]),
         );
         for (const record of Object.values(entities))
           if (
-            ["sheetCloneTask", "sheetCloneCell"].includes(record.entity) &&
+            isSheetCloneChild(record.entity) &&
             record.key[0] === change.key[0] &&
             !after.has(entityId(record.entity, record.key))
           )
@@ -596,19 +1098,18 @@ export class DataSession {
     for (const change of captured.values()) {
       const { entity, key, after } = change,
         current = entities[entityId(entity, key)];
+      // A record made and removed before it ever reached C leaves nothing.
+      if (records && !current && after.deleted) continue;
       // 동기화 명령은 저장 형태(사본 data의 공유 사전)를 그대로 싣는다.
       const desired = this.stored(entity, after.payload);
       if (
-        version === SPLIT_PROTOCOL &&
+        records &&
         current &&
         equal(current.payload, desired) &&
         !!current.deleted === !!after.deleted
       )
         continue;
-      if (
-        version === SPLIT_PROTOCOL &&
-        ["sheetCloneTask", "sheetCloneCell"].includes(entity)
-      ) {
+      if (records && isSheetCloneChild(entity)) {
         for (const parent of [
           ["sheetClone", [key[0]]],
           ...(entity === "sheetCloneCell"
@@ -756,9 +1257,42 @@ const auditChanges = (action, changes, stored) =>
     : changes.map((c) => ({
         entity: c.entity,
         key: c.key,
-        before: stored(c.entity, c.before?.payload ?? null),
-        after: stored(c.entity, c.after?.payload ?? null),
+        before: stored(c.entity, changedRows(c, c.before)),
+        after: stored(c.entity, changedRows(c, c.after)),
       }));
+// A copy stored as row records is recorded with only the rows the change
+// touched: the rows it removed or changed before, and changed or added after.
+const changedRows = (change, side) =>
+  !side?.payload || !change.rowIds
+    ? (side?.payload ?? null)
+    : {
+        ...side.payload,
+        data: {
+          ...side.payload.data,
+          tasks: side.payload.data.tasks.filter((task) =>
+            change.rowIds.has(task.id),
+          ),
+        },
+      };
+// Several single-row inserts as one statement, so they cost one round trip:
+// each is `[INSERT INTO table(columns), values]`.
+async function insertTogether(tx, inserts) {
+  if (!inserts.length) return;
+  const params = [],
+    statements = inserts.map(([insert, values]) => {
+      const places = values.map((value) => "$" + params.push(value));
+      return `${insert} VALUES(${places.join(",")})`;
+    });
+  await tx.query(
+    statements.length === 1
+      ? statements[0]
+      : `WITH ${statements
+          .slice(0, -1)
+          .map((statement, i) => `w${i} AS (${statement})`)
+          .join(",")} ${statements.at(-1)}`,
+    params,
+  );
+}
 export async function withData(
   database,
   teamId,
@@ -772,26 +1306,24 @@ export async function withData(
     limits = capacityLimits(),
   } = {},
 ) {
+  // As text, the way a bound parameter sends it: the opening statement
+  // writes the value in as a literal.
+  const requested = write ? body?.operationId || null : null,
+    operationId =
+      requested === null
+        ? null
+        : typeof requested === "object"
+          ? JSON.stringify(requested)
+          : String(requested),
+    year =
+      write && body?.year !== undefined ? canonical([String(body.year)]) : null;
   return database.withTeamTransaction(
     teamId,
     async (tx) => {
-      // Every guard of this transaction in one round trip; each is asserted
-      // in the same order as before.
-      const operationId = write ? body?.operationId || null : null,
-        year =
-          write && body?.year !== undefined
-            ? canonical([String(body.year)])
-            : null,
-        guards = (
-          await tx.query(
-            `SELECT
-              EXISTS(SELECT 1 FROM site_maintenance_jobs WHERE team_id=$1 AND kind<>'backup' AND phase NOT IN ('complete','cancelled')) AS maintenance,
-              $2::boolean AND EXISTS(SELECT 1 FROM team_sync_links WHERE team_id=$1 AND lease_owner LIKE 'upgrade:%' AND lease_until>$3) AS upgrading,
-              $4::text IS NOT NULL AND EXISTS(SELECT 1 FROM site_retention r JOIN team_sync_links l ON l.team_id=r.team_id AND l.installation_id=r.site_id WHERE r.team_id=$1 AND r.kind='year' AND r.entity_key=$4) AS retained,
-              (SELECT row_to_json(o) FROM site_operations o WHERE o.team_id=$1 AND o.op_id=$5) AS previous`,
-            [teamId, write, Date.now(), year, operationId],
-          )
-        ).rows[0];
+      // Every guard of this transaction, asserted in the same order as
+      // before. They and a write's capacity totals are read in the round trip
+      // that opens the transaction (see `first` below).
+      const guards = tx.first[0].rows[0];
       assert(
         !guards.maintenance,
         409,
@@ -817,8 +1349,24 @@ export async function withData(
         );
         return unpack(JSON.parse(previous.response));
       }
-      const session = new DataSession(tx, teamId, { limits }),
-        result = await work(session);
+      const session = new DataSession(tx, teamId, { limits });
+      // A full database refuses the write before any work, in this
+      // transaction instead of one of its own; the capture reuses the totals.
+      if (write) {
+        session.capacity = await capacityTotals(tx, teamId, tx.first[1]);
+        assertCapacityTotals(session.capacity, limits);
+        // The unsent operations come along only while they are small (see
+        // SMALL_OUTBOX_SQL); a large backlog is read when a capture needs it.
+        session.opened = {
+          link: tx.first[2],
+          outbox:
+            Number(tx.first[1].rows[0]?.outbox_bytes ?? Infinity) <
+            SMALL_OUTBOX_BYTES
+              ? tx.first[3]
+              : null,
+        };
+      }
+      const result = await work(session);
       if (write) {
         if (validateImages)
           await validateImages(
@@ -827,9 +1375,12 @@ export async function withData(
               .map((c) => c.after.payload),
           );
         await session.capture(actorId);
+        // What the save records about itself (its history entry, the event
+        // viewers follow and the answer kept for a retry), in one statement.
+        const records = [];
         if (session.changes.size) {
-          await tx.query(
-            "INSERT INTO site_audit(id,team_id,actor_id,action,target,payload,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)",
+          records.push([
+            "INSERT INTO site_audit(id,team_id,actor_id,action,target,payload,created_at)",
             [
               crypto.randomUUID(),
               teamId,
@@ -846,25 +1397,35 @@ export async function withData(
               ),
               new Date().toISOString(),
             ],
-          );
+          ]);
           // A complete cell delta already carries revisions and task timestamps.
           // Adding a structural event here would reset every cell subscriber.
           if (!(
             session.eventKinds.has("cells") &&
             [...session.changes.values()].every((c) => c.entity === "cell")
-          ))
-            await session.event("changed", {
-              teamId,
-              entities: [...session.changes.values()].map((c) => ({
-                entity: c.entity,
-                key: c.key,
-              })),
-              actorId,
-            });
+          )) {
+            session.eventKinds.add("changed");
+            records.push([
+              "INSERT INTO site_events(team_id,kind,payload,created_at)",
+              [
+                teamId,
+                "changed",
+                canonical({
+                  teamId,
+                  entities: [...session.changes.values()].map((c) => ({
+                    entity: c.entity,
+                    key: c.key,
+                  })),
+                  actorId,
+                }),
+                new Date().toISOString(),
+              ],
+            ]);
+          }
         }
         if (operationId)
-          await tx.query(
-            "INSERT INTO site_operations(team_id,op_id,actor_id,request_hash,response,created_at) VALUES($1,$2,$3,$4,$5,$6)",
+          records.push([
+            "INSERT INTO site_operations(team_id,op_id,actor_id,request_hash,response,created_at)",
             [
               teamId,
               operationId,
@@ -876,10 +1437,30 @@ export async function withData(
               JSON.stringify(pack(result)),
               new Date().toISOString(),
             ],
-          );
+          ]);
+        await insertTogether(tx, records);
       }
       return result;
     },
-    { readOnly: !write },
+    {
+      readOnly: !write,
+      first: [
+        {
+          sql: `SELECT
+              EXISTS(SELECT 1 FROM site_maintenance_jobs WHERE team_id=$1 AND kind<>'backup' AND phase NOT IN ('complete','cancelled')) AS maintenance,
+              $2::boolean AND EXISTS(SELECT 1 FROM team_sync_links WHERE team_id=$1 AND lease_owner LIKE 'upgrade:%' AND lease_until>$3) AS upgrading,
+              $4::text IS NOT NULL AND EXISTS(SELECT 1 FROM site_retention r JOIN team_sync_links l ON l.team_id=r.team_id AND l.installation_id=r.site_id WHERE r.team_id=$1 AND r.kind='year' AND r.entity_key=$4) AS retained,
+              (SELECT row_to_json(o) FROM site_operations o WHERE o.team_id=$1 AND o.op_id=$5) AS previous`,
+          params: [teamId, write, Date.now(), year, operationId],
+        },
+        // What a write's capture reads, while nothing else can change it.
+        ...(write
+          ? [KEPT_TOTALS_SQL, LINK_SQL, SMALL_OUTBOX_SQL].map((sql) => ({
+              sql,
+              params: [teamId],
+            }))
+          : []),
+      ],
+    },
   );
 }

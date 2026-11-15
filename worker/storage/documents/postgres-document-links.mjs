@@ -143,20 +143,35 @@ export async function resolvePostgresDocumentLinks(ctx, paths) {
           );
         if (rows.length) {
           // A copy's data is stored plain or as the shared dictionary form
-          // whose `$data` keeps the rows and their cell values.
+          // whose `$data` keeps the rows and their cell values, or (protocol
+          // 5) each row is a record of its own under a live copy.
           const titles = new Map(
             (
               await s.tx.query(
                 `SELECT r.entity_key::jsonb->>0 AS sheet_clone_id,t->>'id' AS id,t->'cells'->'title'->>'value' AS title
                 FROM site_entities r
                 CROSS JOIN LATERAL jsonb_array_elements(COALESCE(r.payload::jsonb#>'{data,$data,tasks}',r.payload::jsonb#>'{data,tasks}')) t
-                WHERE r.team_id=$1 AND r.entity='sheetClone' AND r.deleted=0 AND r.entity_key=ANY($2::text[]) AND t->>'id'=ANY($3::text[])`,
+                WHERE r.team_id=$1 AND r.entity='sheetClone' AND r.deleted=0 AND r.entity_key=ANY($2::text[]) AND t->>'id'=ANY($3::text[])
+                UNION ALL
+                SELECT t.entity_key::jsonb->>0,t.entity_key::jsonb->>1,CASE WHEN t.payload ~ $5 THEN NULL ELSE t.payload::jsonb->'cells'->'title'->>'value' END
+                FROM site_entities t JOIN site_entities r ON r.team_id=t.team_id AND r.entity='sheetClone' AND r.deleted=0 AND r.entity_key=jsonb_build_array(t.entity_key::jsonb->>0)::text
+                WHERE t.team_id=$1 AND t.entity='sheetCloneTask' AND t.deleted=0 AND t.entity_key=ANY($4::text[])`,
                 [
                   s.teamId,
                   [...new Set(rows.map(({ link }) => link.sheetCloneId))].map(
                     (id) => JSON.stringify([id]),
                   ),
                   [...new Set(rows.map(({ link }) => link.id))],
+                  // The linked rows by key, and the payloads jsonb cannot
+                  // read (see sheetCloneSummaries): those answer no title.
+                  [
+                    ...new Set(
+                      rows.map(({ link }) =>
+                        JSON.stringify([link.sheetCloneId, link.id]),
+                      ),
+                    ),
+                  ],
+                  "\\\\u(0000|[dD][89a-fA-F])",
                 ],
               )
             ).rows.map((row) => [

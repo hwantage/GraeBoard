@@ -4,7 +4,7 @@ import {
   unwrapToggleCommand,
 } from "./DocumentToggle";
 
-import { editorViewCtx, commandsCtx } from "@milkdown/kit/core";
+import { commandsCtx } from "@milkdown/kit/core";
 import {
   wrapInHeadingCommand,
   turnIntoTextCommand,
@@ -14,8 +14,14 @@ import {
   paragraphSchema,
 } from "@milkdown/kit/preset/commonmark";
 
-import { TextSelection, type Command } from "@milkdown/kit/prose/state";
+import {
+  EditorState,
+  TextSelection,
+  type Command,
+  type Transaction,
+} from "@milkdown/kit/prose/state";
 import { Fragment, NodeRange, type Node } from "@milkdown/kit/prose/model";
+import { canJoin, liftTarget, StepMap } from "@milkdown/kit/prose/transform";
 import { keydownHandler } from "@milkdown/kit/prose/keymap";
 
 import { closeHistory } from "@milkdown/kit/prose/history";
@@ -143,24 +149,153 @@ export const listFormatKeydown = keydownHandler({
   "Mod-Alt-7": listFormatCommand("ordered"),
   "Mod-Alt-8": listFormatCommand("bullet"),
 });
+// Lift the list item at `pos` out of its own list, into the block that holds
+// the list: the top level, a toggle, a quote or the parent item of a nested
+// list. The list splits around the item. The item's other blocks, such as its
+// sub-items, follow its paragraph and join the items after it when both are
+// the same kind of list. A checklist item's check is dropped with the item.
+// When an ordered list splits, the list after the item continues from the
+// item's number.
+function liftItemOutOfList(tr: Transaction, pos: number) {
+  const { doc } = tr;
+  const item = doc.nodeAt(pos);
+  if (!item) return false;
+  const $item = doc.resolve(pos);
+  const list = $item.parent;
+  const index = $item.index();
+  const range = new NodeRange(
+    doc.resolve(pos + 1),
+    doc.resolve(pos + item.nodeSize - 1),
+    $item.depth + 1,
+  );
+  if (liftTarget(range) !== $item.depth - 1) return false;
+  const steps = tr.steps.length;
+  tr.lift(range, $item.depth - 1);
+  // In a tight parent item Markdown would join the lifted blocks to the lists
+  // around them without blank lines, and a paragraph after a list, a block
+  // after a toggle or an ordered list not starting at 1 would then be read
+  // back as part of the block before it. A loose item keeps them apart.
+  const holder = $item.node($item.depth - 1);
+  if (holder.type === item.type && !holder.attrs.spread)
+    tr.setNodeMarkup($item.before($item.depth - 1), undefined, {
+      ...holder.attrs,
+      spread: true,
+    });
+  if (index === list.childCount - 1) return true;
+  // The list of the items after the lifted one starts right after its blocks.
+  const after = tr.mapping.slice(steps).map(pos + item.nodeSize - 1, -1);
+  const rest = tr.doc.nodeAt(after);
+  if (!rest || rest.type !== list.type) return true;
+  const attrs =
+    index && list.type.name === "ordered_list"
+      ? { ...rest.attrs, order: (list.attrs.order ?? 1) + index + 1 }
+      : rest.attrs;
+  const $after = tr.doc.resolve(after);
+  const children = $after.nodeBefore;
+  if (children?.type === rest.type && canJoin(tr.doc, after)) {
+    tr.setNodeMarkup(after - children.nodeSize, undefined, attrs);
+    tr.join(after);
+  } else if (attrs !== rest.attrs) tr.setNodeMarkup(after, undefined, attrs);
+  return true;
+}
+
+// Lift every list item whose first paragraph the selection touches. A
+// selection ending at the start of an item's line, as Shift+Down leaves it,
+// does not take that item, as for the block handle. The last item goes
+// first: a lift keeps the positions before the lifted item, so the positions
+// found earlier stay valid, and a nested item leaves before its parent item
+// does.
+function liftSelectedListItems(state: EditorState): Transaction | null {
+  const { from, to, empty } = state.selection;
+  const listItem = state.schema.nodes.list_item;
+  const found: number[] = [];
+  state.doc.nodesBetween(from, to, (node, pos) => {
+    if (
+      node.type === listItem &&
+      (empty ? pos + 1 : pos + 2) < to &&
+      pos + 1 + node.firstChild!.nodeSize > from
+    )
+      found.push(pos);
+  });
+  if (!found.length) return null;
+  const tr = state.tr;
+  for (const pos of found.reverse())
+    if (!liftItemOutOfList(tr, pos)) return null;
+  return tr;
+}
+
+// The block menu checks every format against the same state. They share one
+// lifted state instead of lifting again for each format.
+const liftedStates = new WeakMap<EditorState, EditorState | null>();
+function liftedState(state: EditorState): EditorState | null {
+  let lifted = liftedStates.get(state);
+  if (lifted === undefined) {
+    const tr = liftSelectedListItems(state);
+    lifted = tr && EditorState.create({ doc: tr.doc, selection: tr.selection });
+    liftedStates.set(state, lifted);
+  }
+  return lifted;
+}
+
+// A list item starts with a paragraph, so a heading, quote, code block or
+// toggle cannot replace it there. Lift the selected items out of their lists
+// first and convert them in the same change, one undo step. Turning items into
+// paragraphs needs only the lift.
+function outOfListCommand(convert: Command, liftConverts = false): Command {
+  return (state, dispatch, view) => {
+    if (!dispatch) {
+      const next = liftedState(state);
+      return next
+        ? convert(next) || liftConverts
+        : convert(state, undefined, view);
+    }
+    const lifted = liftSelectedListItems(state);
+    if (!lifted) return convert(state, dispatch, view);
+    const next = EditorState.create({
+      doc: lifted.doc,
+      selection: lifted.selection,
+    });
+    const result: { tr: Transaction | null } = { tr: null };
+    if (!convert(next, (tr) => (result.tr = tr)) && !liftConverts) return false;
+    const converted = result.tr;
+    if (converted) {
+      for (const step of converted.steps) lifted.step(step);
+      if (converted.selectionSet)
+        lifted.setSelection(converted.selection.map(lifted.doc, StepMap.empty));
+    }
+    dispatch(closeHistory(lifted).scrollIntoView());
+    return true;
+  };
+}
+
+// In a toggle's title the toggle itself changes. The state the command runs
+// on decides, so a check against another selection gives the same answer.
+function summaryOr(summary: Command, other: Command): Command {
+  return (state, dispatch, view) =>
+    (inToggleSummary(state) ? summary : other)(state, dispatch, view);
+}
+
 export function blockCommand(ctx: Ctx, value: string): Command | null {
   if (value === "bullet" || value === "ordered" || value === "task")
     return listFormatCommand(value);
   if (value.startsWith("toggle"))
-    return setToggleCommand(Number(value.slice(6)) || 0);
+    return outOfListCommand(setToggleCommand(Number(value.slice(6)) || 0));
   const commands = ctx.get(commandsCtx);
-  const summary = inToggleSummary(ctx.get(editorViewCtx).state);
   if (value.startsWith("h")) {
     const level = Number(value.slice(1));
-    return summary
-      ? unwrapToggleCommand(headingSchema.type(ctx), { level })
-      : commands.get(wrapInHeadingCommand.key)(level);
+    return summaryOr(
+      unwrapToggleCommand(headingSchema.type(ctx), { level }),
+      outOfListCommand(commands.get(wrapInHeadingCommand.key)(level)),
+    );
   }
   if (value === "paragraph")
-    return summary
-      ? unwrapToggleCommand(paragraphSchema.type(ctx))
-      : commands.get(turnIntoTextCommand.key)();
-  if (value === "quote") return commands.get(wrapInBlockquoteCommand.key)();
-  if (value === "code") return commands.get(createCodeBlockCommand.key)();
+    return summaryOr(
+      unwrapToggleCommand(paragraphSchema.type(ctx)),
+      outOfListCommand(commands.get(turnIntoTextCommand.key)(), true),
+    );
+  if (value === "quote")
+    return outOfListCommand(commands.get(wrapInBlockquoteCommand.key)());
+  if (value === "code")
+    return outOfListCommand(commands.get(createCodeBlockCommand.key)());
   return null;
 }

@@ -734,6 +734,60 @@ test("모바일에서 시크릿 상세는 처음부터 전체 화면·전체 너
   ).toBeVisible();
 });
 
+test("시크릿 상세도 닫기 왼쪽의 이모지 복사로 찾은 이모지를 서버 요청 없이 복사한다", async ({
+  page,
+}, testInfo) => {
+  const title = `이모지 시크릿 ${randomUUID()}`;
+  await create(page, title);
+  const requests = observe(page);
+  await card(page, title).click();
+  const buttons = detail(page).locator(":scope > header > button");
+  await expect(buttons.last()).toHaveAccessibleName("닫기");
+  const emoji = buttons.nth(-2);
+  await expect(emoji).toHaveAccessibleName("이모지 복사");
+  const [left, right] = await Promise.all([
+    emoji.boundingBox(),
+    buttons.last().boundingBox(),
+  ]);
+  expect(left!.x + left!.width).toBeLessThanOrEqual(right!.x);
+  expect(Math.abs(left!.y - right!.y)).toBeLessThan(2);
+  await page.evaluate(() => {
+    (window as any).__copied = null;
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        write: async (items: ClipboardItem[]) => {
+          (window as any).__copied = await (
+            await items[0].getType("text/plain")
+          ).text();
+        },
+      },
+    });
+  });
+  await emoji.click();
+  const picker = page.getByRole("dialog", { name: "이모지 복사", exact: true });
+  await picker.getByRole("textbox", { name: "이모지 검색" }).fill("자물쇠");
+  await expect(
+    picker.getByRole("region", { name: "검색 결과" }).getByRole("button"),
+  ).toHaveText(["🔒", "🔓"]);
+  await page.screenshot({
+    path: testInfo.outputPath("secret-emoji-picker.png"),
+  });
+  await picker.getByRole("button", { name: "자물쇠", exact: true }).click();
+  await expect(
+    page.locator(".toast").filter({ hasText: "이모지를 복사했습니다." }),
+  ).toHaveText("🔒 이모지를 복사했습니다.");
+  expect(await page.evaluate(() => (window as any).__copied)).toBe("🔒");
+  await expect(picker).toHaveCount(0);
+  await emoji.click();
+  await expect(picker).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(picker).toHaveCount(0);
+  await expect(detail(page)).toBeVisible();
+  await closeDetail(page);
+  expectPrivate(requests, title);
+});
+
 test("다른 탭의 기간 변경은 제목 저장 뒤에도 덮어쓰지 않고 초안으로 복원한다", async ({
   page,
   context,
@@ -1766,6 +1820,19 @@ test("시크릿 생성·연속 복제는 표시 맨 아래에 번호 순으로 �
   page,
   context,
 }) => {
+  // The monthly view reads each listed month separately, and the entry made
+  // below makes it read them again. WebKit reports reads cut off by a reload
+  // as page errors, so each reload waits for them.
+  const reading = new Set<object>();
+  page.on("request", (r) => {
+    if (
+      new URL(r.url()).pathname.startsWith("/api/calendar") &&
+      !r.url().includes("/events")
+    )
+      reading.add(r);
+  });
+  for (const settled of ["requestfinished", "requestfailed"] as const)
+    page.on(settled, (r) => reading.delete(r));
   const server = await request(page, "/calendar/entries", "POST", {
     id: randomUUID(),
     teamId,
@@ -1773,6 +1840,10 @@ test("시크릿 생성·연속 복제는 표시 맨 아래에 번호 순으로 �
     date: todayKey(),
     title: "맨 위 일반 일정",
   });
+  await expect(
+    page.locator(`[data-entry-id="${server.id}"]`).first(),
+  ).toBeAttached();
+  await expect.poll(() => reading.size).toBe(0);
   await page.reload();
   const title = `순서 복제 ${randomUUID()}`;
   const requests = observe(page);
@@ -1820,6 +1891,7 @@ test("시크릿 생성·연속 복제는 표시 맨 아래에 번호 순으로 �
   const peer = await context.newPage();
   await peer.goto("/calendar");
   await expectDisplayOrder(peer, ids);
+  await expect.poll(() => reading.size).toBe(0);
   await page.reload();
   await expectDisplayOrder(page, ids);
   expectPrivate(requests, title, "나중에 만든 시크릿");

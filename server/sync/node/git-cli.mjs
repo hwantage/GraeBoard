@@ -16,6 +16,18 @@ export function repositoryUrl(value) {
     throw new Error("Use a GitHub owner/private-repository");
   return `https://github.com/${match[1]}/${match[2]}`;
 }
+// What Git printed, safe to keep in a log file: credentials inside a URL (a
+// proxy configured as http://user:password@host) and the access token are
+// masked. Git never receives the token in a URL, so this is a second guard.
+export function redactGitOutput(text, token) {
+  let safe = String(text).replace(
+    /([a-z][a-z0-9+.-]*:\/\/)[^\s/'"]*@/gi,
+    "$1***@",
+  );
+  if (typeof token === "string" && token.length >= 8)
+    safe = safe.split(token).join("***");
+  return safe;
+}
 export class GitCliTransport {
   constructor({
     directory,
@@ -25,6 +37,7 @@ export class GitCliTransport {
     localTimeoutMs = 30000,
     networkTimeoutMs = 300000,
     signal,
+    log,
   }) {
     this.directory = resolve(directory);
     this.repository = allowLocal
@@ -35,6 +48,8 @@ export class GitCliTransport {
     this.localTimeoutMs = localTimeoutMs;
     this.networkTimeoutMs = networkTimeoutMs;
     this.signal = signal;
+    // Optional observer of every Git command for the synchronization log.
+    this.log = log;
   }
   async init() {
     if (!this.ready)
@@ -55,7 +70,8 @@ export class GitCliTransport {
       })();
     return this.ready;
   }
-  async git(args, { input, index } = {}) {
+  // `silent` keeps a command the log itself runs out of the log.
+  async git(args, { input, index, silent } = {}) {
     const signal = this.signal;
     const network = ["fetch", "push", "ls-remote"].includes(args[0]);
     const timeout = network ? this.networkTimeoutMs : this.localTimeoutMs;
@@ -72,6 +88,36 @@ export class GitCliTransport {
       GIT_COMMITTER_NAME: "GraeBoard",
       GIT_COMMITTER_EMAIL: "sync@invalid.local",
       ...(index ? { GIT_INDEX_FILE: index } : {}),
+    };
+    const started = performance.now();
+    // Reports what ran and what Git printed. It never changes the outcome.
+    const report = (error) => {
+      if (!this.log || silent) return;
+      try {
+        const aborted = !!error && !!signal?.aborted,
+          stderr = redactGitOutput(
+            error?.stderr?.toString().trim().slice(-8000) || "",
+            this.token,
+          );
+        this.log({
+          command: args[0],
+          args: redactGitOutput(args.join(" ").slice(0, 400), this.token),
+          // merge-base and grep answer "no" with exit code 1.
+          ok:
+            !error ||
+            (error.code === 1 && ["merge-base", "grep"].includes(args[0])),
+          ...(error ? { code: error.code ?? null } : {}),
+          ms: Math.round(performance.now() - started),
+          ...(input !== undefined
+            ? { inputBytes: Buffer.byteLength(input) }
+            : {}),
+          ...(stderr ? { stderr } : {}),
+          ...(aborted ? { aborted } : {}),
+          ...(error?.killed && !aborted ? { timedOut: true } : {}),
+        });
+      } catch {
+        // Logging is best effort.
+      }
     };
     try {
       if (input !== undefined)
@@ -96,19 +142,17 @@ export class GitCliTransport {
               maxBuffer: 128 * 1024 * 1024,
               encoding: "buffer",
             },
-            (error, stdout) =>
+            (error, stdout, stderr) =>
               error
-                ? reject(
-                    Object.assign(
-                      new Error("Git operation failed (" + error.code + ")"),
-                      { code: error.code },
-                    ),
-                  )
+                ? reject(Object.assign(error, { stderr }))
                 : resolve(stdout),
           );
           child.stdin.end(input);
+        }).then((stdout) => {
+          report();
+          return stdout;
         });
-      return (
+      const stdout = (
         await exec(
           "git",
           [
@@ -131,11 +175,17 @@ export class GitCliTransport {
           },
         )
       ).stdout;
+      report();
+      return stdout;
     } catch (error) {
+      report(error);
       if (signal?.aborted && signal.reason instanceof Error)
         throw signal.reason;
+      // The failed step is named so the stored error says where it stopped.
       throw Object.assign(
-        new Error("Git operation failed (" + (error.code || "network") + ")"),
+        new Error(
+          `Git operation failed (${error.code || "network"}, ${args[0]})`,
+        ),
         { code: error.code },
       );
     }

@@ -167,6 +167,7 @@ export async function eventResponse(
             );
             ctx.user = await authenticate(ctx.env, ctx.identity, ctx.request);
             ctx.teamCache.clear();
+            ctx.controlStore.forget?.();
             const feeds = new Map();
             for (const channel of channels) {
               if (channel.closed) continue;

@@ -94,6 +94,16 @@ async function reloadCalendarAfterInitialRefresh(page: Page) {
     page.off("requestfailed", finished);
   }
 }
+// A read of the range holding today, i.e. a reload of the opened month.
+// Scrolling may still add the following months, which is not a reload.
+const readsToday = (url: string) => {
+  const params = new URL(url).searchParams;
+  return (
+    url.includes("/api/calendar?") &&
+    params.get("from")! <= todayKey() &&
+    todayKey() <= params.get("to")!
+  );
+};
 const manager = (page: Page) =>
   page.getByRole("dialog", { name: /^(개인|팀) 태그 관리$/ });
 const detail = (page: Page) =>
@@ -372,11 +382,17 @@ test("팀 월간 보기에서 일반 팀원이 공용 태그·일정을 만들�
   await checkbox().check();
   await expect(checkbox()).toBeChecked();
   await expect(card(page, entry.id)).toBeEnabled();
+  // The month opens with today's week right below the weekday header, where
+  // dragging scrolls the grid up; drag from the top of the month instead.
+  await page.locator(".calendar-scroll").evaluate((element) => {
+    element.scrollTop = 0;
+  });
   let reads = 0;
   page.on("request", (req) => {
     if (
       new URL(req.url()).pathname === "/api/calendar" &&
-      req.method() === "GET"
+      req.method() === "GET" &&
+      readsToday(req.url())
     )
       reads++;
   });
@@ -1050,7 +1066,8 @@ test("체크 태그를 만들고 일정별 체크·키보드·배경색·유형 
   page.on("request", (req) => {
     if (
       req.method() === "GET" &&
-      new URL(req.url()).pathname === "/api/calendar"
+      new URL(req.url()).pathname === "/api/calendar" &&
+      readsToday(req.url())
     )
       reads.push(req.url());
   });
@@ -1441,7 +1458,8 @@ test("일정 상세를 간결하게 표시하고 즉시 삭제·실행취소로 
   page.on("request", (req) => {
     if (
       req.method() === "GET" &&
-      new URL(req.url()).pathname === "/api/calendar"
+      new URL(req.url()).pathname === "/api/calendar" &&
+      readsToday(req.url())
     )
       reads.push(req.url());
   });

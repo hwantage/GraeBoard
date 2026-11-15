@@ -124,8 +124,8 @@
   background: var(--paper);
 }
 .document-browser-source-toggle,
-.document-browser-task-toggle,
-.document-browser-task-open,
+.document-browser-entry-toggle,
+.document-browser-entry-open,
 .document-browser-group-toggle,
 .document-browser-document {
   display: flex;
@@ -170,7 +170,9 @@
   padding: 12px 10px 12px 20px;
 }
 .document-browser-source-body > p,
-.document-browser-source-body > [role="alert"] {
+.document-browser-source-body > [role="alert"],
+.document-browser-documents > p,
+.document-browser-documents > [role="alert"] {
   padding: 8px;
   font-size: 12px;
 }
@@ -226,18 +228,27 @@
 .document-browser-task {
   margin: 3px 0;
 }
+/* Each source's tail memos close its list, after the tasks and paging. */
+.document-browser-memos {
+  margin: 8px 0 3px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+}
+.document-browser-memos .document-browser-task-heading > svg {
+  color: var(--document-accent);
+}
 .document-browser-task-header {
   display: flex;
   align-items: center;
 }
-.document-browser-task-toggle {
+.document-browser-entry-toggle {
   flex: 0 0 26px;
   width: 26px;
   align-self: stretch;
   padding: 7px 4px;
   border-radius: 4px;
 }
-.document-browser-task-open {
+.document-browser-entry-open {
   flex: 1;
   min-width: 0;
   padding: 7px 4px 7px 0;
@@ -329,8 +340,8 @@
   display: none;
 }
 .document-browser-source-toggle:hover,
-.document-browser-task-toggle:hover,
-.document-browser-task-open:hover,
+.document-browser-entry-toggle:hover,
+.document-browser-entry-open:hover,
 .document-browser-document:hover {
   background: var(--surface);
 }

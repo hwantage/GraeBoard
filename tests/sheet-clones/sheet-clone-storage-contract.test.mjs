@@ -522,13 +522,21 @@ test("PG consecutive copy edits replace the last unsent edit of that copy", asyn
       ],
     });
   };
-  // The first edit also creates the copy's document, so it stays as it is.
-  await title("first");
+  // An edit saves no document for a row that has none, so the first edit is
+  // replaced like the ones after it.
   const before = await sheetCloneOps(),
     original = before
       .at(-1)
       .changes.find((c) => c.entity === "sheetClone").desired;
-  for (const value of ["second", "third", "fourth"]) await title(value);
+  for (const value of ["first", "second", "third", "fourth"])
+    await title(value);
+  assert.equal(
+    (await pending()).some((op) =>
+      op.changes.some((c) => c.entity === "document"),
+    ),
+    false,
+    "no document is written for a row without one",
+  );
   const ops = await sheetCloneOps();
   assert.equal(ops.length, before.length + 1, "one operation for the edits");
   const [edit] = ops.at(-1).changes;

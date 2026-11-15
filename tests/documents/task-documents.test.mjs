@@ -2212,6 +2212,19 @@ test("연간 메모는 팀·연도별로 분리하고 권한·충돌·재시도�
   const saved = await f.req(path, "PUT", save, "member");
   assert.equal(saved.status, 200);
   assert.equal(saved.data.revision, 1);
+  // The document browser lists memos with short previews, never their bodies.
+  const previews = await f.req(`${base}?preview=1`, "GET", undefined, "viewer");
+  assert.equal(previews.status, 200);
+  assert.deepEqual(previews.data.documents, [
+    {
+      ...(await f.req(base)).data.documents[0],
+      preview: "연간 기록 완료",
+    },
+  ]);
+  assert.equal(
+    (await f.req(`${base}?preview=1`, "GET", undefined, "outsider")).status,
+    403,
+  );
   assert.deepEqual(
     withoutSync((await f.req(path, "PUT", save, "member")).data),
     withoutSync(saved.data),
@@ -2602,6 +2615,31 @@ test("사본 메모의 편집·재정렬 권한과 충돌은 표 편집과 분�
     "member",
   );
   assert.equal(saved.status, 200);
+  assert.deepEqual(
+    (
+      await f.req(`${base}?preview=1`, "GET", undefined, "viewer")
+    ).data.documents.map(({ id, hasContent, preview, markdown }) => ({
+      id,
+      hasContent: !!hasContent,
+      preview,
+      markdown,
+    })),
+    [
+      {
+        id: a,
+        hasContent: true,
+        preview: "사본 독립 저장",
+        markdown: undefined,
+      },
+      { id: b, hasContent: false, preview: "", markdown: undefined },
+    ],
+  );
+  assert.deepEqual(
+    (await f.req(`${original}?preview=1`)).data.documents.map(
+      (doc) => doc.preview,
+    ),
+    ["", ""],
+  );
   const conflict = await f.req(`${base}/${a}`, "PUT", {
     markdown: "낡은 입력",
     expectedRevision: 0,

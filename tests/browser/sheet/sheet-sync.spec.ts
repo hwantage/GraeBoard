@@ -85,7 +85,7 @@ for (const copy of [false, true]) {
       let held = false;
       if (copy)
         await page.route(
-          `**/api/sheet-clones/${sheetClone.id}`,
+          `**/api/sheet-clones/${sheetClone.id}*`,
           async (route) => {
             if (route.request().method() === "PATCH" && !held) {
               held = true;

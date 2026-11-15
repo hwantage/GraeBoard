@@ -369,8 +369,10 @@ export default function useCalendarCommands({
     });
   }
   function updateWeekly(ownerId: string, start: string, weekly: WeeklyItem[]) {
+    // A monthly view reads a member in several ranges; only the range holding
+    // the week keeps its list.
     updateData((previous, query) =>
-      query.userId !== ownerId
+      query.userId !== ownerId || start < query.from || start > query.to
         ? previous
         : {
             ...previous,

@@ -10,6 +10,7 @@ import {
   emptyState,
   protocolVersion,
   PROTOCOL,
+  ROW_PROTOCOL,
   stateSumFrom,
 } from "../../server/sync/core/protocol.mjs";
 import { assert } from "../control/access.mjs";
@@ -95,7 +96,10 @@ export function boundStore(
               if (!link?.canonical_head) return null;
               const slice = new CanonicalSlice(tx, teamId),
                 base = await slice.include(operations).include(cover).load();
-              if (protocolVersion(base) !== PROTOCOL) return null;
+              // Protocol 4 splits a copy into a record per cell and is
+              // reduced over the whole state.
+              if (![PROTOCOL, ROW_PROTOCOL].includes(protocolVersion(base)))
+                return null;
               const context = await slice.context(base);
               mark("readSlice", {
                 entities: Object.keys(base.entities).length,

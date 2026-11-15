@@ -72,6 +72,7 @@ import { inkFor } from "../ui/color";
 import { Empty } from "../ui/Empty";
 import InlineCellEditor, { type EditorState } from "./InlineCellEditor";
 import PropertyBadge from "./PropertyBadge";
+import LinkedText from "./LinkedText";
 import MemberValue from "./MemberValue";
 import GridHeaderMenu, { type HeaderMenuAction } from "../ui/GridHeaderMenu";
 import PropertyFilter from "./PropertyFilter";
@@ -1600,25 +1601,11 @@ const GridCell = memo(function GridCell({
       style={textDecoration ? { textDecoration } : undefined}
     >
       {textParts.some((part) => part.href) ? (
-        <span className="cell-linked-text">
-          {textParts.map((part, index) =>
-            part.href ? (
-              <a
-                key={index}
-                href={part.href}
-                target="_blank"
-                rel="noreferrer"
-                onPointerDown={(e) => e.stopPropagation()}
-              >
-                {part.text}
-              </a>
-            ) : (
-              <span key={index} style={{ textDecoration }}>
-                {part.text}
-              </span>
-            ),
-          )}
-        </span>
+        <LinkedText
+          className="cell-linked-text"
+          parts={textParts}
+          textDecoration={textDecoration}
+        />
       ) : (
         text
       )}

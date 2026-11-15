@@ -1,4 +1,4 @@
-import { applicationEntities } from "../core/versions.mjs";
+import { applicationEntities, isSheetCloneChild } from "../core/versions.mjs";
 import { syncImageReferences } from "../../../shared/sync/sync-image-references.js";
 import {
   encodeStoredSnapshot,
@@ -6,7 +6,12 @@ import {
 } from "../core/snapshot.mjs";
 import { parentPort, workerData } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
-import { allEntities, readEntity, localPayloadEqual } from "./entities.mjs";
+import {
+  allEntities,
+  localAfterImage,
+  readEntity,
+  localPayloadEqual,
+} from "./entities.mjs";
 import {
   canonical,
   digest,
@@ -23,6 +28,7 @@ import { sqliteTeamStore } from "../../storage/sqlite.mjs";
 import { prepareStatePatch } from "../../../shared/sync/sync-team-store.mjs";
 import { snapshotGuard, interferenceKeys } from "./node-background.mjs";
 import { GitCliTransport } from "./git-cli.mjs";
+import { createSyncLog } from "./sync-log.mjs";
 import {
   normalizeSyncError,
   protocolValidation,
@@ -142,21 +148,12 @@ function compute(request) {
       const pending = store.readPending(),
         canonicalState = store.readState(),
         before = project(canonicalState, pending).entities,
-        // A calendar document with no saved body is published only when
-        // shared state already has it.
-        after = allEntities(db, link, {
-          calendarDocuments: (key, saved) =>
-            saved || !!before[entityId("document", key)],
-        }),
-        exclusions = store.readExclusions(link.installation_id);
-      for (const [key, previous] of Object.entries(before)) {
-        // Local retention and unused person references are not shared deletions.
-        // Keep already deleted records as tombstones when their rows are absent.
-        if (isExcluded(previous, before, exclusions)) delete after[key];
-        else if (!after[key])
-          after[key] =
-            previous.deleted || previous.entity === "person" ? previous : null;
-      }
+        after = localAfterImage(
+          db,
+          link,
+          before,
+          store.readExclusions(link.installation_id),
+        );
       const operation = makeOperation({
         link: { ...link, protocol: protocolVersion({ entities: before }) },
         actorRef: request.actorRef,
@@ -477,12 +474,8 @@ function projectionPatch(
           ? []
           : [
               entityId(
-                ["sheetCloneTask", "sheetCloneCell"].includes(entity)
-                  ? "sheetClone"
-                  : entity,
-                ["sheetCloneTask", "sheetCloneCell"].includes(entity)
-                  ? [key[0]]
-                  : key,
+                isSheetCloneChild(entity) ? "sheetClone" : entity,
+                isSheetCloneChild(entity) ? [key[0]] : key,
               ),
             ];
       }),
@@ -743,9 +736,11 @@ function serviceFor(config) {
       return mutate("status", teamId, owner, { serialized: canonical(value) });
     },
   };
+  const syncLog = createSyncLog(config.logDir);
   const transport = new GitCliTransport({
     ...config.transport,
     signal: activeRequest?.controller.signal,
+    log: (entry) => syncLog.git(teamId, entry),
   });
   const git = transport.git.bind(transport);
   transport.git = async (...args) => {
@@ -754,8 +749,10 @@ function serviceFor(config) {
     progress();
     return result;
   };
-  const skippedImage = (path, reason) =>
+  const skippedImage = (path, reason) => {
     console.warn("GraeBoard image skipped", JSON.stringify({ path, reason }));
+    syncLog.write(teamId, { kind: "image", path, reason });
+  };
   const images = {
     async *publish(state, { parent, transport } = {}) {
       const inherited = new Set(

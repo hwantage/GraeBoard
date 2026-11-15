@@ -6,16 +6,18 @@ SheetClone 일회성 변환 명령은 최신 앱이 아닌 **고정 전체 커�
 
 ## 기준
 
-표시 브랜드는 그래보드(GraeBoard)이며 JSON 포맷·세션 쿠키·쓰기 요청 헤더 식별자는 `weekly-plan`/`WeeklyPlan`을 씁니다. 다운로드 파일명은 `graeboard-연도.확장자`입니다. 이 문서는 현재 저장소의 구현을 설명합니다. 프로젝트는 실제 운영 중이며 기존 데이터의 보존이 변경의 전제입니다. 셀 재시도 기록은 이력 참조만 사용합니다.
+표시 브랜드는 그래보드(GraeBoard)이며 상세 자료 보관 JSON 포맷·세션 쿠키·쓰기 요청 헤더 식별자는 `weekly-plan`/`WeeklyPlan`을 씁니다. 다운로드 파일명은 `graeboard-연도.확장자`이며 업무 데이터 JSON에는 `-tasks`가 붙습니다. 이 문서는 현재 저장소의 구현을 설명합니다. 프로젝트는 실제 운영 중이며 기존 데이터의 보존이 변경의 전제입니다. 셀 재시도 기록은 이력 참조만 사용합니다.
 
-JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `7`입니다(v6까지는 사본 목록이 `reports`, v7부터 `sheetClones`). `exportedAt`은 UTC ISO 시각입니다. `year`는 업무 생성과 표 배치 저장의 기준 연도이며 `startMonth`(1~12, 기본 1)부터 연속된 12개월을 표시합니다. 두 해의 현재 보기 파일명은 `graeboard-2026-2027.확장자`처럼 연도 범위를 포함합니다. SQLite 저장 형식 버전(`SCHEMA_VERSION`)은 34입니다. 한편 한 업무는 `years` 배열을 통해 여러 연도에서 같은 ID로 조회할 수 있습니다. 기본 운영 시각은 한국 기준, 날짜 키는 시간대가 없는 `YYYY-MM-DD`입니다.
+상세 자료 보관 JSON의 `format`은 `weekly-plan`, `schemaVersion`은 `7`입니다(v6까지는 사본 목록이 `reports`, v7부터 `sheetClones`). `exportedAt`은 UTC ISO 시각입니다. `year`는 업무 생성과 표 배치 저장의 기준 연도이며 `startMonth`(1~12, 기본 1)부터 연속된 12개월을 표시합니다. 두 해의 현재 보기 파일명은 `graeboard-2026-2027.확장자`처럼 연도 범위를 포함합니다. SQLite 저장 형식 버전(`SCHEMA_VERSION`)은 34입니다. 한편 한 업무는 `years` 배열을 통해 여러 연도에서 같은 ID로 조회할 수 있습니다. 기본 운영 시각은 한국 기준, 날짜 키는 시간대가 없는 `YYYY-MM-DD`입니다.
+
+**JSON · 업무 데이터**는 `POST /api/export`의 `format:"json-data"`로 받습니다. 현재 보기·선택 기간 수행 업무·전체 모두 최상위가 배열이며, 업무마다 선택된 활성 속성의 표시 이름을 키로 한 객체 하나를 담습니다. 날짜 주차 열·셀 메타데이터·내부 ID·문서·이미지·보기 설정은 제외합니다. 담당자 ID와 선택값 ID는 원본 또는 사본의 이름으로 바꾸고, 이름을 찾을 수 없으면 원래 값을 보존합니다. 단일 담당자는 문자열/`null`, 다중 담당자는 문자열 배열(비었으면 `[]`), 다른 빈 값은 `null`입니다. 숫자 0·불리언 false·날짜 문자열·진척률 텍스트는 변환하지 않습니다. 읽기 전용 업무 활용 형식이며 `schemaVersion`이나 보관용 사전은 넣지 않습니다. 파일명은 `graeboard-연도-tasks.json`입니다. 기존 `format:"json"` 요청은 계속 v7 **상세 자료 보관**을 반환합니다. 이 문서의 v7 형식·사전·본문·이미지 설명은 상세 자료 보관에 해당하며 DB 저장 형식·백업·동기화에는 영향이 없습니다.
 
 ## 버전과 운영 호환성
 
 | 구분               | 현재 저장소 기준                             | 확인 위치와 의미                                                                                                 |
 | ------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | SQLite DB 형식     | v34                                          | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version`                                                 |
-| JSON 반출 형식     | v7                                           | 반출 JSON의 `schemaVersion`; DB 버전과 별개. v6 파일은 `npm run cutover:sheet-clone -- export`로 변환            |
+| JSON 상세 보관 형식 | v7                                           | 반출 JSON의 `schemaVersion`; DB 버전과 별개. v6 파일은 `npm run cutover:sheet-clone -- export`로 변환            |
 | DB 백업 복구       | v29·v30·v31·v32·v33·v34 백업, 기존 버전 유지 | `scripts/transfer/restore.mjs`의 버전·무결성·참조 이미지 검사                                                             |
 | 기존 DB 업그레이드 | 명시적 v29 → … → v33 → v34 일회성 전환       | 모든 서버를 멈추고 `npm run cutover:sheet-clone`([운영 안내](OPERATIONS.md#사본-명칭sheetclone-일괄-전환))       |
 | 외부 PostgreSQL    | 팀별 site v3 + team v3, 한 프로젝트          | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v2/team v3 지원, team v1·v2는 전환 도구 |
@@ -31,6 +33,8 @@ JSON 반출의 `format`은 `weekly-plan`, `schemaVersion`은 `7`입니다(v6까�
 ## 저장 규칙 요약
 
 단계별 동기화 설정은 DB 버전·스키마·프로필 JSON·토큰 암호화·백업 형식을 변경하지 않습니다. 내부 시스템 관리자 전용 `GET /api/admin/teams/:id/external-db-sql`은 `{sql}`로 신규 외부 PostgreSQL 초기화 스크립트를 돌려줍니다. `npm run migrate -- --scope site --initialize`의 빈 DB 경로와 같은 migration SQL·순서·checksum(site 1·2·3, team 1·2·3)을 `BEGIN…COMMIT` 한 번으로 묶고, 두 스키마에 테이블이 있으면 거절하며, 앱 외 역할의 권한을 회수합니다. 스키마·저장 형식은 바꾸지 않습니다. `GET/PUT /api/admin/teams/:id/sync-setup`은 기존 `.env` 설정의 안전한 팀별 조회·추가를 제공합니다. PUT은 파일 revision을 비교하고 기존 연결 신원·다른 팀 프로필을 보존합니다. 설치 식별자를 이미 읽은 서버는 저장한 프로필을 실행 중 프로필 목록에 바로 적용하고, 서버가 식별자 없이 시작된 최초 설치에서만 재시작 필요를 반환합니다. 연결 이력이 없는 프로필의 저장소 수정도 같은 API로 처리하며 프로필 ID·외부 설치 UUID를 유지합니다. 응답에는 내부/외부 설치 ID·프로필 ID·저장소·등록 여부와 사용 중인 토큰의 앞부분(`tokenPreview`: GitHub 공통 접두어 뒤 10자, 토큰 길이의 절반 이하)만 포함하고 키·토큰 전체는 포함하지 않습니다. 앞부분은 저장 형식을 바꾸지 않고 조회 시 기존 암호문(없으면 `tokenEnv` 환경 변수)에서 계산합니다.
+
+사내 서버의 동기화 로그는 DB가 아닌 파일에 저장합니다([운영 안내](OPERATIONS.md#사내-서버-동기화-로그)). `GET /api/teams/:id/sync/log?date=YYYY-MM-DD&problems=1&before=<위치>`는 팀장·시스템 관리자에게 `{ level, levels, canSetLevel, retentionDays, date, dates, entries, next }`를 돌려줍니다. `entries`는 최신순 200건이고 각 항목의 `line`은 그 줄이 그날 파일에서 시작하는 바이트 위치이며, `next`를 `before`로 넘겨 이전 기록을 이어 읽습니다. 파일은 끝에서부터 1MiB씩 비동기로 읽으므로 큰 파일도 한 쪽 분량만 읽고, 위치는 읽는 동안 기록이 더해져도 유효합니다. `problems=1`은 실패(`ok: false`)와 `state`·`worker`·`image` 기록만 고릅니다. 한 요청이 거르며 건너뛰는 줄은 4MiB(`SYNC_LOG_SCAN`)까지이므로, 걸러 본 쪽은 200건보다 적거나 비어 있어도 `next`가 있을 수 있습니다. `next`가 `null`이면 그날의 처음까지 읽은 것입니다. 화면은 빈 쪽이면 같은 날짜의 `next`로 이어 읽어 기록이 나오거나 그날의 처음에 닿을 때까지 읽습니다. `POST /api/teams/:id/sync/log/download`는 `{ date }`의 파일을 `sync-log-<날짜>.jsonl` 첨부로 스트리밍합니다. `PUT /api/admin/teams/:id/sync-log-level`은 시스템 관리자가 `{ level }`(`changes`·`cycles`·`git`)을 바꿉니다. 외부 서버에는 이 경로가 없습니다.
 
 `PUT /api/admin/teams/:id/sync-credential`은 설치된 해당 팀 프로필과 시스템 관리자 권한을 검사한 뒤 기존 `sync_credentials(profile_id,ciphertext,updated_at)`에 AES-256-GCM 암호문을 저장합니다. 동기화 작업 중에는 409를 반환합니다. 성공 응답은 `{ok:true}`이며 연결 상태·outbox·receipt·충돌 자료를 변경하지 않습니다. `DELETE /api/admin/teams/:id/sync-credential`은 같은 권한·작업 중 검사 뒤 해당 프로필의 `sync_credentials` 행만 지우고 실행기 캐시를 비우며 `{ok:true}`를 반환합니다. 이후 이 프로필은 `tokenEnv` 환경 변수 토큰을 사용하고, 그것도 없으면 연결 검사가 토큰 미등록을 안내합니다. `POST /api/admin/teams/:id/sync-reset`은 `{confirmed:true}`와 시스템 관리자 권한, 연결 해제(`disconnected`) 상태·작업 없음을 검사한 뒤 그 팀의 동기화 상태 행(`team_sync_links`, `sync_*`, `site_*`, `external_setup_keys`)만 한 트랜잭션으로 지우고 시스템 감사(`sync-reset`, 이전 저장소·마지막 게시 커밋)를 남깁니다. 같은 트랜잭션에서 연결했던 프로필의 `sync_credentials` 행도 지우며(이전 저장소용 토큰을 새 저장소에 재사용하지 않도록), 로컬 Git 복제본 폴더도 삭제합니다. 업무 자료·`.env` 프로필·`tokenEnv` 환경 변수는 유지하며, 미해결 충돌·보관본(`site_retention`)·진행 중 정리 작업이 있으면 409입니다. 이후 프로필의 저장소 주소를 수정할 수 있고 다음 연결은 새 `repo_id`로 현재 자료를 초기 게시합니다. 이 API들은 모두 기존 인증·쓰기 요청 보호 경계를 따르며 외부 런타임에는 설치 설정 쓰기 API를 추가하지 않습니다.
 
@@ -125,7 +129,7 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 
 ### 행·열 공통 서식
 
-행 전체·열 전체 선택은 `/api/cells/batch`의 `format` 요청으로 저장합니다. `format_rules`의 규칙 하나는 `{id, rows, keys, excludeKeys, style, orders}`입니다. `rows`는 업무 ID 배열, `keys`는 실제 열 키 배열입니다. `keys: null`은 해당 업무의 모든 열을 뜻하므로 아직 값이 없는 주차와 앞으로 표시할 주차도 포함합니다. 날짜 키는 계속 `YYYY-MM-DD`를 사용합니다. `format_states`에는 팀별 서식 변경 번호만 저장합니다. 같은 선택 범위를 다시 적용하면 해당 규칙을 갱신하며 셀별 복사본을 만들지 않습니다. 선택 범위 중복 검사용 `selector`는 행·열 목록의 SHA-256 해시입니다.
+행 전체·열 전체 선택은 `/api/cells/batch`의 `format` 요청으로 저장합니다. `format_rules`의 규칙 하나는 `{id, rows, keys, excludeKeys, style, orders}`입니다. `rows`는 업무 ID 배열, `keys`는 실제 열 키 배열입니다. `keys: null`은 해당 업무의 모든 열을 뜻하므로 아직 값이 없는 주차와 앞으로 표시할 주차도 포함합니다. 날짜 키는 계속 `YYYY-MM-DD`를 사용합니다. `format_states`에는 팀별 서식 변경 번호만 저장합니다. 같은 선택 범위를 다시 적용하면 해당 규칙을 갱신하며 셀별 복사본을 만들지 않습니다. 선택 범위 중복 검사용 `selector`는 행·열 목록의 SHA-256 해시입니다. SQLite는 규칙 목록의 순서를 보관하지 않고 규칙 ID 순으로 읽습니다. 규칙 목록을 저장할 때는 새 목록에서 빠진 규칙을 먼저 지우고 나머지를 쓰므로, 같은 범위의 규칙이 다른 ID로 바뀌어도 `selector` 중복으로 거절되지 않습니다.
 
 화면의 선택 범위는 필터를 통과한 업무 ID를 사용하며 숨긴 행·열도 포함합니다. 필터에서 제외한 행은 영향을 받지 않습니다. 열 선택은 선택 당시 업무와 실제 날짜·속성 키에 고정됩니다. 행 선택은 업무 ID에 연결되어 월 이동·순서 변경·다음 연도 표시에도 이어집니다. 예를 들어 행 전체에 배경색을 적용하고 2026년 12월에서 2027년 1월·2월로 이동해도 새 주차의 셀을 추가 저장하지 않고 같은 규칙으로 표시합니다.
 
@@ -314,6 +318,8 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 사본 이름은 최대 50자이며 팀 안에서 연도·기준일과 무관하게 유일합니다. 앞뒤 공백을 제거하고 Unicode NFC로 정규화해 저장·비교하며 대소문자는 구분합니다. 일반 생성과 XLSX 보고서 가져오기는 삽입과 같은 `BEGIN IMMEDIATE` 트랜잭션 안에서 기존 이름을 검사하고 중복이면 HTTP 409(`details.code: DUPLICATE_SHEET_CLONE_NAME`)를 반환합니다. 같은 가져오기 요청의 성공 재시도는 기존 응답을 반환합니다. 같은 기준일에는 서로 다른 이름으로 여러 사본을 만들 수 있으며 삭제한 이름은 재사용할 수 있습니다. 기존 자료의 이름을 일괄 변경하지는 않습니다. 계정 이름 변경이나 원본 업무 삭제가 과거 사본을 수정하지 않습니다. 현재 구현에는 이전 저장 형식의 사본을 변환·조회하는 호환 계층이 없습니다. 저장한 사본은 이후 재시작에도 유지합니다.
 
 팀원·팀장·시스템 관리자는 `PATCH /api/sheet-clones/:id`로 사본을 편집합니다. 요청은 `{operationId,revision,operations,view?}`이며 `cells`, `format`, `create`, `delete`, `reorder`, 실행취소용 `restore`를 지원합니다. 최대 1,000개 작업·200,000셀 변경을 허용하며 모든 작업을 같은 트랜잭션에서 검증·저장합니다. 사본의 속성 정의와 업무 ID만 해석하고 원본 업무·서식·보기·필터 테이블은 쓰지 않습니다. 브라우저는 입력을 즉시 표시하고 짧은 지연 후 자동 저장하며 저장 중 새 입력은 다음 요청으로 이어갑니다. 실패한 요청은 같은 ID로 재시도합니다. 저장 후 실행취소·재실행은 보상 작업을 저장합니다. `restore`는 기존 업무의 최신 문서를 유지하며 삭제된 행의 복원은 삭제 전에 읽어 보관한 문서 본문을 포함합니다. 원본으로 돌아가기 전 저장을 완료하며 오류가 있으면 탭 전환을 막습니다.
+
+화면은 `PATCH /api/sheet-clones/:id?changes=1`로 저장합니다. 이때 응답은 사본 전체가 아니라 `{id,name,year,referenceDate,createdAt,users,view,revision,changes:{tasks,removed}}`이고, `changes.tasks`는 이 요청이 바꾸거나 만든 행, `changes.removed`는 지운 행의 ID입니다. 화면은 저장 전에 가진 사본에 합칩니다. `changes=1`이 없으면 사본 전체를 답합니다. 행을 사이에 넣거나 옮기면 그 행만 앞뒤 행 `position` 사이의 값을 받고 다른 행은 바뀌지 않습니다. 사이에 값이 더 들어갈 수 없을 때만 모든 행을 100 간격으로 다시 매깁니다. 전체 행 서식(`rows: null`)은 자기 스타일에 그 속성이 있는 셀만 바꿉니다. 외부 서버에서 프로토콜 5 팀의 `revision`은 사본 설정·서식 배정과 각 행의 사이트 revision으로 계산하고, 수정 요청은 요청이 이름을 든 행만 읽습니다.
 
 `POST /api/sheet-clones`의 선택적 `sourceId`로 기존 사본을 복제합니다. 클라이언트가 생성한 선택적 `id`(UUID)를 같은 요청의 재시도에 유지하면 최초 성공 결과를 돌려주고 중복 생성하지 않습니다. 요청 내용·수행자가 달라지면 충돌로 거절합니다. 이름 변경은 `PATCH /api/sheet-clones/:id/name`의 `{name,expectedName}`으로 처리하고 중복 이름·오래된 이름을 거절합니다. 조회·이름 변경은 별도로 표 revision을 바꾸지 않습니다.
 
@@ -532,9 +538,11 @@ Edge는 DB를 2초마다 확인하고 15초 후 스트림을 정상 종료합니
 
 `/api/teams/:teamId/years/:year/memos`에서 목록 조회·생성을, `/:documentId`에서 본문 조회·저장·이름 변경·삭제를 제공합니다. 본문 저장은 revision과 operationId로 충돌·재시도를 검사합니다. `POST /api/teams/:teamId/years/:year/memos/reorder`는 `{ids, expectedIds}`로 전체 메모 순서를 저장합니다. 현재 목록·순서를 검사하고 이미 같은 순서인 재시도는 허용하며, 본문 revision과 수정 시각은 바꾸지 않습니다. 전체 SQLite 백업·복구와 JSON 반출(`memos`, 포함된 사본의 `data.memos`)에 포함합니다. XLSX·CSV는 업무 표만 반출합니다. 참조 정리와 팀 삭제 시 메모 참조도 함께 처리합니다.
 
-사본 생성은 `INSERT … SELECT`로 메모의 제목·순서와 기존 `version_id`만 복사합니다. 본문이나 이미지를 복제하지 않습니다. 사본 재복사는 원본이 아닌 해당 사본의 현재 메모 참조를 복사합니다. `GET/POST /api/sheet-clones/:sheetCloneId/memos` 및 `/:documentId`, `/reorder`, `/:documentId/images`는 원본과 같은 검증·편집 경로를 사용합니다. 사본의 본문·제목·순서 저장은 `sheet_clone_memos`만 변경하므로 큰 업무 표 BLOB과 표 편집 revision을 다시 쓰지 않습니다. 메모 목록에는 본문을 싣지 않으며 영역을 열었을 때만 조회합니다. 사본 삭제 시 메모 참조를 연쇄 삭제하고, 모든 원본·사본·업무에서 참조하지 않는 본문 버전만 정리합니다.
+사본 생성은 `INSERT … SELECT`로 메모의 제목·순서와 기존 `version_id`만 복사합니다. 본문이나 이미지를 복제하지 않습니다. 사본 재복사는 원본이 아닌 해당 사본의 현재 메모 참조를 복사합니다. `GET/POST /api/sheet-clones/:sheetCloneId/memos` 및 `/:documentId`, `/reorder`, `/:documentId/images`는 원본과 같은 검증·편집 경로를 사용합니다. 사본의 본문·제목·순서 저장은 `sheet_clone_memos`만 변경하므로 큰 업무 표 BLOB과 표 편집 revision을 다시 쓰지 않습니다. 메모 목록에는 본문을 싣지 않으며 영역을 열었을 때만 조회합니다. 원본·사본 메모 목록에 `?preview=1`을 붙이면 각 메모에 문서 브라우저의 작업 문서와 같은 짧은 본문 미리보기 `preview`(본문 앞 1024자에서 만든 240자 이하 문자열, 빈 본문은 `""`)를 더하고 본문은 보내지 않습니다. 문서 브라우저의 꼬리 메모 목록이 사용하며 업무 문서 목록에는 적용하지 않습니다. 사본 삭제 시 메모 참조를 연쇄 삭제하고, 모든 원본·사본·업무에서 참조하지 않는 본문 버전만 정리합니다.
 
 ## 내부·외부 동기화 저장
+
+충돌 목록 `GET /api/teams/:id/sync/conflicts`는 내부·외부 모두 `{conflicts, next}`를 반환합니다. `status=open|resolved|all`(생략 시 `all`)로 해결 상태를 고르고, `after=<직전 next>`로 이어 읽습니다. 기존 `(team_id,conflict_id)` 키 순서로 최대 20건을 반환하며 마지막 쪽은 `next:null`입니다. 필터는 기존 `resolution` 컬럼에 적용하고 다음 쪽의 존재는 ID 1건을 더 조회해 확인합니다. 목록용 JSON 해석은 선택된 20건에만 적용하며, SQLite·PostgreSQL에서 본문을 제외한 요약을 만들어 앱 런타임에 전달합니다. 공유 대기 중인 해결 방법을 판정할 때만 그 쪽에 포함된 해당 충돌·해결 명령의 본문을 읽습니다. `GET /api/teams/:id/sync/conflicts/:conflictId`는 펼친 항목 한 건의 비교 값을 반환합니다. 해결 완료 기록과 권한 검사는 유지하며 DB 스키마·저장 형식은 바꾸지 않습니다. 이전 UI는 이어 읽기를 지원하지 않으므로 서버와 함께 갱신합니다.
 
 `sync-v1` Git 브랜치는 팀별 단일 선형 확정 이력입니다. `sync_entities`의 C, `sync_outbox`의 P(게시되지 않은 같은 사본의 연속 수정만 하나로 교체하고 그 밖에는 불변, [동기화 프로토콜](SYNC_PROTOCOL.md#postgresql-업무-저장소와-외부-실행-자원-경계)), 사이트별 `site_retention`의 L을 분리하며 화면은 `project(C,P)`에 L을 적용합니다. receipt·conflict·삭제 세대는 유지하고 원격 재수신으로 로컬 제외를 해제하지 않습니다. Git snapshot은 canonical JSON을 gzip으로 압축하며 압축·해제 크기 모두 64MiB를 검사합니다. 이벤트 파일은 32MiB(2026-10-30 이전 4MiB), 단일 명령은 봉투 여유 1KiB를 제외한 크기 이하입니다. 업무 상태와 receipt는 각각 별도 예산을 검사합니다. 데이터 동작·복구 규칙은 [동기화 프로토콜](SYNC_PROTOCOL.md)에 있습니다.
 
@@ -591,5 +599,22 @@ operations 이벤트는 `resultSum`을 함께 싣습니다. 정의는 다음과 
 ### 동기화 프로토콜 4와 용량
 
 프로토콜 3의 canonical JSON·hash·receipt·명령 필드는 그대로 보존합니다. 명시 전환 커밋은 검증된 프로토콜 3 백업과 프로토콜 4 snapshot을 포함하며, 프로토콜 4 C에는 `protocol`/`[]`의 `{version:4,reducer:4}` 표식이 있습니다. 프로토콜 4 사본은 `sheetClone` 메타데이터, `sheetCloneTask(sheetCloneId,taskId)`의 행 데이터, `sheetCloneCell(sheetCloneId,taskId,key)`의 셀 데이터로 분리합니다. 원본 task/cell과 ID 공간을 공유하지 않으며 문서 식별자는 유지합니다. 앱에는 기존 사본 응답 형식으로 조합해 제공합니다. 조합한 프로토콜 3 형태의 `sheetClone.data`는 [서식 저장과 전송](#서식-저장과-전송)의 공유 사전 형태입니다. 프로토콜 4 부모 `sheetClone`과 `sheetCloneTask`·`sheetCloneCell`은 평문이며 행의 `formatting`이 행마다 반복되므로, 프로토콜 4 전환 전에 이 중복을 줄이는 방안을 정합니다. 프로토콜 3·4는 사본 명칭 전환 전의 프로토콜 1·2와 구조·병합 규칙이 같고 이름만 다릅니다([사본 명칭](SYNC_PROTOCOL.md#사본-명칭sheetclone-전환)).
+
+### 동기화 프로토콜 5와 외부 사본 저장
+
+프로토콜 5 C에는 `protocol`/`[]`의 `{version:5,reducer:5}` 표식이 있고, 사본은 `sheetClone`(정보·행별 서식 배정 `formats`), `sheetCloneFormat(sheetCloneId,formatId)`(서식 값 하나: 규칙을 뺀 값과 규칙 ID 목록), `sheetCloneRule(sheetCloneId,ruleId)`(서식 규칙 하나), `sheetCloneTask(sheetCloneId,taskId)`(행 정보 `data`와 셀 `cells`)로 나뉩니다([동기화 규약](SYNC_PROTOCOL.md#프로토콜-5-사본-행-단위-레코드)). 세 레코드는 평문입니다.
+
+외부 서버의 `site_entities`는 팀의 프로토콜에 따라 사본을 다르게 보관합니다. 스키마는 같고 행의 내용만 다릅니다.
+
+| 팀의 프로토콜 | `site_entities`의 사본                                                                    |
+| ------------- | ----------------------------------------------------------------------------------------- |
+| 3             | `sheetClone` 행 하나. `payload.data`는 행 배열을 포함한 공유 사전 형태                    |
+| 5             | C와 같은 `sheetClone`·`sheetCloneFormat`·`sheetCloneRule`·`sheetCloneTask` 행. 삭제된 행은 `deleted=1`로 남음 |
+
+- 저장 형식은 프로토콜 전환 커밋을 반영하는 트랜잭션에서 함께 바뀝니다. 별도의 site migration이나 변환 명령은 없습니다.
+- `DataSession`(`worker/storage/data.mjs`)이 사본을 읽을 때 행을 모아 기존 형식으로 조합하고, 저장할 때 분해해 저장된 레코드와 다른 것만 씁니다. 셀 하나를 고치면 그 행 하나를 쓰고, 동기화 명령도 그 행만 싣습니다.
+- 사본의 `revision`(화면이 변경을 감지하는 값)은 그 사본의 어느 레코드가 바뀌어도 올라갑니다.
+- 감사 이력(`site_audit`)의 사본 변경은 바뀐 행만 기록합니다(수정 전에는 바뀌거나 지워진 행, 수정 후에는 바뀌거나 추가된 행).
+- 사내 SQLite `sheet_clones.data`와 앱·API 응답 형식은 바뀌지 않습니다.
 
 receipt는 원문을 보존하고 16MiB 한도로 별도 계수합니다(12MiB 경고). 기존 과다 이력의 조회·백업을 차단하지 않으며 새 저장은 예상 receipt까지 사전에 계산해 전체 트랜잭션을 거절합니다. 외부의 공유 업무·충돌·pending과 공유 엔티티 수에는 기본 상한이 없으며, 외부 환경에 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`를 지정한 경우에만 검사합니다. 이 외부 업무 한도를 내부 SQLite에 적용하지 않습니다. `GET /teams/:id/sync`의 `canonicalHash`·`protocol`·`receiptCapacity`는 관리·전환 확인용입니다.

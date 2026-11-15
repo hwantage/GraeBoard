@@ -250,10 +250,11 @@ test("손잡이 메뉴로 형식을 바꾸고 복사·삭제하며 Esc와 바깥
     .poll(() => markdown(page))
     .toMatch(exact("## 첫째 문단\n\n* 하나\n* 둘\n\n셋째 문단"));
 
-  // A list item converts its list; formats that cannot apply are disabled.
+  // A list item converts its list, and also offers the other block formats.
   await hover(page, rich(page).locator("li").nth(1));
   await handle(page).click();
-  await expect(option(page, "제목 1")).toBeDisabled();
+  for (const name of ["본문", "제목 1", "인용", "코드 블록", "토글"])
+    await expect(option(page, name)).toBeEnabled();
   await option(page, "번호 목록").click();
   await expect(rich(page).locator("ol > li")).toHaveText(["하나", "둘"]);
 
@@ -284,6 +285,316 @@ test("손잡이 메뉴로 형식을 바꾸고 복사·삭제하며 Esc와 바깥
     .getByRole("button", { name: "문서 실행취소", exact: true })
     .click();
   await expect(blocks).toHaveText(["첫째 문단", "하나둘", "셋째 문단"]);
+});
+
+const undoButton = (page: Page) =>
+  detail(page).getByRole("button", { name: "문서 실행취소", exact: true });
+// The raw Markdown view shows what was saved, and the rich view reads it back.
+async function expectRawMarkdown(page: Page, expected: string) {
+  await detail(page)
+    .getByRole("button", { name: "Markdown 원문", exact: true })
+    .click();
+  await expect(
+    detail(page).getByRole("textbox", { name: "업무 문서 Markdown 원문" }),
+  ).toHaveValue(exact(expected));
+  await detail(page)
+    .getByRole("button", { name: "리치 문서", exact: true })
+    .click();
+  await expect(rich(page)).toBeVisible();
+}
+
+test("목록 항목을 제목·본문·인용·토글로 바꾸면 그 항목만 목록에서 빠지고 한 번에 실행취소한다", async ({
+  page,
+}, info) => {
+  test.setTimeout(60000);
+  await save(
+    page,
+    taskIds[0],
+    "* 하나\n* 둘\n* 셋\n\n가운데 문단\n\n1. 첫째\n2. 둘째 **굵게**\n3. 셋째\n4. 넷째\n\n끝 문단\n\n- [ ] 할 일\n- [x] 끝난 일\n- [ ] 남은 일",
+  );
+  await open(page);
+  const tail = "가운데 문단\n\n1. 첫째\n2. 둘째 **굵게**\n3. 셋째\n4. 넷째";
+  const tasks = "끝 문단\n\n* [ ] 할 일\n* [x] 끝난 일\n* [ ] 남은 일";
+
+  // A bullet item becomes a heading between the two parts of its list.
+  await hover(page, rich(page).locator("ul > li").nth(1));
+  await handle(page).click();
+  await expect(option(page, "제목 2")).toBeEnabled();
+  await option(page, "제목 2").click();
+  await expect(rich(page).locator(":scope > *").nth(1)).toHaveText("둘");
+  await expect(rich(page).getByRole("heading", { level: 2 })).toHaveText("둘");
+  await expect(rich(page).locator(":scope > ul").nth(0)).toHaveText("하나");
+  await expect(rich(page).locator(":scope > ul").nth(1)).toHaveText("셋");
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(exact(`* 하나\n\n## 둘\n\n* 셋\n\n${tail}\n\n${tasks}`));
+  // One undo puts the item back into one list.
+  await undoButton(page).click();
+  // The bullet list is one list again, beside the checklist further down.
+  await expect(rich(page).locator(":scope > ul")).toHaveCount(2);
+  await expect(
+    rich(page).locator(":scope > ul").first().locator(":scope > li"),
+  ).toHaveText(["하나", "둘", "셋"]);
+  await expect(undoButton(page)).toBeDisabled();
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(exact(`* 하나\n* 둘\n* 셋\n\n${tail}\n\n${tasks}`));
+
+  // The middle of an ordered list becomes a paragraph with its marks. The
+  // items after it keep their numbers.
+  await hover(page, rich(page).locator("ol > li").nth(1));
+  await handle(page).click();
+  await option(page, "본문").click();
+  const ordered = rich(page).locator(":scope > ol");
+  await expect(ordered).toHaveCount(2);
+  await expect(ordered.nth(0).locator(":scope > li")).toHaveText(["첫째"]);
+  await expect(ordered.nth(1).locator(":scope > li")).toHaveText([
+    "셋째",
+    "넷째",
+  ]);
+  await expect(ordered.nth(1)).toHaveAttribute("start", "3");
+  await expect(rich(page).locator(":scope > p strong")).toHaveText("굵게");
+  const split = "가운데 문단\n\n1. 첫째\n\n둘째 **굵게**\n\n3. 셋째\n4. 넷째";
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(exact(`* 하나\n* 둘\n* 셋\n\n${split}\n\n${tasks}`));
+
+  // A checked item becomes a quote and the first item a toggle; the checks
+  // of the other items stay.
+  const checks = rich(page).locator("li.document-check-item");
+  await hover(page, checks.nth(1));
+  await handle(page).click();
+  await option(page, "인용").click();
+  await expect(rich(page).locator(":scope > blockquote")).toHaveText("끝난 일");
+  await expect(checks).toHaveText(["할 일", "남은 일"]);
+  await hover(page, checks.nth(0));
+  await handle(page).click();
+  await option(page, "토글").click();
+  await expect(
+    rich(page).locator(":scope > .document-toggle .document-toggle-title"),
+  ).toHaveText("할 일");
+  await expect(checks).toHaveText(["남은 일"]);
+  await page.screenshot({ path: info.outputPath("converted.png") });
+  const converted =
+    "끝 문단\n\n<details open>\n<summary>할 일</summary>\n\n<br />\n\n</details>\n\n> 끝난 일\n\n* [ ] 남은 일";
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(exact(`* 하나\n* 둘\n* 셋\n\n${split}\n\n${converted}`));
+
+  // Each conversion is one undo step, and the checks come back with the items.
+  await undoButton(page).click();
+  await expect(checks).toHaveText(["할 일", "남은 일"]);
+  await undoButton(page).click();
+  await expect(checks).toHaveText(["할 일", "끝난 일", "남은 일"]);
+  await expect(checks.nth(0).locator("> input")).not.toBeChecked();
+  await expect(checks.nth(1).locator("> input")).toBeChecked();
+  await expect(rich(page).locator(":scope > blockquote")).toHaveCount(0);
+  const restored = `* 하나\n* 둘\n* 셋\n\n${split}\n\n${tasks}`;
+  await expect.poll(() => markdown(page)).toMatch(exact(restored));
+  // The split ordered list reads back with the same numbers.
+  await expectRawMarkdown(page, restored);
+  await expect(rich(page).locator(":scope > ol").nth(1)).toHaveAttribute(
+    "start",
+    "3",
+  );
+  await expect(rich(page).locator(":scope > p strong")).toHaveText("굵게");
+});
+
+const caretIn = (block: ReturnType<Page["locator"]>) =>
+  block.evaluate((element) => element.contains(getSelection()!.anchorNode));
+
+test("하위 항목은 상위 항목 안에서 바뀌고 바꾼 항목의 하위 항목은 뒤 항목과 이어진다", async ({
+  page,
+}) => {
+  test.setTimeout(60000);
+  const source = "* 회의\n  * 안건 하나\n  * 안건 둘\n  * 안건 셋\n* 정리";
+  await save(page, taskIds[0], source);
+  await open(page);
+  const top = rich(page).locator(":scope > ul > li");
+  const nested = rich(page).locator(":scope > ul > li > div > ul > li");
+
+  // The handle of an item with sub-items converts that item, even with the
+  // caret in a sub-item. Its sub-items move up and continue the list. Only a
+  // conversion moves the caret; closing the menu leaves it in the sub-item.
+  await place(page, nested.nth(1));
+  await hover(page, top.nth(0).locator(":scope > div > p"));
+  await handle(page).click();
+  await expect(option(page, "제목 2")).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(menu(page)).toHaveCount(0);
+  expect(await caretIn(nested.nth(1))).toBe(true);
+  await hover(page, top.nth(0).locator(":scope > div > p"));
+  await handle(page).click();
+  await option(page, "제목 2").click();
+  await expect(rich(page).locator(":scope > h2")).toHaveText("회의");
+  await expect(rich(page).locator(":scope > ul")).toHaveCount(1);
+  await expect(top).toHaveText(["안건 하나", "안건 둘", "안건 셋", "정리"]);
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(exact("## 회의\n\n* 안건 하나\n* 안건 둘\n* 안건 셋\n* 정리"));
+  await undoButton(page).click();
+  await expect(nested).toHaveText(["안건 하나", "안건 둘", "안건 셋"]);
+  await expect.poll(() => markdown(page)).toMatch(exact(source));
+
+  // A sub-item stays inside its parent item, between the parts of its list.
+  await hover(page, nested.nth(1));
+  await handle(page).click();
+  await option(page, "본문").click();
+  await expect(top.nth(0).locator(":scope > div > p")).toHaveText([
+    "회의",
+    "안건 둘",
+  ]);
+  await expect(top.nth(0).locator(":scope > div > ul")).toHaveText([
+    "안건 하나",
+    "안건 셋",
+  ]);
+  await expect(top).toHaveCount(2);
+  const paragraph =
+    "* 회의\n\n  * 안건 하나\n\n  안건 둘\n\n  * 안건 셋\n* 정리";
+  await expect.poll(() => markdown(page)).toMatch(exact(paragraph));
+  // Blank lines keep the paragraph out of the sub-item above it.
+  await expectRawMarkdown(page, paragraph);
+  await expect(top.nth(0).locator(":scope > div > p")).toHaveText([
+    "회의",
+    "안건 둘",
+  ]);
+  await expect(nested).toHaveText(["안건 하나", "안건 셋"]);
+
+  // The block menu and the "/" menu convert the caret's item the same way.
+  await place(page, nested.nth(1));
+  await detail(page)
+    .getByRole("combobox", { name: "문서 블록", exact: true })
+    .selectOption("toggle0");
+  await expect(
+    top.nth(0).locator(".document-toggle .document-toggle-title"),
+  ).toHaveText("안건 셋");
+  // "/" at the start of the item's line opens the menu.
+  await nested
+    .nth(0)
+    .locator("p")
+    .evaluate((line) => {
+      const range = document.createRange();
+      range.setStart(line.firstChild!, 0);
+      getSelection()!.removeAllRanges();
+      getSelection()!.addRange(range);
+      (line.closest("[contenteditable]") as HTMLElement).focus();
+    });
+  await rich(page).evaluate(async () => {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+  });
+  await page.keyboard.type("/인용");
+  await expect(
+    detail(page).getByRole("listbox", { name: "편집 형식 선택" }),
+  ).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(top.nth(0).locator(":scope > div > blockquote")).toHaveText(
+    "안건 하나",
+  );
+  await expect(nested).toHaveCount(0);
+  const blocks =
+    "* 회의\n\n  > 안건 하나\n\n  안건 둘\n\n  <details open>\n  <summary>안건 셋</summary>\n\n  <br />\n\n  </details>\n* 정리";
+  await expect.poll(() => markdown(page)).toMatch(exact(blocks));
+  // The saved Markdown opens again in the rich editor with the same blocks.
+  await detail(page).getByRole("button", { name: "닫기", exact: true }).click();
+  await open(page);
+  await expect(top.nth(0).locator(":scope > div > blockquote")).toHaveText(
+    "안건 하나",
+  );
+  await expect(
+    top.nth(0).locator(".document-toggle .document-toggle-title"),
+  ).toHaveText("안건 셋");
+  await expect(top).toHaveCount(2);
+
+  // Blocks selected together convert together, sub-items included.
+  await save(page, taskIds[1], source);
+  await detail(page).getByRole("button", { name: "닫기", exact: true }).click();
+  await open(page, taskIds[1]);
+  await place(page, top.nth(1));
+  await hover(page, top.nth(0).locator(":scope > div > p"));
+  await handle(page).click({ modifiers: ["Shift"] });
+  await expect(selected(page)).toHaveCount(2);
+  await hover(page, top.nth(1));
+  await handle(page).click();
+  await option(page, "제목 3").click();
+  await expect(rich(page).locator(":scope > h3")).toHaveText([
+    "회의",
+    "안건 하나",
+    "안건 둘",
+    "안건 셋",
+    "정리",
+  ]);
+  await expect(rich(page).locator("li")).toHaveCount(0);
+  await expect
+    .poll(() => markdown(page, taskIds[1]))
+    .toMatch(
+      exact(
+        "### 회의\n\n### 안건 하나\n\n### 안건 둘\n\n### 안건 셋\n\n### 정리",
+      ),
+    );
+  await undoButton(page).click();
+  await expect(nested).toHaveText(["안건 하나", "안건 둘", "안건 셋"]);
+  await expect(top).toHaveCount(2);
+});
+
+test("토글 내용에 커서가 있어도 토글 손잡이의 전환은 토글 제목에 적용한다", async ({
+  page,
+}) => {
+  await save(
+    page,
+    taskIds[0],
+    "<details open>\n<summary>토글 제목</summary>\n\n안쪽 문단\n\n</details>",
+  );
+  await open(page);
+  const inner = rich(page).locator(".document-toggle-content p");
+  await place(page, inner);
+  await hover(page, rich(page).locator(".document-toggle-title"));
+  await handle(page).click();
+  await expect(option(page, "제목 2")).toBeEnabled();
+  await page.keyboard.press("Escape");
+  expect(await caretIn(inner)).toBe(true);
+  await hover(page, rich(page).locator(".document-toggle-title"));
+  await handle(page).click();
+  await option(page, "제목 2").click();
+  await expect(rich(page).locator(".document-toggle")).toHaveCount(0);
+  await expect(rich(page).locator(":scope > h2")).toHaveText("토글 제목");
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(exact("## 토글 제목\n\n안쪽 문단"));
+});
+
+test("선택이 다음 항목의 줄 첫머리에서 끝나면 그 항목은 바꾸지 않는다", async ({
+  page,
+}) => {
+  await save(page, taskIds[0], "* 하나\n* 둘\n* 셋");
+  await open(page);
+  const items = rich(page).locator("li p");
+  // Shift+Down from the first item leaves the selection at the start of the
+  // second item's line.
+  const second = await items.nth(1).elementHandle();
+  await items.nth(0).evaluate((first, second) => {
+    getSelection()!.setBaseAndExtent(
+      first.firstChild!,
+      1,
+      second!.firstChild!,
+      0,
+    );
+    (first.closest("[contenteditable]") as HTMLElement).focus();
+  }, second);
+  await rich(page).evaluate(async () => {
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+  });
+  await detail(page)
+    .getByRole("combobox", { name: "문서 블록", exact: true })
+    .selectOption("h2");
+  await expect(rich(page).locator(":scope > h2")).toHaveText("하나");
+  await expect(rich(page).locator(":scope > ul > li")).toHaveText(["둘", "셋"]);
+  await expect
+    .poll(() => markdown(page))
+    .toMatch(exact("## 하나\n\n* 둘\n* 셋"));
 });
 
 test("손잡이 메뉴의 위에 추가·아래에 추가는 빈 블록을 만들고 커서를 둔다", async ({

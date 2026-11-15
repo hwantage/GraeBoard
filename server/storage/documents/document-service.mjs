@@ -17,6 +17,7 @@ import {
   MAX_DOCUMENT_TITLE_LENGTH,
   MAX_TASK_DOCUMENTS,
 } from "../../../shared/documents/task-documents.js";
+import { documentPreview } from "./document-browser-service.mjs";
 
 const uuid = z.string().uuid();
 export const documentIdSchema = z.union([z.literal(DEFAULT_DOCUMENT_ID), uuid]);
@@ -53,6 +54,7 @@ const idsSchema = z
 const reorderSchema = z
   .object({ ids: idsSchema, expectedIds: idsSchema })
   .strict();
+const MEMO_KINDS = ["annual", "sheetCloneMemo"];
 const scopeSchema = z.discriminatedUnion("kind", [
   z
     .object({
@@ -104,10 +106,21 @@ export class DocumentBusinessService {
     this.documentEvents = documentEvents;
     this.refreshUser = refreshUser;
   }
-  list(scope, { content = false } = {}) {
-    return this.repository.list(this.user, scopeSchema.parse(scope), {
-      content,
+  list(scope, { content = false, preview = false } = {}) {
+    const target = scopeSchema.parse(scope);
+    if (content || !preview || !MEMO_KINDS.includes(target.kind))
+      return this.repository.list(this.user, target, { content });
+    // The document browser lists memos with the short previews it shows for
+    // task documents. Bodies are read here and never sent.
+    const summarize = ({ documents, ...result }) => ({
+      ...result,
+      documents: documents.map(({ markdown, ...document }) => ({
+        ...document,
+        preview: documentPreview(markdown),
+      })),
     });
+    const result = this.repository.list(this.user, target, { content: true });
+    return result?.then ? result.then(summarize) : summarize(result);
   }
   imageAccess(scope) {
     return this.repository.imageAccess(this.user, this.document(scope));

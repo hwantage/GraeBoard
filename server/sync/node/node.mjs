@@ -20,6 +20,7 @@ import { GitCliTransport, repositoryUrl } from "./git-cli.mjs";
 
 import { requireThat } from "../../../shared/validation.js";
 import { validateSyncProfiles } from "./profiles.mjs";
+import { createSyncLog, syncLogDirectory } from "./sync-log.mjs";
 
 export function createNodeSync({
   db,
@@ -54,6 +55,135 @@ export function createNodeSync({
     ready: !!installationId,
   });
   const recordError = createSyncErrorRecorder(db, capture);
+  const syncLog = createSyncLog(syncLogDirectory(db, options.logDir));
+  // What the log compares before and after a cycle. Reading it must never
+  // disturb the cycle, so any failure simply leaves the entry out.
+  const cycleState = (teamId) => {
+    try {
+      const link = store(teamId).readLink();
+      if (!link) return null;
+      const count = (sql) => db.prepare(sql).get(teamId).n;
+      let peer = null;
+      try {
+        peer = JSON.parse(link.remote_status || "null");
+      } catch {
+        // An unreadable peer status is logged as absent.
+      }
+      return {
+        mode: link.mode,
+        head: link.canonical_head || null,
+        receivedAt: link.last_received_at || null,
+        publishedAt: link.last_published_at || null,
+        lastError: link.last_error || null,
+        pending: count(
+          "SELECT COUNT(*) n FROM sync_outbox INDEXED BY sync_outbox_pending_idx WHERE team_id=? AND status<>'acknowledged'",
+        ),
+        conflicts: count(
+          "SELECT COUNT(*) n FROM sync_conflicts WHERE team_id=? AND resolution IS NULL",
+        ),
+        peerHead: peer?.appliedCanonicalHead || null,
+        peerObservedAt: peer?.observedAt || null,
+        peerVerified: !!peer?.verified,
+      };
+    } catch {
+      return null;
+    }
+  };
+  const lastCycleOk = new Map();
+  async function logCycle(
+    teamId,
+    { action, runOptions, before, started, error, result, transport },
+  ) {
+    try {
+      // A cycle cut short by this server stopping is not a failure to trace.
+      if (stopped && error) return;
+      const after = cycleState(teamId),
+        ok = !error,
+        // Another run held the lease, so this one did nothing and proves
+        // nothing about recovery.
+        busy = !!result?.busy,
+        recovered = ok && !busy && lastCycleOk.get(teamId) === false;
+      if (!busy) lastCycleOk.set(teamId, ok);
+      if (before && after && before.mode !== after.mode)
+        syncLog.write(teamId, {
+          kind: "state",
+          change: "mode",
+          from: before.mode,
+          to: after.mode,
+          ...(after.lastError ? { reason: after.lastError } : {}),
+        });
+      if (before && after && after.conflicts > before.conflicts)
+        syncLog.write(teamId, {
+          kind: "state",
+          change: "conflicts",
+          from: before.conflicts,
+          to: after.conflicts,
+        });
+      if (syncLog.level(teamId) === "changes" && ok && !recovered) return;
+      let commits;
+      if (
+        before?.head &&
+        after?.head &&
+        before.head !== after.head &&
+        transport instanceof GitCliTransport
+      )
+        try {
+          commits = Number(
+            (
+              await transport.git(
+                ["rev-list", "--count", `${before.head}..${after.head}`],
+                { silent: true },
+              )
+            )
+              .toString()
+              .trim(),
+          );
+        } catch {
+          // The count is a convenience; the heads are logged either way.
+        }
+      syncLog.write(teamId, {
+        kind: "cycle",
+        action,
+        ok,
+        ms: Date.now() - started,
+        ...(recovered ? { recovered } : {}),
+        ...(busy ? { busy } : {}),
+        ...(runOptions?.receiveOnly ? { receiveOnly: true } : {}),
+        ...(runOptions?.initialize ? { initialize: true } : {}),
+        ...(after
+          ? {
+              mode: after.mode,
+              head: after.head,
+              ...(before && before.head !== after.head
+                ? { headBefore: before.head }
+                : {}),
+              ...(Number.isFinite(commits) ? { commits } : {}),
+              received: !!before && before.receivedAt !== after.receivedAt,
+              published: !!before && before.publishedAt !== after.publishedAt,
+              pending: after.pending,
+              ...(before && before.pending !== after.pending
+                ? { pendingBefore: before.pending }
+                : {}),
+              conflicts: after.conflicts,
+              peerHead: after.peerHead,
+              peerObservedAt: after.peerObservedAt,
+              peerVerified: after.peerVerified,
+            }
+          : {}),
+        ...(error
+          ? {
+              error: {
+                message: String(error.message || error),
+                ...(error.code !== undefined ? { code: error.code } : {}),
+                ...(error.status ? { status: error.status } : {}),
+              },
+            }
+          : {}),
+      });
+    } catch {
+      // Logging is best effort.
+    }
+  }
   const notify = createSyncNotifier({
     db,
     clearTeam,
@@ -95,11 +225,19 @@ export function createNodeSync({
             "UPDATE team_sync_links SET lease_until=? WHERE team_id=? AND lease_owner=? AND lease_until>?",
           ).run(now + 600000, teamId, lease.owner, now);
         },
-        onExit(_code, { workerId }) {
+        onExit(code, { workerId }) {
           // Only release leases after termination, never while a previous worker
           // could still submit a canonical mutation.
           for (const [teamId, lease] of leases)
             if (lease.workerId === workerId) {
+              // A worker that ends while holding a lease stopped mid-cycle.
+              // Stopping the server ends it on purpose.
+              if (!stopped)
+                syncLog.write(teamId, {
+                  kind: "worker",
+                  event: "exit",
+                  code,
+                });
               store(teamId).release(lease.owner);
               leases.delete(teamId);
             }
@@ -285,10 +423,14 @@ export function createNodeSync({
         repository: profile.repository,
         token: profileToken(db, profile),
       });
+    // Git run on this thread (setup keys, conflict authors) is logged too.
+    if (transport instanceof GitCliTransport && !transport.log)
+      transport.log = (entry) => syncLog.git(teamId, entry);
     const config = {
       serviceKey: randomUUID(),
       teamId,
       documentImagesDir,
+      logDir: syncLog.directory,
       identity: {
         teamId,
         repoId: link.repo_id,
@@ -316,6 +458,8 @@ export function createNodeSync({
         return running;
       }
       runningAction = action;
+      const before = cycleState(teamId),
+        started = Date.now();
       running = getBackground()
         .compute({ kind: "service", config, action, options: runOptions })
         .then(async (result) => {
@@ -333,6 +477,27 @@ export function createNodeSync({
           throw error;
         })
         .finally(() => (running = null));
+      // A separate branch: the log observes the outcome and never changes it.
+      running.then(
+        (result) =>
+          logCycle(teamId, {
+            action,
+            runOptions,
+            before,
+            started,
+            result,
+            transport,
+          }),
+        (error) =>
+          logCycle(teamId, {
+            action,
+            runOptions,
+            before,
+            started,
+            error,
+            transport,
+          }),
+      );
       return running;
     };
     const service = {
@@ -369,8 +534,15 @@ export function createNodeSync({
   }
   for (const l of db
     .prepare("SELECT team_id FROM team_sync_links WHERE mode<>'disconnected'")
-    .all())
+    .all()) {
+    syncLog.write(l.team_id, {
+      kind: "server",
+      event: "start",
+      pid: process.pid,
+      node: process.version,
+    });
     schedule(l.team_id, 5000);
+  }
   // Who made peer operations, for the conflict box: this site's Git clone
   // has their events at the applied head, found with git grep and no network.
   // Operations never change, so answers are cached, including "not found"
@@ -433,6 +605,7 @@ export function createNodeSync({
       !!services.get(teamId)?.idle() || !!store(teamId).readLink()?.lease_owner,
     installationId,
     store,
+    log: syncLog,
     get,
     resolveConflict,
     readOperationAuthors,
@@ -559,6 +732,16 @@ export function createNodeSync({
     },
     async close() {
       stopped = true;
+      try {
+        for (const l of db
+          .prepare(
+            "SELECT team_id FROM team_sync_links WHERE mode<>'disconnected'",
+          )
+          .all())
+          syncLog.write(l.team_id, { kind: "server", event: "stop" });
+      } catch {
+        // The database may already be closing.
+      }
       for (const { timer } of timers.values()) clearTimeout(timer);
       timers.clear();
       await background?.close();

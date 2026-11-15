@@ -5,10 +5,7 @@ import {
 import { ControlBusinessService } from "../../server/storage/control/control-service.mjs";
 import { deploymentSite } from "../../shared/site/site-mode.js";
 import { PostgresControlRepository } from "../storage/control/postgres-control.mjs";
-import {
-  assertDatabaseCapacity,
-  capacityLimits,
-} from "../storage/capacity.mjs";
+import { capacityLimits } from "../storage/capacity.mjs";
 import {
   DEFAULT_SETTINGS,
   canContribute,
@@ -21,7 +18,11 @@ import {
   profileFor,
   siteTeamId,
 } from "../../shared/sync/sync-profiles.js";
-import { authenticateSite } from "./site-auth.mjs";
+import {
+  authenticateSite,
+  authenticatedMembers,
+  authenticatedTeams,
+} from "./site-auth.mjs";
 import { R2ImageStore } from "../documents/images.mjs";
 import { profileFields } from "../../shared/identity/profiles.js";
 import { z } from "zod";
@@ -164,6 +165,11 @@ export class RequestContext {
     this.request = request;
     this.execution = execution;
     this.teamCache = new Map();
+    const team = authenticatedTeams.get(user);
+    if (team) this.teamCache.set(team.id, team);
+    const members = authenticatedMembers.get(user);
+    if (team && members)
+      this.controlStore.remember?.(team.id, true, members.rows, members.writes);
     this.changedTeams = new Set();
   }
   admin() {
@@ -234,8 +240,6 @@ export class RequestContext {
         ? await this.controlStore.members(teamId, { activeOnly: true })
         : [];
     const database = databaseFor(this.env, profile);
-    if (options.write)
-      await assertDatabaseCapacity(database, teamId, capacityLimits(this.env));
     let businessChanged = false;
     // Each document body's images are parsed once per request: saving checks
     // them, the capture validates them and replaying pending operations

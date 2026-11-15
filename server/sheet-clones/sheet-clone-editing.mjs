@@ -81,6 +81,7 @@ export function editSheetClone(
   user,
   sheetCloneId,
   input,
+  { changes = false } = {},
 ) {
   const data = editSchema.parse(input);
   const result = withSheetCloneDecodeCache(() =>
@@ -136,6 +137,13 @@ export function editSheetClone(
       });
       let { tasks } = prepared;
       const { deleted, people } = prepared;
+      // An operation leaves a row it does not change as the same object.
+      const original = new Map(sheetClone.tasks.map((task) => [task.id, task])),
+        changedIds = new Set(
+          tasks
+            .filter((task) => original.get(task.id) !== task)
+            .map((task) => task.id),
+        );
       for (const task of [...tasks, ...deleted.values()])
         for (const document of task.documents || [])
           if (document.markdown !== undefined)
@@ -207,7 +215,18 @@ export function editSheetClone(
             : {}),
         },
       );
-      return response;
+      if (!changes) return response;
+      // The editor holds the copy it sent the revision of: it needs the rows
+      // this request changed, not the copy again.
+      const { tasks: rows, settings: _settings, ...summary } = response,
+        kept = new Set(rows.map((task) => task.id));
+      return {
+        ...summary,
+        changes: {
+          tasks: rows.filter((task) => changedIds.has(task.id)),
+          removed: [...original.keys()].filter((id) => !kept.has(id)),
+        },
+      };
     }),
   );
   return result;

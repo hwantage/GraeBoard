@@ -30,6 +30,7 @@ import { profileSwitchRoutes } from "./sync/profile-switch.mjs";
 import { auditRoutes, historyCleanupRoutes } from "./history/history.mjs";
 import { maintenanceRoutes } from "./sync/maintenance.mjs";
 import { eventResponse } from "./events/events.mjs";
+import { controlWrites } from "./storage/data.mjs";
 import { schedulePublish, refreshTeam, scheduled } from "./sync/sync.mjs";
 import { profileFor, siteTeamId } from "../shared/sync/sync-profiles.js";
 import { siteAuthRoute, accessRequestRoutes } from "./control/site-auth.mjs";
@@ -101,6 +102,12 @@ async function pullFirst(ctx, teamId, { wait = true } = {}) {
   const promise = refreshTeam(ctx.env, profile).catch(() => {});
   ctx.execution?.waitUntil(promise);
   if (!wait) return;
+  // A write asks for the team's members next (see RequestContext.data):
+  // read them while the refresh check runs instead of after it.
+  // Only a store that keeps the answer for this request (see
+  // PostgresControlStore.members).
+  if (ctx.controlStore.forget)
+    ctx.controlStore.members(teamId, { activeOnly: true }).catch(() => {});
   await Promise.race([
     promise,
     new Promise((resolve) => setTimeout(resolve, 1500)),
@@ -269,11 +276,14 @@ export function createWorker({
             ],
             { multiplex: false },
           );
+        const controlBefore = controlWrites();
         if (path === "/tasks" && method === "GET")
           await pullFirst(ctx, url.searchParams.get("teamId"), { wait: false });
         if (["POST", "PUT", "PATCH", "DELETE"].includes(method))
           await pullFirst(ctx, await mutationTeam(ctx, path, body));
-        if (siteTeamId(env))
+        // The refresh above may have applied a newer member directory: only
+        // then is the user signed in at the start of the request out of date.
+        if (siteTeamId(env) && controlWrites() !== controlBefore)
           ctx.user = await authenticate(env, identity, request);
         const routes = [
           controlRoutes,

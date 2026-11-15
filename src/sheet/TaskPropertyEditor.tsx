@@ -7,17 +7,19 @@ import {
   useState,
 } from "react";
 import type { CompositionEvent, KeyboardEvent } from "react";
-import { CalendarDays } from "lucide-react";
+import { CalendarDays, Pencil } from "lucide-react";
 import {
   cell,
   displayValue,
   isAssignable,
   propertiesFor,
+  textLinks,
 } from "../../shared/domain.js";
 import CellDatePicker, { normalizeDateInput } from "./CellDatePicker";
 import CellOptionPicker from "./CellOptionPicker";
 import PropertyBadge from "./PropertyBadge";
 import MemberValue from "./MemberValue";
+import LinkedText from "./LinkedText";
 import { ApiError, serverNow } from "../platform/api";
 import type {
   Cell,
@@ -60,6 +62,10 @@ export default forwardRef<
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [popupKey, setPopupKey] = useState<string | null>(null);
+  // The description shows its links until the edit button opens the input.
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
+  const descriptionReturn = useRef(false);
+  const descriptionEdit = useRef<HTMLButtonElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const controls = useRef(
     new Map<string, HTMLTextAreaElement | HTMLInputElement>(),
@@ -117,6 +123,23 @@ export default forwardRef<
     if (popupKey)
       controls.current.get(popupKey)?.focus({ preventScroll: true });
   }, [popupKey]);
+  useLayoutEffect(() => {
+    const input = controls.current.get("description");
+    if (!descriptionOpen || !input || document.activeElement === input) return;
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(input.value.length, input.value.length);
+    input.scrollLeft = input.scrollWidth;
+  }, [descriptionOpen]);
+  useEffect(() => {
+    if (!readOnly) return;
+    // The input disappears without a blur event in some browsers (Firefox);
+    // release it the same way so a later draft is not held as focused.
+    // A removed input never ends its IME composition, which would block saves.
+    if (focused.current === "description") {
+      composing.current.delete("description");
+      blur("description");
+    } else setDescriptionOpen(false);
+  }, [readOnly]);
 
   function begin(key: string) {
     if (current.current.readOnly || drafts.current.has(key)) return;
@@ -253,6 +276,7 @@ export default forwardRef<
 
   function blur(key: string) {
     focused.current = null;
+    if (key === "description") setDescriptionOpen(false);
     const draft = drafts.current.get(key);
     if (
       draft &&
@@ -277,10 +301,12 @@ export default forwardRef<
       void flush();
     } else if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
+      descriptionReturn.current = key === "description";
       controls.current.get(key)?.blur();
       void flush();
     } else if (event.key === "Escape") {
       event.preventDefault();
+      descriptionReturn.current = key === "description";
       controls.current.get(key)?.blur();
     }
   }
@@ -291,6 +317,8 @@ export default forwardRef<
       readOnly,
       onFocus: () => {
         focused.current = key;
+        // Returning to the input cancels the earlier Enter/Esc focus return.
+        if (key === "description") descriptionReturn.current = false;
         begin(key);
         render();
       },
@@ -310,6 +338,22 @@ export default forwardRef<
   }
   const raw = (key: string) =>
     drafts.current.get(key)?.value ?? cell(task, key).value;
+  const descriptionDraft = drafts.current.get("description");
+  // Unsaved or failed input stays in the textarea until it is saved/cancelled.
+  const descriptionEditing =
+    !readOnly &&
+    (descriptionOpen ||
+      focused.current === "description" ||
+      (!!descriptionDraft &&
+        !same(descriptionDraft.value, descriptionDraft.baseline)));
+  useLayoutEffect(() => {
+    // Enter/Esc leave the input; keep keyboard focus nearby once it closes.
+    if (descriptionEditing || !descriptionReturn.current) return;
+    descriptionReturn.current = false;
+    const active = document.activeElement;
+    if (!active || active === document.body)
+      descriptionEdit.current?.focus({ preventScroll: true });
+  }, [descriptionEditing]);
   function textInput(property: Property, placeholder: string) {
     return (
       <textarea
@@ -328,6 +372,48 @@ export default forwardRef<
         value={String(raw(property.id))}
         onChange={(e) => change(property.id, e.target.value)}
       />
+    );
+  }
+  function descriptionField(property: Property) {
+    if (descriptionEditing) return textInput(property, "설명을 입력하세요…");
+    const text = String(raw(property.id));
+    const open = () => setDescriptionOpen(true);
+    // Only the empty placeholder opens the input; text keeps its links.
+    const placeholderOpens = !text && !readOnly;
+    return (
+      <div className="task-detail-description-view">
+        <span
+          className={[
+            "task-detail-description-text",
+            text ? "" : "is-empty",
+            placeholderOpens ? "opens-input" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          title={text || undefined}
+          onClick={placeholderOpens ? open : undefined}
+        >
+          {text ? (
+            <LinkedText parts={textLinks(text)} />
+          ) : readOnly ? (
+            "설명 없음"
+          ) : (
+            "설명을 입력하세요…"
+          )}
+        </span>
+        {!readOnly && (
+          <button
+            ref={descriptionEdit}
+            type="button"
+            className="task-detail-description-edit"
+            aria-label={`${property.name} 수정`}
+            data-tooltip={`${property.name} 수정`}
+            onClick={open}
+          >
+            <Pencil size={13} aria-hidden="true" />
+          </button>
+        )}
+      </div>
     );
   }
   const portalContainer = root.current?.closest("dialog") || undefined;
@@ -478,10 +564,7 @@ export default forwardRef<
         </div>
         {description && (
           <div className="task-detail-description">
-            {textInput(
-              description,
-              readOnly ? "설명 없음" : "설명을 입력하세요…",
-            )}
+            {descriptionField(description)}
           </div>
         )}
       </div>

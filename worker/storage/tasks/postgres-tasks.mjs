@@ -63,6 +63,7 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
     );
     ctx.user = user;
     ctx.teamCache.clear();
+    ctx.controlStore.forget?.();
     return ctx.data(teamId, async (s) => {
       const range = (
         await s.tx.query(

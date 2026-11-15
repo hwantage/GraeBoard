@@ -477,10 +477,8 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
           }
           shell={shell}
           formats={slashItems.filter((item) => BLOCK_FORMATS.includes(item.id))}
-          canFormat={(id) =>
-            !!editorRef.current?.action((ctx) =>
-              blockCommand(ctx, id)?.(ctx.get(editorViewCtx).state),
-            )
+          canFormat={(id, state) =>
+            !!editorRef.current?.action((ctx) => blockCommand(ctx, id)?.(state))
           }
           onOpen={() => closeSlash()}
         />

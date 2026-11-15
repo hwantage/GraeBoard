@@ -38,8 +38,13 @@ import Toast, { useToast } from "./ui/Toast";
 import HistoryTime, { HistoryTimeline } from "./ui/HistoryTime";
 import { describeStyle } from "./sheet/history";
 import { pack, compactStyle } from "../shared/formatting/compact.js";
+import {
+  taskHasWorkInWeeks,
+  workColorSet,
+} from "../shared/insights/insights.js";
 import CopyDocumentLinkButton from "./documents/CopyDocumentLinkButton";
 import DocumentFullWidthButton from "./documents/DocumentFullWidthButton";
+import CopyEmojiButton from "./documents/CopyEmojiButton";
 import DocumentFullPageButton from "./documents/DocumentFullPageButton";
 import { useDocumentFullPage } from "./documents/useDocumentFullPage";
 import {
@@ -57,6 +62,7 @@ import {
   cell,
   value,
   todayKey,
+  weeksForPeriod,
 } from "../shared/domain.js";
 
 const TaskDocumentPanel = lazy(() => import("./documents/TaskDocumentPanel"));
@@ -355,6 +361,7 @@ export function RowPanel({
               </div>
             ))}
           {documentFullPage && <DocumentFullWidthButton />}
+          <CopyEmojiButton userId={user.id} />
         </>
       }
     >
@@ -465,6 +472,9 @@ export function ExportPanel({
   year,
   startMonth,
   taskIds,
+  tasks,
+  settings,
+  weeks,
   keys,
   onClose,
 }: {
@@ -473,6 +483,9 @@ export function ExportPanel({
   year: number;
   startMonth: number;
   taskIds: string[];
+  tasks: Task[];
+  settings: Settings;
+  weeks: ReturnType<typeof weeksForPeriod>;
   keys: string[];
   onClose: () => void;
 }) {
@@ -480,6 +493,35 @@ export function ExportPanel({
     [scope, setScope] = useState("view"),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const worked = useMemo(() => {
+    const colors = workColorSet(settings),
+      weekKeys = weeks.map((week) => week.key),
+      ids = tasks
+        .filter((task) => taskHasWorkInWeeks(task, colors, weekKeys))
+        .map((task) => task.id),
+      positions = new Map<string, number>();
+    let month = "",
+      number = 0;
+    for (const week of weeksForPeriod(year, startMonth)) {
+      const nextMonth = `${week.year}-${week.month}`;
+      number = nextMonth === month ? number + 1 : 1;
+      month = nextMonth;
+      positions.set(week.key, number);
+    }
+    const first = weeks[0],
+      last = weeks.at(-1),
+      label = (week: (typeof weeks)[number]) =>
+        `${first?.year !== last?.year ? `${week.year}년 ` : ""}${week.month}월 ${positions.get(week.key)}주`;
+    return {
+      taskIds: ids,
+      period:
+        first && last
+          ? first.key === last.key
+            ? label(first)
+            : `${label(first)}~${label(last)}`
+          : "",
+    };
+  }, [tasks, settings, weeks, year, startMonth]);
   return (
     <Modal
       title="업무 내보내기"
@@ -492,6 +534,10 @@ export function ExportPanel({
           <option value="view">
             현재 보기 · {taskIds.length}개 업무 (숨김 제외)
           </option>
+          <option value="worked">
+            선택 기간 수행 업무{worked.period ? ` · ${worked.period}` : ""} ·{" "}
+            {worked.taskIds.length}개 업무
+          </option>
           <option value="all">
             {sheetClone ? "현재 사본 전체" : `기준 연도 ${year}년 전체`} ·
             필터와 숨김 포함
@@ -503,13 +549,16 @@ export function ExportPanel({
         <Select value={format} onChange={(e) => setFormat(e.target.value)}>
           <option value="xlsx">Excel (.xlsx) · 값과 기본 서식</option>
           <option value="csv">CSV (.csv) · 값만</option>
-          <option value="json">JSON (.json) · ID·서식·사본 보관</option>
+          <option value="json-data">JSON (.json) · 업무 데이터</option>
+          <option value="json">JSON (.json) · 상세 자료 보관</option>
         </Select>
       </label>
       <p className="field-help">
-        {sheetClone
-          ? `‘${sheetClone.name}’ 시트의 업무와 서식, 문서를 내보냅니다. 문서 본문은 JSON에 포함됩니다.`
-          : "JSON 전체 반출은 사본(관리자), 본인의 보기 설정과 담당자 정보를 포함합니다. 계정 비밀번호와 로그인 정보는 포함하지 않습니다."}
+        {format === "json-data"
+          ? "업무마다 속성 이름과 값을 담은 배열로 내보냅니다. 주차 칸, 서식, 문서·메모·이미지는 포함하지 않습니다."
+          : sheetClone
+            ? `‘${sheetClone.name}’ 시트의 업무와 서식, 문서를 내보냅니다. 문서 본문은 JSON 상세 자료 보관에 포함됩니다.`
+            : "JSON 상세 자료 보관의 전체 반출은 사본(관리자), 본인의 보기 설정과 담당자 정보를 포함합니다. 계정 비밀번호와 로그인 정보는 포함하지 않습니다."}
       </p>
       <ErrorNote error={error} />
       <footer className="form-actions">
@@ -521,17 +570,27 @@ export function ExportPanel({
             setBusy(true);
             setError("");
             try {
-              await download("/export", {
-                teamId,
-                sheetCloneId: sheetClone?.id,
-                revision: sheetClone?.revision,
-                year,
-                startMonth: scope === "view" ? startMonth : 1,
-                format,
-                scope,
-                taskIds,
-                keys,
-              });
+              const filename =
+                (format === "json-data" || format === "json") &&
+                scope !== "all" &&
+                worked.period
+                  ? `graeboard-${weeks[0].year === weeks.at(-1)?.year ? `${weeks[0].year}년-` : ""}${worked.period.replaceAll(" ", "")}${format === "json-data" ? "-tasks" : ""}.json`
+                  : undefined;
+              await download(
+                "/export",
+                {
+                  teamId,
+                  sheetCloneId: sheetClone?.id,
+                  revision: sheetClone?.revision,
+                  year,
+                  startMonth: scope === "all" ? 1 : startMonth,
+                  format,
+                  scope: scope === "worked" ? "view" : scope,
+                  taskIds: scope === "worked" ? worked.taskIds : taskIds,
+                  keys,
+                },
+                filename,
+              );
               onClose();
             } catch (e) {
               setError((e as Error).message);

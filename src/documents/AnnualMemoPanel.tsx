@@ -10,7 +10,8 @@ import {
 import { ChevronDown, ChevronUp, FileText, X } from "lucide-react";
 import { useDocumentFullPage } from "./useDocumentFullPage";
 import { Button } from "../ui/Button";
-import DocumentPanel, { type DocumentPanelHandle } from "./DocumentPanel";
+import type { DocumentPanelHandle } from "./DocumentPanel";
+import AnnualMemoDocumentPanel from "./AnnualMemoDocumentPanel";
 
 // The open accordion is a panel pinned under the table. A height the user
 // sets is kept per user and sheet; otherwise CSS gives it about a memo card's
@@ -352,28 +353,18 @@ export default forwardRef<
       </div>
       <div id={contentId} className="memo-panel-content" hidden={!opened}>
         {opened && (
-          <DocumentPanel
+          <AnnualMemoDocumentPanel
             ref={panel}
             inline
             onScrollRatioChange={(ratio, available) => {
               setScrollRatio(ratio);
               setScrollable(available);
             }}
-            label="연간 업무 메모"
-            path={
-              sheetCloneId
-                ? `/sheet-clones/${sheetCloneId}/memos`
-                : `/teams/${teamId}/years/${year}/memos`
-            }
-            draftKey={(id) =>
-              `weekly-plan:memo:${userId}:${teamId}:${sheetCloneId || year}:${id}`
-            }
+            teamId={teamId}
+            year={year}
+            sheetCloneId={sheetCloneId}
+            userId={userId}
             readOnly={readOnly}
-            documentLink={(id) =>
-              sheetCloneId
-                ? { kind: "sheet-clone-memo", sheetCloneId, id }
-                : { kind: "memo", teamId, year, id }
-            }
             onSaved={() => {}}
             onListChanged={() => {}}
             onLoadingChange={() => {}}

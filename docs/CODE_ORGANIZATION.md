@@ -110,7 +110,7 @@ SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋
 
 `App.tsx`는 화면·선택·패널과 업무 명령을 연결합니다. 연간 표와 인사이트의 원본 업무 조회는 하나의 `useTaskData`가 소유하고, 보고서는 그 공개 목록에서 파생값만 계산합니다. 원본의 세대·커서·조회 큐는 App이나 보고서에 노출하지 않습니다. 브라우저 공유 스키마의 CSP 실행 정책은 먼저 적재되는 `platform/polyfills.ts`가 설정하며, 공유 스키마나 서버에 브라우저 초기화 책임을 넣지 않습니다. 저장 전달·실패 입력은 `useSheetOperations`, 실행취소는 `useSheetHistory`, 개인 배치는 `useSheetLayout`, 필터 목록/저장은 `useSavedFilters`가 소유합니다. 행·셀 명령과 실행취소 전달은 `useSheetRowCommands`·`useSheetCellCommands`·`useSheetUndo`가 맡고, 화면 전환 시 저장 조정은 `app/useWorkspaceNavigation`이 맡습니다. 사본은 기존 `useSheetCloneDraft` 경로를 유지합니다. 새 기능의 연결 지점과 비동기 소유 범위는 [개발 안내의 책임 표](DEVELOPMENT.md#브라우저-상태와-저장-책임)를 따릅니다.
 
-`Grid`의 선택·행 이동·크기 조절·가상 스크롤은 각각 `useGridSelection`·`useGridRowDrag`·`useGridResize`·`useGridViewport`가 소유합니다. `Calendar`는 화면을 조합하고 변경 수명·새 일정 초안·업무 명령은 `useCalendarMutation`·`useCalendarCreation`·`useCalendarCommands`가 맡습니다. `documents/editor/`에서는 생성/해제·입력·업로드·명령·Markdown 변환을 분리하며, 문서 저장·초안·충돌은 기존 `DocumentEditor`에 남습니다. 구체적인 확장 경로는 [기능 추가 예시](DEVELOPMENT.md#기능-추가-예시)를 참고합니다.
+`Grid`의 선택·행 이동·크기 조절·가상 스크롤은 각각 `useGridSelection`·`useGridRowDrag`·`useGridResize`·`useGridViewport`가 소유합니다. `Calendar`는 화면을 조합하고 변경 수명·새 일정 초안·업무 명령은 `useCalendarMutation`·`useCalendarCreation`·`useCalendarCommands`가 맡습니다. 월간 보기의 이어지는 달·기간 이동·스크롤 위치는 `useCalendarMonthScroll`이 맡습니다. `documents/editor/`에서는 생성/해제·입력·업로드·명령·Markdown 변환을 분리하며, 문서 저장·초안·충돌은 기존 `DocumentEditor`에 남습니다. 구체적인 확장 경로는 [기능 추가 예시](DEVELOPMENT.md#기능-추가-예시)를 참고합니다.
 
 루트의 `Panels.tsx`·`types.ts`·`styles.css`·`main.tsx`·`app-version.d.ts`는 현재 남아 있는 통합 모듈·진입점입니다. `GridHeaderMenu`는 여러 기능에서 사용하는 조작 UI로 `ui/`가 소유하고, 업무 속성 편집은 `sheet/`, 리치 편집기 내부 모듈은 `documents/editor/`가 소유합니다. 폴더 사이의 양방향 사용과 실제 파일 import 순환은 구분하며, 합당한 문서/캘린더 재사용까지 금지하지 않습니다.
 
@@ -119,7 +119,7 @@ SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋
 ## 6. 공유와 import 경계
 
 - 앱 조합 코드에서 기능을 연결합니다. 공통 UI·통신 기반이 특정 업무 화면을 다시 import하는 새 역방향 의존이나 순환 의존을 만들지 않습니다. 현재 런타임 파일 import 순환은 제거했으며 `npm run check:architecture`가 새 순환을 차단합니다.
-- 공용 문서 편집기는 `documents/`가 소유합니다. `TaskDocumentPanel`과 `AnnualMemoPanel`은 `DocumentPanel`을, 캘린더 문서는 `DocumentEditor`를 재사용하는 현재 경로를 보존합니다. 다른 기능은 구체적인 진입 모듈을 사용하고 편집기 내부 구현을 각자 복사하지 않습니다.
+- 공용 문서 편집기는 `documents/`가 소유합니다. `TaskDocumentPanel`과 `AnnualMemoDocumentPanel`(꼬리 메모 패널·문서 브라우저 공용)은 `DocumentPanel`을, 캘린더 문서는 `DocumentEditor`를 재사용하는 현재 경로를 보존합니다. 다른 기능은 구체적인 진입 모듈을 사용하고 편집기 내부 구현을 각자 복사하지 않습니다.
 - 기능 간 직접 사용은 공유 역할과 의존 방향을 설명할 수 있어야 합니다. 폴더 안의 모든 파일을 공개 API로 간주하지 않습니다. import 경로를 짧게 만들려고 전역 barrel이나 별칭 체계를 새로 도입하지 않습니다.
 - 내부 Node와 공통 모듈이 외부 호스트 구현을 역참조하지 않도록 유지합니다. PostgreSQL repository는 `worker/storage/` 경계를 유지하고 SQLite·Node 전용 구현을 외부에서 재사용하지 않습니다.
 - 외부 direct import는 기존 공통 업무 서비스·명령 규칙 14개와 portable sync 모듈 16개의 정확한 경로만 허용합니다. 목록은 [import 경계 검사](../tests/tooling/storage-import-boundaries.test.mjs)에 있으며 새 `*-service.mjs`나 `core/` 전체로 자동 확대하지 않습니다. `sync-operation-cache.mjs`는 기존 `SyncService`의 간접 의존이며 direct 목록 16개에는 추가하지 않습니다.

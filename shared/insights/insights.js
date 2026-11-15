@@ -162,15 +162,24 @@ function weeksForTask(task) {
   }
   return [...keys].sort();
 }
+function workAtWeek(task, key, colors) {
+  const style = cell(task, key).style;
+  return (
+    style.work === true && colors.has(normalizeWorkColor(style.backgroundColor))
+  );
+}
 export function taskWorkWeeks(task, colors) {
   if (task.deletedAt || !colors.size) return [];
-  return weeksForTask(task).filter((key) => {
-    const style = cell(task, key).style;
-    return (
-      style.work === true &&
-      colors.has(normalizeWorkColor(style.backgroundColor))
-    );
-  });
+  return weeksForTask(task).filter((key) => workAtWeek(task, key, colors));
+}
+// The caller supplies selected week keys from the annual board. Stop at the
+// first work mark instead of calculating every work week of every task.
+export function taskHasWorkInWeeks(task, colors, weekKeys) {
+  return (
+    !task.deletedAt &&
+    colors.size > 0 &&
+    weekKeys.some((key) => workAtWeek(task, key, colors))
+  );
 }
 export function deadlinePropertyId(settings) {
   if (Object.hasOwn(settings.insights || {}, "deadlinePropertyId"))

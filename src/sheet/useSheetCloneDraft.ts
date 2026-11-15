@@ -53,6 +53,31 @@ type Batch = {
   view: View;
 };
 
+// A save answers the whole copy, or the copy's summary with the rows it
+// changed and the IDs of the rows it removed.
+type SavedSheetClone =
+  | SheetClone
+  | (Omit<SheetClone, "tasks" | "settings"> & {
+      changes: { tasks: Task[]; removed: string[] };
+    });
+function savedSheetClone(base: SheetClone, saved: SavedSheetClone): SheetClone {
+  if (!("changes" in saved)) return saved;
+  const { changes, ...summary } = saved,
+    changed = new Map(changes.tasks.map((task) => [task.id, task])),
+    removed = new Set(changes.removed),
+    known = new Set(base.tasks.map((task) => task.id));
+  return {
+    ...base,
+    ...summary,
+    tasks: [
+      ...base.tasks
+        .filter((task) => !removed.has(task.id))
+        .map((task) => changed.get(task.id) || task),
+      ...changes.tasks.filter((task) => !known.has(task.id)),
+    ],
+  };
+}
+
 export default function useSheetCloneDraft(teamId: string, actorId: string) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
@@ -294,10 +319,20 @@ export default function useSheetCloneDraft(teamId: string, actorId: string) {
           const sequence = documentSequence.current;
           let saved: SheetClone;
           try {
-            saved = await send<SheetClone>(
-              `/sheet-clones/${current.sheetClone.id}`,
+            // The answer carries the rows this save changed; the rest of the
+            // copy is the one the revision was sent for.
+            const answer = await send<SavedSheetClone>(
+              `/sheet-clones/${current.sheetClone.id}?changes=1`,
               batch.data,
               "PATCH",
+            );
+            // Merged into the copy held now: a document saved meanwhile
+            // changed its row's document marks there.
+            saved = savedSheetClone(
+              ref.current?.sheetClone.id === current.sheetClone.id
+                ? ref.current.sheetClone
+                : current.sheetClone,
+              answer,
             );
           } catch (error) {
             if (error instanceof ApiError && error.status === 409) {
