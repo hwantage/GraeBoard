@@ -888,15 +888,15 @@
 /* Months follow one another in the monthly views; a line steps along each
    boundary, above a month's first week and left of its first day. */
 .calendar-day.is-month-top {
-  box-shadow: inset 0 2px 0 var(--accent);
+  box-shadow: inset 0 1px 0 var(--accent);
 }
 .calendar-day.is-month-left {
-  box-shadow: inset 2px 0 0 var(--accent);
+  box-shadow: inset 1px 0 0 var(--accent);
 }
 .calendar-day.is-month-top.is-month-left {
   box-shadow:
-    inset 0 2px 0 var(--accent),
-    inset 2px 0 0 var(--accent);
+    inset 0 1px 0 var(--accent),
+    inset 1px 0 0 var(--accent);
 }
 .calendar-date time .calendar-month-label {
   font-size: 12px;
