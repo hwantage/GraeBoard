@@ -63,6 +63,7 @@ import {
   value,
   todayKey,
   weeksForPeriod,
+  annualWeekDate,
 } from "../shared/domain.js";
 
 const TaskDocumentPanel = lazy(() => import("./documents/TaskDocumentPanel"));
@@ -988,7 +989,12 @@ export function HistoryPanel({
                           <strong>
                             {titleById.get(c.taskId) || c.taskId.slice(0, 8)}
                           </strong>
-                          <span>{fieldLabels.get(c.key) || c.key}</span>
+                          <span>
+                            {fieldLabels.get(c.key) ||
+                              (/^\d{4}-\d{2}-\d{2}$/.test(c.key)
+                                ? `${annualWeekDate(c.key)}(금)`
+                                : c.key)}
+                          </span>
                           <span>
                             {displayValue(
                               {

@@ -86,13 +86,19 @@ export function periodMonths(year, startMonth = 1) {
     };
   });
 }
+// Annual columns are keyed by Monday and labelled by that week's Friday.
+export function annualWeekDate(weekStart) {
+  return dateKey(
+    new Date(new Date(`${weekStart}T12:00:00Z`).getTime() + 4 * 86400000),
+  );
+}
 export function weeksForPeriod(year, startMonth = 1) {
   const first = new Date(Date.UTC(year, startMonth - 1, 1, 12));
   const end = new Date(Date.UTC(year + 1, startMonth - 1, 0, 12));
   const start = new Date(mondayOf(first) + "T12:00:00Z");
   const weeks = [];
   for (let d = start; d <= end; d = new Date(d.getTime() + 7 * 86400000)) {
-    const friday = new Date(d.getTime() + 4 * 86400000),
+    const friday = new Date(`${annualWeekDate(dateKey(d))}T12:00:00Z`),
       sunday = new Date(d.getTime() + 6 * 86400000);
     const display =
       friday >= first && friday <= end ? friday : d >= first ? d : sunday;
