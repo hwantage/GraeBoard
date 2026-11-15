@@ -3076,6 +3076,9 @@ function Workspace({
           year={viewYear}
           startMonth={view.startMonth}
           taskIds={visibleTasks.map((t) => t.id)}
+          tasks={allTasks}
+          settings={team?.settings || DEFAULT_SETTINGS}
+          weeks={weeks}
           keys={columns.map((c) => c.key)}
           onClose={() => setPanel("")}
         />
