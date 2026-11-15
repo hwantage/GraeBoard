@@ -553,6 +553,8 @@ PG 테스트는 임시 서버를 직접 실행합니다. 일반 `npm test`에서
 
 ## 업무 저장소 계약
 
+연간 업무의 `ExportPanel`은 기존 현재 보기·전체와 함께 **선택 기간 수행 업무**를 제공합니다. `App`의 필터 적용 전 `allTasks`와 실제 `visibleWeeks`를 받아 창이 열린 동안 메모이제이션한 대상 ID·건수를 계산합니다. `shared/insights/insights.js`의 `taskHasWorkInWeeks`는 인사이트의 `taskWorkWeeks`와 같은 유효 서식 판별을 사용하며 선택 주차에서 첫 업무 표시를 찾으면 멈춥니다. 툴바와 같은 현재 팀의 업무 색 설정을 사용합니다(사본의 저장 설정에는 인사이트 설정이 없음). 등록된 업무 색과 `work:true`가 함께 있는 셀만 포함하고 일반 배경·속성 열·선택 밖 주차는 세지 않습니다. 기간의 월별 주 번호는 `PeriodPicker`와 같은 `weeksForPeriod`의 표시 월 순서입니다. 건수 계산은 이미 불러온 원본 또는 사본 자료만 사용하고 추가 조회·문서 읽기는 하지 않습니다. 내보내기는 선택된 ID와 현재 표시 열을 기존 `/export`의 `scope:view`로 보내므로 SQLite·PostgreSQL의 권한, 사본 revision 검사와 XLSX/CSV/JSON 생성 경로를 그대로 사용합니다. DB·저장 형식·API 계약은 바꾸지 않습니다.
+
 Node와 Edge의 일반 업무 API는 `server/storage/`의 도메인 서비스에 repository를 주입합니다. SQLite 구현은 기존 관계형 테이블, prepared statement, task cache와 동기 `transaction()`을 유지합니다. PostgreSQL 구현은 `site_entities`/`site_operations`/`site_audit`/`site_events`를 같은 PG 트랜잭션에서 변경하며 C+P 기준으로 outbox를 작성합니다. API와 공통 명령은 SQL dialect나 `s.tx.query`에 의존하지 않습니다. `DatabaseAdapter`는 이 업무 계약 아래의 sync 상태·트랜잭션 포트입니다.
 
 | 계약                                                     | 실제 명령 범위                                                                                                  |

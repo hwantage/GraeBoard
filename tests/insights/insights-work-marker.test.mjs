@@ -14,7 +14,10 @@ import {
   resetCellStyle,
   copyRowFormatting,
 } from "../../shared/formatting/formatting.js";
-import { taskWorkWeeks } from "../../shared/insights/insights.js";
+import {
+  taskHasWorkInWeeks,
+  taskWorkWeeks,
+} from "../../shared/insights/insights.js";
 import { applySheetCloneOperation } from "../../shared/sheet-clones/sheet-clone-editing.js";
 
 const blue = "#0066cc",
@@ -28,6 +31,36 @@ const rule = (id, style, order, keys = null) => ({
   keys,
   style,
   orders: Object.fromEntries(Object.keys(style).map((name) => [name, order])),
+});
+
+test("selected-period work includes effective inherited marks and excludes ordinary fill, cleared marks and work outside the period", () => {
+  const t = task(),
+    outside = "2026-02-02";
+  t.cells[outside] = {
+    value: "",
+    style: { backgroundColor: blue, work: true },
+  };
+  t.cells[week] = { value: "text alone", style: { backgroundColor: blue } };
+  t.cells.title = {
+    value: "title",
+    style: { backgroundColor: blue, work: true },
+  };
+  assert.equal(taskHasWorkInWeeks(t, colors, [week, next]), false);
+  t.formatting = {
+    revision: 1,
+    rules: [
+      rule("selected", { backgroundColor: "#06c", work: true }, 1, [next]),
+    ],
+  };
+  assert.equal(taskHasWorkInWeeks(t, colors, [week, next]), true);
+  assert.equal(taskHasWorkInWeeks(t, colors, [week]), false);
+  t.cells[next] = { value: "", style: { backgroundColor: blue, work: false } };
+  assert.equal(taskHasWorkInWeeks(t, colors, [week, next]), false);
+  t.cells[next].style = { backgroundColor: blue, work: true };
+  assert.equal(taskHasWorkInWeeks(t, colors, []), false);
+  assert.equal(taskHasWorkInWeeks(t, new Set(), [next]), false);
+  t.deletedAt = "deleted";
+  assert.equal(taskHasWorkInWeeks(t, colors, [next]), false);
 });
 
 test("optional work marker is strict and survives compact cells, defaults, row and rule dictionaries", () => {

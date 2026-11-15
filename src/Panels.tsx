@@ -38,6 +38,10 @@ import Toast, { useToast } from "./ui/Toast";
 import HistoryTime, { HistoryTimeline } from "./ui/HistoryTime";
 import { describeStyle } from "./sheet/history";
 import { pack, compactStyle } from "../shared/formatting/compact.js";
+import {
+  taskHasWorkInWeeks,
+  workColorSet,
+} from "../shared/insights/insights.js";
 import CopyDocumentLinkButton from "./documents/CopyDocumentLinkButton";
 import DocumentFullWidthButton from "./documents/DocumentFullWidthButton";
 import CopyEmojiButton from "./documents/CopyEmojiButton";
@@ -58,6 +62,7 @@ import {
   cell,
   value,
   todayKey,
+  weeksForPeriod,
 } from "../shared/domain.js";
 
 const TaskDocumentPanel = lazy(() => import("./documents/TaskDocumentPanel"));
@@ -467,6 +472,9 @@ export function ExportPanel({
   year,
   startMonth,
   taskIds,
+  tasks,
+  settings,
+  weeks,
   keys,
   onClose,
 }: {
@@ -475,6 +483,9 @@ export function ExportPanel({
   year: number;
   startMonth: number;
   taskIds: string[];
+  tasks: Task[];
+  settings: Settings;
+  weeks: ReturnType<typeof weeksForPeriod>;
   keys: string[];
   onClose: () => void;
 }) {
@@ -482,6 +493,35 @@ export function ExportPanel({
     [scope, setScope] = useState("view"),
     [busy, setBusy] = useState(false),
     [error, setError] = useState("");
+  const worked = useMemo(() => {
+    const colors = workColorSet(settings),
+      weekKeys = weeks.map((week) => week.key),
+      ids = tasks
+        .filter((task) => taskHasWorkInWeeks(task, colors, weekKeys))
+        .map((task) => task.id),
+      positions = new Map<string, number>();
+    let month = "",
+      number = 0;
+    for (const week of weeksForPeriod(year, startMonth)) {
+      const nextMonth = `${week.year}-${week.month}`;
+      number = nextMonth === month ? number + 1 : 1;
+      month = nextMonth;
+      positions.set(week.key, number);
+    }
+    const first = weeks[0],
+      last = weeks.at(-1),
+      label = (week: (typeof weeks)[number]) =>
+        `${first?.year !== last?.year ? `${week.year}년 ` : ""}${week.month}월 ${positions.get(week.key)}주`;
+    return {
+      taskIds: ids,
+      period:
+        first && last
+          ? first.key === last.key
+            ? label(first)
+            : `${label(first)}~${label(last)}`
+          : "",
+    };
+  }, [tasks, settings, weeks, year, startMonth]);
   return (
     <Modal
       title="업무 내보내기"
@@ -493,6 +533,10 @@ export function ExportPanel({
         <Select value={scope} onChange={(e) => setScope(e.target.value)}>
           <option value="view">
             현재 보기 · {taskIds.length}개 업무 (숨김 제외)
+          </option>
+          <option value="worked">
+            선택 기간 수행 업무{worked.period ? ` · ${worked.period}` : ""} ·{" "}
+            {worked.taskIds.length}개 업무
           </option>
           <option value="all">
             {sheetClone ? "현재 사본 전체" : `기준 연도 ${year}년 전체`} ·
@@ -528,10 +572,10 @@ export function ExportPanel({
                 sheetCloneId: sheetClone?.id,
                 revision: sheetClone?.revision,
                 year,
-                startMonth: scope === "view" ? startMonth : 1,
+                startMonth: scope === "all" ? 1 : startMonth,
                 format,
-                scope,
-                taskIds,
+                scope: scope === "worked" ? "view" : scope,
+                taskIds: scope === "worked" ? worked.taskIds : taskIds,
                 keys,
               });
               onClose();
