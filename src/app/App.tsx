@@ -1636,8 +1636,9 @@ function Workspace({
       (area) =>
         area.kind === "rows" || area.kind === "columns" || area.kind === "all",
     );
-  // 선택 범위에 있는 업무 표시의 색. 업무 표시 칸은 같은 칩을 다시 눌러 해제하기
-  // 전까지 배경색·다른 업무 색으로 칠하지 않는다.
+  // 선택 범위에 있는 업무 표시의 색. 셀·셀 범위의 업무 표시 칸은 같은 칩을 다시
+  // 눌러 해제하기 전까지 배경색·다른 업무 색으로 칠하지 않는다. 행·열·전체
+  // 선택에서는 일반 배경색이 선택한 업무 표시를 해제하며 덮는다.
   const markedWork = useMemo(
     () =>
       markedWorkColors(
@@ -1648,11 +1649,13 @@ function Workspace({
     [selection, matchingTasks, columnOrder, workColors],
   );
 
-  // 툴바 칠하기. 업무 표시 칸은 막고(칩을 다시 눌러 해제하는 것만 허용),
-  // 일반 배경색을 업무 색과 같은 색으로 칠하면 집계에서 빠진다는 것을 알린다.
+  // 툴바 칠하기. 셀·셀 범위의 업무 표시 칸은 막고(칩을 다시 눌러 해제하는 것만
+  // 허용), 일반 배경색을 업무 색과 같은 색으로 칠하면 집계에서 빠진다는 것을
+  // 알린다. 행·열·전체 선택은 업무 표시를 만들지 않고, 일반 배경색
+  // ({work: false})으로 기존 표시까지 덮으며 전환 알림을 띄우지 않는다.
   function applyToolbarStyle(part: Partial<Style>) {
     if (part.work === true && workColorsDisabled) return;
-    if (part.backgroundColor && markedWork.size) return;
+    if (part.backgroundColor && markedWork.size && !workColorsDisabled) return;
     const color = part.work === false ? part.backgroundColor : undefined,
       colors = workColors || [];
     if (!color || !colors.length) return applyStyle(part);
