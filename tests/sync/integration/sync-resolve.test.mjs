@@ -6,7 +6,7 @@ import { allEntities } from "../../../server/sync/node/entities.mjs";
 import { makeOperation } from "../../../server/sync/core/operations.mjs";
 import { entityId, stateHash } from "../../../server/sync/core/protocol.mjs";
 import { reduceMany, project } from "../../../server/sync/core/reducer.mjs";
-import { getTask } from "../../../server/db.mjs";
+import { getTask, readFormatting } from "../../../server/db.mjs";
 import { unpack } from "../../../shared/formatting/compact.js";
 import { RESOLUTION_REJECTED } from "../../../shared/sync/conflict-origin.js";
 import {
@@ -318,6 +318,74 @@ function semanticConflict(f, entity, key, base, desired) {
       }),
   };
 }
+
+// The reported case: the shared formats hold a rule, and the later edit added
+// a rule of its own for the same cells: same scope and style, another ID and
+// priority. Choosing the later edit replaces the rule the site holds.
+test("resolving formats with the submitted edit replaces a same-scope rule of another ID; a failed write rolls back and a retry succeeds", async (t) => {
+  const f = await fixture(t),
+    taskId = f.taskIds[2];
+  const saved = await f.api("/cells/batch", {
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: [],
+    format: {
+      teamId: f.teamId,
+      expectedRevision: readFormatting(f.db, f.teamId).revision,
+      scopes: [{ rows: [taskId], keys: ["title"], style: { bold: true } }],
+      expectedTasks: { [taskId]: getTask(f.db, taskId).updatedAt },
+    },
+  });
+  assert.equal(saved.status, 200, JSON.stringify(saved));
+  const [held] = readFormatting(f.db, f.teamId).rules,
+    later = {
+      ...held,
+      id: randomUUID(),
+      orders: { bold: held.orders.bold + 1 },
+    };
+  const conflict = semanticConflict(
+    f,
+    "formats",
+    [],
+    { rules: [] },
+    { rules: [later] },
+  );
+  const local = () => readFormatting(f.db, f.teamId),
+    before = local(),
+    conflictsOpen = () =>
+      Object.values(f.s.readState().conflicts).filter(
+        (entry) => !entry.resolution,
+      ).length,
+    open = conflictsOpen();
+  assert.deepEqual(before.rules, [held]);
+
+  f.db.exec(
+    `CREATE TEMP TRIGGER fail_format_resolution BEFORE INSERT ON format_rules WHEN NEW.id='${later.id}' BEGIN SELECT RAISE(ABORT,'injected format write failure'); END`,
+  );
+  const failed = await conflict.resolve();
+  f.db.exec("DROP TRIGGER temp.fail_format_resolution");
+  assert.equal(failed.status, 500, JSON.stringify(failed));
+  assert.deepEqual(local(), before, "the held rule stays with its revision");
+  assert.deepEqual(f.s.readPending(), []);
+  assert.equal(conflictsOpen(), open);
+
+  const resolved = await conflict.resolve();
+  assert.equal(resolved.status, 200, JSON.stringify(resolved));
+  assert.deepEqual(local().rules, [later]);
+  assert.equal(local().revision, before.revision + 1);
+  const [resolution] = f.s.readPending();
+  assert.equal(resolution.opId, resolved.data.opId);
+  assert.deepEqual(resolution.resolves, [conflict.opId]);
+  const projected = project(conflict.state, f.s.readPending());
+  assert.ok(!projected.held.includes(resolution.opId));
+  assert.deepEqual(projected.entities[conflict.id].payload.rules, [later]);
+  assert.equal(
+    f.db
+      .prepare("SELECT COUNT(*) n FROM format_rules WHERE team_id=?")
+      .get(f.teamId).n,
+    1,
+  );
+});
 
 test("resolve replans concurrent tag-name uniqueness, preserves the accepted rename and refuses the duplicate", async (t) => {
   const f = await fixture(t);

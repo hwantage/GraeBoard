@@ -1,6 +1,8 @@
 import { receiptCapacity } from "../../shared/sync/sync-capacity.mjs";
 import {
   RESOLUTION_PENDING,
+  CONFLICT_PAGE_SIZE,
+  conflictPage,
   conflictOpIds,
   conflictOrigin,
   conflictPeople,
@@ -57,7 +59,7 @@ const CONFLICT_SUMMARIES = `SELECT jsonb_build_object(
     SELECT COALESCE(jsonb_object_agg(k, CASE WHEN jsonb_typeof(v)='object' THEN v - 'payload' ELSE v END), '{}'::jsonb)
     FROM jsonb_each(p->'current') AS e(k, v)) END
 )::text AS payload
-FROM (SELECT conflict_id, payload::jsonb AS p FROM sync_conflicts WHERE team_id=$1 OFFSET 0) conflicts
+FROM (SELECT conflict_id, payload::jsonb AS p FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2::text[]) OFFSET 0) conflicts
 ORDER BY conflict_id`;
 
 async function serviceStatus(ctx, { check = false } = {}) {
@@ -379,10 +381,28 @@ export async function adminRoutes(
       if (method === "GET") {
         // Only the conflicts themselves: loading C to list them cost the
         // whole team and could exceed the Edge CPU budget.
-        const { conflicts, local, names, resolutions } =
+        const page = conflictPage({
+          status: query.get("status") ?? undefined,
+          after: query.get("after") ?? undefined,
+        });
+        const { conflicts, local, names, resolutions, next } =
             await db.withTeamTransaction(
               teamId,
               async (tx) => {
+                // Keyset pagination uses existing columns and the team/id
+                // primary key. Only this page's payloads reach JSON parsing.
+                const ids = sync[3]
+                  ? [sync[3]]
+                  : (
+                      await tx.query(
+                        `SELECT conflict_id FROM sync_conflicts WHERE team_id=$1 AND conflict_id>$2${page.status === "all" ? "" : page.status === "resolved" ? " AND resolution IS NOT NULL" : " AND resolution IS NULL"} ORDER BY conflict_id LIMIT $3`,
+                        [teamId, page.after, CONFLICT_PAGE_SIZE + 1],
+                      )
+                    ).rows.map((row) => row.conflict_id);
+                const next =
+                  ids.length > CONFLICT_PAGE_SIZE
+                    ? ids[CONFLICT_PAGE_SIZE - 1]
+                    : null;
                 // The list carries no payloads: PostgreSQL drops them, so a
                 // conflict over a sheet copy (megabytes per side) is neither
                 // parsed nor sent here. One conflict is read whole.
@@ -391,7 +411,9 @@ export async function adminRoutes(
                     sync[3]
                       ? "SELECT payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=$2"
                       : CONFLICT_SUMMARIES,
-                    sync[3] ? [teamId, sync[3]] : [teamId],
+                    sync[3]
+                      ? [teamId, sync[3]]
+                      : [teamId, ids.slice(0, CONFLICT_PAGE_SIZE)],
                   )
                 ).rows.map((row) => JSON.parse(row.payload));
                 // This site's own operations among the held ones and the
@@ -425,12 +447,17 @@ export async function adminRoutes(
                   ]),
                 );
                 // Resolutions saved here and not yet published.
-                const pending = (
-                  await tx.query(
-                    "SELECT payload FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' AND payload::jsonb ? 'resolves'",
-                    [teamId],
-                  )
-                ).rows.map((row) => JSON.parse(row.payload));
+                const unresolved = conflicts
+                  .filter((c) => !c.resolution)
+                  .map((c) => c.conflictId);
+                const pending = unresolved.length
+                  ? (
+                      await tx.query(
+                        "SELECT payload FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' AND (payload::jsonb->'resolves') ?| $2::text[]",
+                        [teamId, unresolved],
+                      )
+                    ).rows.map((row) => JSON.parse(row.payload))
+                  : [];
                 // What a saved resolution chose is told from the conflict's
                 // later values, so those few conflicts are read whole.
                 const decided = sync[3]
@@ -440,6 +467,7 @@ export async function adminRoutes(
                         !c.resolution && resolvesAny(pending, [c.conflictId]),
                     );
                 return {
+                  next,
                   conflicts,
                   local,
                   names,
@@ -483,7 +511,7 @@ export async function adminRoutes(
           assert(conflicts.length, 404, "충돌을 찾을 수 없습니다.");
           return view(conflicts[0]);
         }
-        return { conflicts: conflicts.map(view) };
+        return { conflicts: conflicts.map(view), next };
       }
       assert(sync[4] === "resolve", 400, "충돌 해결 요청을 확인하세요.");
       return db.withTeamTransaction(teamId, async (tx) => {

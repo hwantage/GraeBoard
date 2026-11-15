@@ -25,6 +25,7 @@ export type ConflictOrigin = {
   createdAt: string | null;
 };
 type ConflictView = {
+  resolved?: boolean;
   target: string;
   result?: string;
   base: unknown;
@@ -152,9 +153,19 @@ export default function SyncConflictDiff({
         </ul>
       )}
       <p className="sync-diff-legend">
-        원래 내용은 두 수정 전 값입니다. 먼저 수정은 먼저 반영되어 지금 보이는
-        내용이고, 나중에 수정은 같은 곳을 뒤늦게 고쳐 반영되지 못하고 이
-        보관함에 남은 수정입니다.
+        {conflict.resolved ? (
+          <>
+            충돌 당시의 기록입니다. 원래 내용은 두 수정 전 값, 먼저 수정은 당시
+            먼저 반영된 내용, 나중에 수정은 뒤늦게 고쳐 충돌로 보관된
+            내용입니다.
+          </>
+        ) : (
+          <>
+            원래 내용은 두 수정 전 값입니다. 먼저 수정은 먼저 반영되어 지금
+            보이는 내용이고, 나중에 수정은 같은 곳을 뒤늦게 고쳐 반영되지 못하고
+            이 보관함에 남은 수정입니다.
+          </>
+        )}
       </p>
       <div className="sync-diff-modes" role="group" aria-label="비교 대상">
         {modes.map((item) => (
@@ -164,11 +175,17 @@ export default function SyncConflictDiff({
             aria-pressed={item.id === mode}
             onClick={() => setMode(item.id)}
           >
-            {item.label + suffix[item.id]}
+            {(conflict.resolved && item.id === "result"
+              ? "두 수정 비교"
+              : item.label) + suffix[item.id]}
           </Button>
         ))}
       </div>
-      <p className="sync-diff-legend">{selected.legend}</p>
+      <p className="sync-diff-legend">
+        {conflict.resolved && mode === "result"
+          ? "빨간 줄은 충돌 당시 먼저 수정된 내용, 초록 줄은 나중에 수정된 내용입니다."
+          : selected.legend}
+      </p>
       {contested.length === 0 && (
         <p className="sync-diff-equal">먼저 수정과 겹친 항목은 없습니다.</p>
       )}
@@ -180,8 +197,9 @@ export default function SyncConflictDiff({
         >
           <summary>겹치지 않은 항목 {clean.length}개</summary>
           <p className="sync-diff-legend">
-            먼저 수정과 겹치지 않은 항목입니다. 나중에 수정으로 덮어쓰면 함께
-            반영되고, 먼저 수정으로 유지하면 함께 버려집니다.
+            {conflict.resolved
+              ? "충돌 당시 나중에 수정에 포함됐으나 먼저 수정과 겹치지 않았던 항목입니다."
+              : "먼저 수정과 겹치지 않은 항목입니다. 나중에 수정으로 덮어쓰면 함께 반영되고, 먼저 수정으로 유지하면 함께 버려집니다."}
           </p>
           {/* A large command can carry hundreds of these; draw them on demand. */}
           {cleanOpen && list(clean, contested.length)}

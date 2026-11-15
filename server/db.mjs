@@ -290,6 +290,16 @@ export function writeFormatting(db, teamId, formatting) {
     .prepare("SELECT id,style_id,orders_json FROM format_rules WHERE team_id=?")
     .all(teamId);
   const prior = new Map(previous.map((r) => [r.id, r]));
+  // Remove the rules the new list drops before writing it. A rule that takes
+  // over the scope of a dropped one under another ID (a received edit or a
+  // conflict resolution) needs its selector free: UNIQUE(team_id,selector)
+  // refuses it while the old row remains. The caller's transaction keeps the
+  // replacement atomic.
+  const kept = new Set(formatting.rules.map((rule) => rule.id));
+  const remove = db.prepare(
+    "DELETE FROM format_rules WHERE team_id=? AND id=?",
+  );
+  for (const id of prior.keys()) if (!kept.has(id)) remove.run(teamId, id);
   const put = db.prepare(
     "INSERT INTO format_rules(team_id,id,selector,rows_json,keys_json,exclusions_json,style_id,orders_json) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(team_id,id) DO UPDATE SET style_id=excluded.style_id,orders_json=excluded.orders_json",
   );
@@ -316,10 +326,6 @@ export function writeFormatting(db, teamId, formatting) {
       );
     prior.delete(rule.id);
   }
-  const remove = db.prepare(
-    "DELETE FROM format_rules WHERE team_id=? AND id=?",
-  );
-  for (const id of prior.keys()) remove.run(teamId, id);
   db.prepare(
     "INSERT INTO format_states(team_id,revision) VALUES(?,?) ON CONFLICT(team_id) DO UPDATE SET revision=excluded.revision",
   ).run(teamId, formatting.revision);
