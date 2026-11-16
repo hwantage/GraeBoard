@@ -44,22 +44,26 @@ import { beginProfileSwitch } from "../sync/profile-switch.mjs";
 import { runTeam, refreshTeam, importTeam } from "../sync/sync.mjs";
 import { CanonicalSlice, reduceSlice } from "../sync/sync-partial.mjs";
 import { materializeSlice } from "../sync/materialize.mjs";
-// Each conflict without the values of its command and of the current
-// records: what the list shows and what tells where each edit came from.
-// OFFSET 0 keeps the subquery as written. Without it PostgreSQL inlines the
-// cast into every use of p and reads and parses a conflict's text (megabytes
-// for a sheet copy) once per field instead of once.
-const CONFLICT_SUMMARIES = `SELECT jsonb_build_object(
-  'conflictId', p->'conflictId', 'opId', p->'opId', 'reason', p->'reason',
-  'resolution', CASE WHEN jsonb_typeof(p->'resolution') NOT IN ('null', 'boolean') OR p->'resolution'='true'::jsonb THEN 'true'::jsonb END,
-  'operation', ((p->'operation') - 'changes') || jsonb_build_object('changes', COALESCE((
-    SELECT jsonb_agg(jsonb_build_object('entity', c->'entity', 'key', c->'key') ORDER BY n)
-    FROM jsonb_array_elements(p->'operation'->'changes') WITH ORDINALITY AS x(c, n)), '[]'::jsonb)),
-  'current', CASE WHEN jsonb_typeof(p->'current')='object' THEN (
-    SELECT COALESCE(jsonb_object_agg(k, CASE WHEN jsonb_typeof(v)='object' THEN v - 'payload' ELSE v END), '{}'::jsonb)
-    FROM jsonb_each(p->'current') AS e(k, v)) END
+// Bound PostgreSQL JSON work as well as the number of rows. One large
+// conflict must still fit on its own page so the cursor always advances.
+const CONFLICT_PAGE_BYTES = 8 * 1024 * 1024;
+// Only the fields used by view/conflictOrigin/conflictOpIds/conflictPeople.
+// json_to_record skips before/after values instead of building a jsonb tree
+// for the entire copy. Full values are read only for detail or a saved choice.
+const CONFLICT_SUMMARIES = `SELECT json_build_object(
+  'conflictId', c."conflictId", 'opId', c."opId", 'reason', c.reason,
+  'resolution', CASE WHEN json_typeof(c.resolution) NOT IN ('null', 'boolean') OR c.resolution::text='true' THEN true END,
+  'operation', json_build_object('createdAt', o."createdAt", 'actorRef', o."actorRef", 'writerEpoch', o."writerEpoch", 'changes', COALESCE((
+    SELECT json_agg(json_build_object('entity', change.entity, 'key', change.key) ORDER BY n)
+    FROM json_array_elements(o.changes) WITH ORDINALITY AS x(value, n)
+    CROSS JOIN LATERAL json_to_record(x.value) AS change(entity text, key json)), '[]'::json)),
+  'current', CASE WHEN json_typeof(c.current)='object' THEN (
+    SELECT COALESCE(json_object_agg(k, CASE WHEN json_typeof(v)='object' THEN json_build_object('version', v->'version') ELSE v END), '{}'::json)
+    FROM json_each(c.current) AS e(k, v)) END
 )::text AS payload
-FROM (SELECT conflict_id, payload::jsonb AS p FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2::text[]) OFFSET 0) conflicts
+FROM (SELECT conflict_id, payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2::text[]) OFFSET 0) conflicts
+CROSS JOIN LATERAL json_to_record(conflicts.payload::json) AS c("conflictId" text, "opId" text, reason text, resolution json, operation json, current json)
+CROSS JOIN LATERAL json_to_record(c.operation) AS o("createdAt" text, "actorRef" text, "writerEpoch" text, changes json)
 ORDER BY conflict_id`;
 
 async function serviceStatus(ctx, { check = false } = {}) {
@@ -389,20 +393,29 @@ export async function adminRoutes(
             await db.withTeamTransaction(
               teamId,
               async (tx) => {
-                // Keyset pagination uses existing columns and the team/id
-                // primary key. Only this page's payloads reach JSON parsing.
-                const ids = sync[3]
-                  ? [sync[3]]
+                // Read sizes without parsing JSON: twenty copy conflicts can
+                // be hundreds of MB even though their summaries are small.
+                const candidates = sync[3]
+                  ? [{ conflict_id: sync[3], payload_bytes: 0 }]
                   : (
                       await tx.query(
-                        `SELECT conflict_id FROM sync_conflicts WHERE team_id=$1 AND conflict_id>$2${page.status === "all" ? "" : page.status === "resolved" ? " AND resolution IS NOT NULL" : " AND resolution IS NULL"} ORDER BY conflict_id LIMIT $3`,
+                        `SELECT conflict_id,octet_length(payload) payload_bytes FROM sync_conflicts WHERE team_id=$1 AND conflict_id>$2${page.status === "all" ? "" : page.status === "resolved" ? " AND resolution IS NOT NULL" : " AND resolution IS NULL"} ORDER BY conflict_id LIMIT $3`,
                         [teamId, page.after, CONFLICT_PAGE_SIZE + 1],
                       )
-                    ).rows.map((row) => row.conflict_id);
-                const next =
-                  ids.length > CONFLICT_PAGE_SIZE
-                    ? ids[CONFLICT_PAGE_SIZE - 1]
-                    : null;
+                    ).rows;
+                const ids = [];
+                let bytes = 0;
+                for (const row of candidates) {
+                  const size = Number(row.payload_bytes);
+                  if (
+                    ids.length >= CONFLICT_PAGE_SIZE ||
+                    (ids.length && bytes + size > CONFLICT_PAGE_BYTES)
+                  )
+                    break;
+                  ids.push(row.conflict_id);
+                  bytes += size;
+                }
+                const next = candidates.length > ids.length ? ids.at(-1) : null;
                 // The list carries no payloads: PostgreSQL drops them, so a
                 // conflict over a sheet copy (megabytes per side) is neither
                 // parsed nor sent here. One conflict is read whole.
@@ -411,9 +424,7 @@ export async function adminRoutes(
                     sync[3]
                       ? "SELECT payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=$2"
                       : CONFLICT_SUMMARIES,
-                    sync[3]
-                      ? [teamId, sync[3]]
-                      : [teamId, ids.slice(0, CONFLICT_PAGE_SIZE)],
+                    sync[3] ? [teamId, sync[3]] : [teamId, ids],
                   )
                 ).rows.map((row) => JSON.parse(row.payload));
                 // This site's own operations among the held ones and the
