@@ -88,15 +88,14 @@ export const protocolMarker = (version, token) => ({
   deleted: false,
 });
 export const entityId = (entity, key) => JSON.stringify([entity, key]);
-// A record or payload whose `data` already has its canonical text in this run
-// (a sheet copy of megabytes, serialized when its command was validated) is
-// assembled around that text instead of being walked and serialized again.
+// Assemble records around this run's immutable canonical children instead of
+// walking their large payloads again. Mutable children still serialize normally.
 const holdsKnownText = (value, cache) =>
   !!cache &&
   !Array.isArray(value) &&
-  !!value.data &&
-  typeof value.data === "object" &&
-  cache.texts.has(value.data);
+  Object.values(value).some(
+    (child) => child && typeof child === "object" && cache.texts.has(child),
+  );
 export function canonical(value) {
   const cache = syncCanonicalCache();
   if (value && typeof value === "object") {

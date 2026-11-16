@@ -4,6 +4,9 @@ import {
   withSyncOperationCache,
   parseSyncOperation,
   preparedSyncOperation,
+  parseStoredSyncJson,
+  resolveSyncConflict,
+  syncCanonicalCache,
 } from "../../../server/sync/core/sync-operation-cache.mjs";
 import {
   canonical,
@@ -12,6 +15,8 @@ import {
   entityId,
   protocolMarker,
   validateOperation,
+  stateSum,
+  stateSumFrom,
 } from "../../../server/sync/core/protocol.mjs";
 import { makeOperation } from "../../../server/sync/core/operations.mjs";
 import { reduce } from "../../../server/sync/core/reducer.mjs";
@@ -36,6 +41,49 @@ const operation = () =>
       },
     },
   });
+
+test("large canonical conflict resolution preserves exact bytes and checksums without reserializing originals", () => {
+  const conflict = {
+    conflictId: "large",
+    current: { nested: { text: '한글 🚀 ,"resolution":null}'.repeat(300000) } },
+    operation: operation(),
+    reason: "concurrent-edit",
+    resolution: null,
+  };
+  const original = canonical(conflict),
+    resolved = { ...conflict, resolution: 'resolution-"quoted"' },
+    expected = canonical(resolved),
+    before = { ...emptyState(), conflicts: { large: conflict } },
+    after = { ...emptyState(), conflicts: { large: resolved } },
+    expectedSum = stateSum(after),
+    originalSum = stateSum(before);
+  assert.ok(Buffer.byteLength(original) > 8 * 1024 * 1024);
+  let parsed, updated;
+  withSyncOperationCache(() => {
+    parsed = parseStoredSyncJson(original);
+    updated = resolveSyncConflict(parsed, resolved.resolution);
+    assert.throws(() => {
+      parsed.current.nested.text = "changed";
+    }, TypeError);
+    assert.equal(syncCanonicalCache().texts.get(parsed), original);
+    assert.equal(syncCanonicalCache().texts.get(updated), expected);
+    assert.equal(canonical(updated), expected);
+    assert.equal(
+      stateSumFrom(
+        originalSum,
+        { ...emptyState(), conflicts: { large: parsed } },
+        { ...emptyState(), conflicts: { large: updated } },
+      ),
+      expectedSum,
+    );
+  });
+  assert.equal(canonical(parsed), original);
+  assert.equal(canonical(updated), expected);
+  assert.deepEqual(
+    resolveSyncConflict(conflict, resolved.resolution),
+    resolved,
+  );
+});
 
 test("sync memo freezes exact JSON, reuses its canonical bytes and releases success, failure and inherited async scopes", async () => {
   const op = operation(),
