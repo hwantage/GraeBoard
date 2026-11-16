@@ -1,3 +1,4 @@
+import { parseSyncOperation } from "../../server/sync/core/sync-operation-cache.mjs";
 import {
   isRecoveryError,
   normalizeSyncError,
@@ -95,7 +96,13 @@ export function boundStore(
               const link = await tx.sync.readLink();
               if (!link?.canonical_head) return null;
               const slice = new CanonicalSlice(tx, teamId),
-                base = await slice.include(operations).include(cover).load();
+                base = await slice.include(operations).load();
+              // Pending coverage is only for projection, never a canonical
+              // change. Keep its conflict identities without their large bodies.
+              if (cover.length)
+                await new CanonicalSlice(tx, teamId, { conflictDetails: false })
+                  .include(cover)
+                  .load(base);
               // Protocol 4 splits a copy into a record per cell and is
               // reduced over the whole state.
               if (![PROTOCOL, ROW_PROTOCOL].includes(protocolVersion(base)))
@@ -103,6 +110,7 @@ export function boundStore(
               const context = await slice.context(base);
               mark("readSlice", {
                 entities: Object.keys(base.entities).length,
+                conflictBytes: slice.conflictBytes,
               });
               let state;
               try {
@@ -150,7 +158,14 @@ export function boundStore(
                 if (check) canonicalVerified = true;
                 hash = hashes.next;
               }
-              return { head: link.canonical_head, base, state, sum, hash };
+              return {
+                head: link.canonical_head,
+                base,
+                state,
+                sum,
+                hash,
+                workBytes: slice.conflictBytes,
+              };
             },
             { readOnly: true },
           )
@@ -202,6 +217,41 @@ export function boundStore(
         { readOnly: true },
       ),
     readPending: () => database.readPending(teamId),
+    // A small "keep" command can resolve a multi-MB conflict. Bound the
+    // publication by the source records it must read/hash as well as its wire
+    // bytes; readPending itself remains complete for projection and recovery.
+    readPendingForPublish: (workBytes) =>
+      database.withTeamTransaction(
+        teamId,
+        async (tx) => {
+          const rows = (
+            await tx.query(
+              `SELECT b.op_id,octet_length(b.payload) bytes,
+        COALESCE((SELECT sum(octet_length(c.payload)) FROM sync_conflicts c
+          WHERE c.team_id=b.team_id AND c.conflict_id IN (SELECT json_array_elements_text(${tx.readModels ? "COALESCE(s.summary,b.payload)" : "b.payload"}::json->'resolves'))),0) conflict_bytes
+        FROM sync_outbox b ${tx.readModels ? "LEFT JOIN sync_outbox_summaries s USING(team_id,op_id)" : ""}
+        WHERE b.team_id=$1 AND b.status<>'acknowledged' ORDER BY b.local_seq`,
+              [teamId],
+            )
+          ).rows;
+          let bytes = 0;
+          const ids = [];
+          for (const row of rows) {
+            const cost = Number(row.bytes) + Number(row.conflict_bytes);
+            if (ids.length && bytes + cost > workBytes) break;
+            ids.push(row.op_id);
+            bytes += cost;
+          }
+          if (!ids.length) return [];
+          return (
+            await tx.query(
+              "SELECT payload FROM sync_outbox WHERE team_id=$1 AND op_id=ANY($2::text[]) ORDER BY local_seq",
+              [teamId, ids],
+            )
+          ).rows.map((row) => parseSyncOperation(row.payload));
+        },
+        { readOnly: true },
+      ),
     async acquire(id) {
       return call(async (tx) => {
         if (

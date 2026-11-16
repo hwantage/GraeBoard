@@ -240,7 +240,7 @@ export async function materializeSlice(
   let projected = projectedState || state;
   if (replay.length && !projectedState) {
     onPendingProjection(replay);
-    const slice = new CanonicalSlice(tx, teamId);
+    const slice = new CanonicalSlice(tx, teamId, { conflictDetails: false });
     await slice.include(replay).load(state);
     ({ state: projected } = reduceSlice(
       state,

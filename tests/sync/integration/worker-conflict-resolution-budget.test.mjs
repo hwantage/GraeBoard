@@ -16,6 +16,7 @@ import {
 import { makeOperation } from "../../../server/sync/core/operations.mjs";
 import { reduceMany } from "../../../server/sync/core/reducer.mjs";
 import { unpackSheetCloneData } from "../../../shared/sheet-clones/sheet-clone-sync-data.js";
+import { boundStore } from "../../../worker/sync/sync-store.mjs";
 import { materialize } from "../../../worker/sync/materialize.mjs";
 
 const enabled = existsSync(join(process.env.TEST_PG_BIN || "", "postgres"));
@@ -193,6 +194,24 @@ test(
     );
     // The shared reducer must accept precisely the commands the API saved;
     // receiving them clears pending rows and preserves the selected clone.
+    const store = boundStore(pg.adapter, f.teamId);
+    const batch = await store.readPendingForPublish(1024 * 1024);
+    assert.deepEqual(
+      batch.map((op) => op.opId),
+      [first.opId],
+      "a resolution batch includes the large referenced conflict in its work budget",
+    );
+    const sliced = await store.reduceSlice(
+      batch,
+      { teamId: f.teamId, repoId: f.link.repo_id },
+      { cover: pending },
+    );
+    assert.ok(sliced.workBytes >= bytes);
+    for (let i = 1; i < 17; i++)
+      assert.ok(
+        !sliced.base.conflicts[operations[i].opId].current,
+        "pending coverage does not load the earlier conflict originals",
+      );
     const published = reduceMany(before, pending);
     for (const op of pending)
       assert.ok(

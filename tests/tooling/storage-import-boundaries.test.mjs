@@ -12,6 +12,8 @@ const portableSync = new Set(
     "versions",
     "reducer",
     "service",
+    // Request-scoped immutable JSON/cache; already supported by the Edge runtime.
+    "sync-operation-cache",
     "retention",
     "github-api",
     "errors",

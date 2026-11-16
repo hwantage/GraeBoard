@@ -122,7 +122,7 @@ SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋
 - 공용 문서 편집기는 `documents/`가 소유합니다. `TaskDocumentPanel`과 `AnnualMemoDocumentPanel`(꼬리 메모 패널·문서 브라우저 공용)은 `DocumentPanel`을, 캘린더 문서는 `DocumentEditor`를 재사용하는 현재 경로를 보존합니다. 다른 기능은 구체적인 진입 모듈을 사용하고 편집기 내부 구현을 각자 복사하지 않습니다.
 - 기능 간 직접 사용은 공유 역할과 의존 방향을 설명할 수 있어야 합니다. 폴더 안의 모든 파일을 공개 API로 간주하지 않습니다. import 경로를 짧게 만들려고 전역 barrel이나 별칭 체계를 새로 도입하지 않습니다.
 - 내부 Node와 공통 모듈이 외부 호스트 구현을 역참조하지 않도록 유지합니다. PostgreSQL repository는 `worker/storage/` 경계를 유지하고 SQLite·Node 전용 구현을 외부에서 재사용하지 않습니다.
-- 외부 direct import는 기존 공통 업무 서비스·명령 규칙 14개와 portable sync 모듈 16개의 정확한 경로만 허용합니다. 목록은 [import 경계 검사](../tests/tooling/storage-import-boundaries.test.mjs)에 있으며 새 `*-service.mjs`나 `core/` 전체로 자동 확대하지 않습니다. `sync-operation-cache.mjs`는 기존 `SyncService`의 간접 의존이며 direct 목록 16개에는 추가하지 않습니다.
+- 외부 direct import는 기존 공통 업무 서비스·명령 규칙 14개와 portable sync 모듈 17개의 정확한 경로만 허용합니다. 목록은 [import 경계 검사](../tests/tooling/storage-import-boundaries.test.mjs)에 있으며 새 `*-service.mjs`나 `core/` 전체로 자동 확대하지 않습니다. `sync-operation-cache.mjs`는 외부 해결 요청과 게시 후보 읽기도 같은 요청 범위 캐시를 사용하므로 명시적으로 허용합니다. `node:async_hooks` 외에 파일·SQLite·프로세스 의존성이 없고 실제 Edge 제한 환경에서도 확인했습니다.
 - 경로가 바뀌면 경계 검사의 경로 인식도 같은 변경에서 갱신합니다. 검사 대상을 제외하거나 허용 범위를 넓혀 통과시키지 않습니다. 간접 import까지 포함한 런타임 제한을 보존합니다.
 - CSS는 이동 후에도 전역에 영향을 줄 수 있습니다. 기존 클래스·적재 순서·이미지 URL을 유지하고, 지연 import와 Web Worker의 로딩 방식도 유지합니다.
 

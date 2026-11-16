@@ -29,6 +29,7 @@ export class CanonicalSlice {
     this.tags = new Set();
     this.opIds = new Set();
     this.resolves = new Set();
+    this.conflictBytes = 0;
     this.tagsRead = new WeakSet();
     this.want("protocol", []);
   }
@@ -165,8 +166,11 @@ export class CanonicalSlice {
                CROSS JOIN LATERAL json_to_record(c.operation) AS o("teamId" text,"repoId" text)`,
           [team, resolves],
         )
-      ).rows)
+      ).rows) {
+        if (this.conflictDetails)
+          this.conflictBytes += Buffer.byteLength(row.payload);
         target.conflicts[row.conflict_id] = JSON.parse(row.payload);
+      }
     return target;
   }
   // The same index reduceMany builds, from SQL instead of every record.
