@@ -1,3 +1,4 @@
+import { rebuildConflictSummaries } from "../../../shared/sync/sync-conflict-summaries.mjs";
 import { randomUUID } from "node:crypto";
 import {
   TEAM_TRANSFER_TABLES,
@@ -659,6 +660,7 @@ export async function importTeam(adapter, bundle, options = {}) {
             if (portableHash(actual) !== portableHash(tables[table]))
               throw new Error("Logical import verification failed: " + table);
           }
+          if (tx.readModels) yield rebuildConflictSummaries(tx, teamId);
           if (options.restoreToken)
             yield tx.query(
               "INSERT INTO site_maintenance_jobs(job_id,team_id,kind,phase,manifest,progress,created_at) VALUES($1,$2,'external-restore','complete',$3,'{}',$4)",

@@ -187,6 +187,69 @@ test("a saved resolution is found per conflict with the choice it made", () => {
   assert.equal(resolvesAny(pending, ["c4"]), false);
 });
 
+test("saved resolution comparison preserves JSON meaning without serializing a large copy", () => {
+  const choice = (before, after) =>
+    pendingResolutions(
+      [
+        {
+          conflictId: "c",
+          operation: {
+            changes: [{ entity: "sheetClone", key: ["copy"], desired: before }],
+          },
+        },
+      ],
+      [
+        {
+          opId: "r",
+          createdAt: "now",
+          resolves: ["c"],
+          changes: [{ entity: "sheetClone", key: ["copy"], desired: after }],
+        },
+      ],
+    ).get("c").choice;
+  for (const [before, after, expected] of [
+    [
+      { a: 1, nested: { b: null, a: [0, false, ""] } },
+      { nested: { a: [0, false, ""], b: null }, a: 1 },
+      "submitted",
+    ],
+    [{ a: null }, { a: undefined }, "submitted"],
+    [{ a: null }, {}, "edited"],
+    [[1, 2], [2, 1], "edited"],
+    [[1], { 0: 1 }, "edited"],
+    [0, "0", "edited"],
+    [null, {}, "edited"],
+  ])
+    assert.equal(choice(before, after), expected);
+  const marker = "large-resolution-value-",
+    original = {
+      rows: Array.from({ length: 20000 }, (_, i) => ({
+        id: i,
+        value: marker + "x".repeat(100),
+      })),
+    },
+    copied = { rows: original.rows.map(({ id, value }) => ({ value, id })) },
+    stringify = JSON.stringify;
+  let serializedBodies = 0;
+  JSON.stringify = function (value, ...args) {
+    if (typeof value === "string" && value.startsWith(marker))
+      serializedBodies++;
+    return stringify.call(this, value, ...args);
+  };
+  try {
+    assert.equal(choice(original, copied), "submitted");
+    copied.rows.at(-1).value += "changed";
+    assert.equal(choice(original, copied), "edited");
+    assert.equal(
+      serializedBodies,
+      0,
+      "labeling a saved choice must not serialize every cell value",
+    );
+  } finally {
+    JSON.stringify = stringify;
+  }
+});
+
 test("titles name the first and the later editor", () => {
   assert.equal(
     originLabel({ site: "external", actor: "김정환" }),

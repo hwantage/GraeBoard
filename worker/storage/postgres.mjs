@@ -94,7 +94,10 @@ export class PostgresDatabase extends DatabaseAdapter {
                     `SELECT pg_advisory_xact_lock(hashtextextended(${client.escapeLiteral(teamId || "graeboard-control")},0))`,
                   ]),
               ...(teamId
-                ? ["SELECT team_id FROM team_meta WHERE singleton=1"]
+                ? [
+                    "SELECT to_regclass('graeboard.sync_conflict_summaries') IS NOT NULL AS enabled",
+                    "SELECT team_id FROM team_meta WHERE singleton=1",
+                  ]
                 : []),
               ...first.map(({ sql, params = [] }) =>
                 inlineParameters(client, sql, params),
@@ -105,6 +108,8 @@ export class PostgresDatabase extends DatabaseAdapter {
         if (teamId && opened.at(-1 - first.length).rows[0]?.team_id !== teamId)
           throw new Error("PostgreSQL team identity mismatch");
         open = true;
+        const readModels =
+          !!teamId && opened.at(-2 - first.length).rows[0].enabled;
         const run = (sql, params = []) => {
           if (!open) throw new Error("Transaction is closed");
           return client.query(sql, params);
@@ -113,11 +118,12 @@ export class PostgresDatabase extends DatabaseAdapter {
           ? createTeamStore(
               teamId,
               (generator) => executeAsync(generator, run),
-              { batchSize: 500 },
+              { batchSize: 500, readModels },
             )
           : null;
         const result = await work({
           teamId,
+          readModels,
           query: run,
           sync,
           store: sync,
@@ -222,7 +228,9 @@ export class PostgresDatabase extends DatabaseAdapter {
         )
       ).rows;
       const version = postgresHistoryVersion(rows, this.migrationScope, {
-        allowPreviousTeam,
+        allowPreviousTeam:
+          allowPreviousTeam ||
+          (this.migrationScope === "team" && rows.length === 3),
         allowPreviousSite,
         allowPreviousControl,
       });

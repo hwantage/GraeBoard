@@ -76,6 +76,8 @@ function poolFor(binding, scope = "control", { site = false } = {}) {
           ).rows;
           client.schemaVersion = postgresHistoryVersion(rows, migrationScope, {
             allowPreviousSite: true,
+            // A v3 team keeps the bounded legacy list until its approved migration.
+            allowPreviousTeam: migrationScope === "team" && rows.length === 3,
           });
         }
       } catch (error) {

@@ -1,3 +1,4 @@
+import { rebuildConflictSummaries } from "../../../shared/sync/sync-conflict-summaries.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -287,5 +288,84 @@ test(
       [mediumIds[2]],
     );
     assert.equal(mediumLast.next, null);
+
+    // Saving a resolution adds a large outbox row to the subsequent list and
+    // detail paths. Preserve its saved choice, author and original values.
+    const resolution = {
+      opId: "winner",
+      actorRef: "resolution-author",
+      createdAt: "2026-11-16T00:00:00.000Z",
+      resolves: [largeRows[0].id],
+      changes: JSON.parse(largeRows[0].payload).operation.changes.map(
+        (change) => ({ ...change, base: { value: largeValue } }),
+      ),
+    };
+    await pgQuery(
+      "INSERT INTO sync_outbox(op_id,team_id,payload,status,created_at) VALUES($1,$2,$3,'pending',$4)",
+      [
+        resolution.opId,
+        f.teamId,
+        JSON.stringify(resolution),
+        resolution.createdAt,
+      ],
+    );
+    const saved = ok(await f.outside(prefix + "?status=open&after=page-074"))
+      .conflicts[0];
+    assert.deepEqual(saved.pendingResolution, {
+      opId: resolution.opId,
+      createdAt: resolution.createdAt,
+      choice: "submitted",
+    });
+    const savedDetail = ok(await f.outside(prefix + "/" + largeRows[0].id));
+    assert.deepEqual(savedDetail.pendingResolution, saved.pendingResolution);
+    assert.equal(savedDetail.desired[0].value, largeValue);
+    assert.equal(
+      ok(await f.outside(prefix + "?status=open&after=" + largeRows[0].id))
+        .conflicts[0].pendingResolution,
+      null,
+    );
+
+    await f.pgStore.withTeamTransaction(f.teamId, (tx) =>
+      rebuildConflictSummaries(tx, f.teamId),
+    );
+    const parse = JSON.parse;
+    let originalsParsed = 0;
+    JSON.parse = function (text, ...args) {
+      if (
+        typeof text === "string" &&
+        (text.includes(marker) ||
+          text.includes("large-copy-conflict-") ||
+          text.includes(mediumValue.slice(0, 100)))
+      )
+        originalsParsed++;
+      return parse.call(this, text, ...args);
+    };
+    let cachedPage;
+    try {
+      cachedPage = ok(await f.outside(prefix + "?status=open&after=page-074"));
+      const open = ok(await f.outside(prefix + "?status=open"));
+      assert.equal(open.conflicts.length, 20);
+    } finally {
+      JSON.parse = parse;
+    }
+    assert.equal(
+      originalsParsed,
+      0,
+      "v4 lists and pending resolution labels never parse original values",
+    );
+    assert.deepEqual(
+      cachedPage.conflicts.map((c) => c.conflictId),
+      [...largeRows.map((r) => r.id), ...mediumIds],
+    );
+    assert.equal(
+      cachedPage.next,
+      null,
+      "large source size no longer reduces the list to one item",
+    );
+    assert.deepEqual(cachedPage.conflicts[0], saved);
+    assert.deepEqual(
+      ok(await f.outside(prefix + "/" + largeRows[0].id)),
+      savedDetail,
+    );
   },
 );

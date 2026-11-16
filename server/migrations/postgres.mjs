@@ -1,3 +1,4 @@
+import { rebuildConflictSummaries } from "../../shared/sync/sync-conflict-summaries.mjs";
 import { postgresHistoryVersion } from "../../shared/storage/postgres-schema-version.js";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -57,6 +58,28 @@ export const teamSheetCloneMigration = (() => {
     checksum: createHash("sha256").update(sql).digest("hex"),
   };
 })();
+export const teamConflictSummariesMigration = (() => {
+  const sql = readFileSync(
+    new URL("./postgres/004-team-conflict-summaries.sql", import.meta.url),
+    "utf8",
+  );
+  return {
+    version: 4,
+    sql,
+    checksum: createHash("sha256").update(sql).digest("hex"),
+  };
+})();
+async function applyTeamConflictSummaries(client, from) {
+  if (from >= 4) return;
+  await client.query("SET LOCAL search_path TO graeboard, pg_catalog");
+  await client.query(teamConflictSummariesMigration.sql);
+  await rebuildConflictSummaries(client);
+  await client.query("INSERT INTO schema_migrations VALUES('team',4,$1,$2)", [
+    teamConflictSummariesMigration.checksum,
+    new Date().toISOString(),
+  ]);
+}
+
 export const accessTokenMigrations = Object.fromEntries(
   [
     ["control", 2],
@@ -192,12 +215,13 @@ export async function migratePostgres(
         if (identity?.team_id !== teamId)
           throw new Error("PostgreSQL team identity mismatch");
       }
-      if (scope === "team" && from < 3) {
+      if (scope === "team" && from < 4) {
         await applyTeamMaintenance(client, from);
         const conversion = await applyTeamSheetClones(client, from, {
           existing: true,
           convert,
         });
+        await applyTeamConflictSummaries(client, from);
         await afterDdl?.(client);
         await client.query(dryRun ? "ROLLBACK" : "COMMIT");
         begun = false;
@@ -205,10 +229,10 @@ export async function migratePostgres(
           engine: "postgres",
           scope,
           from,
-          to: 3,
+          to: 4,
           applied: !dryRun,
           dryRun,
-          checksum: teamSheetCloneMigration.checksum,
+          checksum: teamConflictSummariesMigration.checksum,
           ...(conversion ? { conversion } : {}),
         };
       }
@@ -275,6 +299,7 @@ export async function migratePostgres(
     if (scope === "team") {
       await applyTeamMaintenance(client, 1);
       await applyTeamSheetClones(client, 2, { existing: false });
+      await applyTeamConflictSummaries(client, 3);
     } else await applyAccessTokens(client, "control");
     await afterDdl?.(client);
     await client.query(dryRun ? "ROLLBACK" : "COMMIT");
@@ -283,12 +308,12 @@ export async function migratePostgres(
       engine: "postgres",
       scope,
       from: 0,
-      to: scope === "team" ? 3 : 2,
+      to: scope === "team" ? 4 : 2,
       applied: !dryRun,
       dryRun,
       checksum:
         scope === "team"
-          ? teamSheetCloneMigration.checksum
+          ? teamConflictSummariesMigration.checksum
           : accessTokenMigrations.control.checksum,
     };
   } catch (error) {
@@ -358,16 +383,18 @@ async function migrateSite(
         convert,
       });
       if (teamVersion < 3) await afterDdl?.(client);
+      await applyTeamConflictSummaries(client, teamVersion);
+      if (teamVersion < 4) await afterDdl?.(client);
       await client.query(dryRun ? "ROLLBACK" : "COMMIT");
       return {
         engine: "postgres",
         scope: "site",
         from,
         to: 3,
-        applied: (from < 3 || teamVersion < 3) && !dryRun,
+        applied: (from < 3 || teamVersion < 4) && !dryRun,
         dryRun,
         teamFrom: teamVersion,
-        teamTo: 3,
+        teamTo: 4,
         ...(conversion ? { conversion } : {}),
       };
     }
@@ -424,6 +451,7 @@ async function migrateSite(
       existing: !!teamVersion,
       convert,
     });
+    await applyTeamConflictSummaries(client, teamVersion || 3);
     await afterDdl?.(client);
     await client.query(dryRun ? "ROLLBACK" : "COMMIT");
     return {
@@ -434,7 +462,7 @@ async function migrateSite(
       applied: !dryRun,
       dryRun,
       teamFrom: teamVersion,
-      teamTo: 3,
+      teamTo: 4,
       ...(conversion ? { conversion } : {}),
     };
   } catch (error) {

@@ -1,4 +1,8 @@
 import {
+  conflictListSummary,
+  operationListSummary,
+} from "../../shared/sync/sync-conflict-summaries.mjs";
+import {
   TEAM_TRANSFER_TABLES,
   portableRow,
 } from "../../shared/transfer/logical-format.mjs";
@@ -271,10 +275,45 @@ export async function resumeProfileSwitch(env, id) {
           500,
           "DB 열 이름이 올바르지 않습니다.",
         );
-        await tx.query(
+        const inserted = await tx.query(
           `INSERT INTO ${table}(${columns.join(",")}) ${["sync_outbox", "site_events"].includes(table) ? "OVERRIDING SYSTEM VALUE " : ""}VALUES(${columns.map((_, i) => "$" + (i + 1)).join(",")}) ON CONFLICT DO NOTHING`,
           Object.values(row),
         );
+        if (
+          tx.readModels &&
+          ["sync_conflicts", "sync_outbox"].includes(table)
+        ) {
+          const conflict = table === "sync_conflicts";
+          const key = conflict ? "conflict_id" : "op_id";
+          const target = conflict
+            ? "sync_conflict_summaries"
+            : "sync_outbox_summaries";
+          const summarize = conflict
+            ? conflictListSummary
+            : operationListSummary;
+          // A resumed copy must summarize the existing destination row.
+          await tx.query(
+            `INSERT INTO ${target}(team_id,${key},summary) VALUES($1,$2,$3) ON CONFLICT(team_id,${key}) DO UPDATE SET summary=EXCLUDED.summary`,
+            [
+              job.teamId,
+              row[key],
+              JSON.stringify(
+                summarize(
+                  JSON.parse(
+                    inserted.rowCount
+                      ? row.payload
+                      : (
+                          await tx.query(
+                            `SELECT payload FROM ${table} WHERE team_id=$1 AND ${key}=$2`,
+                            [job.teamId, row[key]],
+                          )
+                        ).rows[0].payload,
+                  ),
+                ),
+              ),
+            ],
+          );
+        }
       }
     });
     job.offset += rows.rows.length;

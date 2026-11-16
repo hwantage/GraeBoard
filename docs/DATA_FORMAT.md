@@ -20,7 +20,7 @@ SheetClone 일회성 변환 명령은 최신 앱이 아닌 **고정 전체 커�
 | JSON 상세 보관 형식 | v7                                           | 반출 JSON의 `schemaVersion`; DB 버전과 별개. v6 파일은 `npm run cutover:sheet-clone -- export`로 변환            |
 | DB 백업 복구       | v29·v30·v31·v32·v33·v34 백업, 기존 버전 유지 | `scripts/transfer/restore.mjs`의 버전·무결성·참조 이미지 검사                                                             |
 | 기존 DB 업그레이드 | 명시적 v29 → … → v33 → v34 일회성 전환       | 모든 서버를 멈추고 `npm run cutover:sheet-clone`([운영 안내](OPERATIONS.md#사본-명칭sheetclone-일괄-전환))       |
-| 외부 PostgreSQL    | 팀별 site v3 + team v3, 한 프로젝트          | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v2/team v3 지원, team v1·v2는 전환 도구 |
+| 외부 PostgreSQL    | 팀별 site v3 + team v4, 한 프로젝트          | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v2/team v4 지원, team v1·v2는 전환 도구 |
 | 동기화 프로토콜    | 3(사본 한 레코드)·4(사본 행·셀 분할)         | C의 `protocol`/`[]` 표식. 1·2는 사본 명칭 전환 전 형식이며 이 런타임은 읽지 않음                                 |
 | 논리 이관 묶음     | `graeboard-team-transfer` v2                 | `shared/transfer/logical-format.mjs`. v1 묶음은 기록한 릴리스로 격리 DB에 복원한 뒤 전환 도구로 변환                      |
 
@@ -30,9 +30,11 @@ SheetClone 일회성 변환 명령은 최신 앱이 아닌 **고정 전체 커�
 
 스키마·영속 데이터 형식·해석 규칙·백업 호환성을 변경할 때는 [DB 변경 지침](DATABASE_CHANGES.md)을 반드시 따릅니다.
 
+PostgreSQL team v4는 `sync_conflict_summaries`·`sync_outbox_summaries`에 목록용 파생 요약을 저장합니다. 충돌 ID·명령 ID·작성자·시각·대상·현재 기록 버전·해결 여부와, 해결 방법 비교에 필요한 값의 SHA-256만 포함합니다. 큰 변경 전후 값은 기존 원문에 그대로 남습니다. 원문 저장과 요약 갱신은 같은 트랜잭션이고, 직접 원문을 갱신하면 트리거가 오래된 요약을 무효화합니다. team v3→v4 migration은 기존 원문에서 요약만 만들며 기존 원문·프로토콜·업무·이력·권한·이미지를 변환하지 않습니다. SQLite v34와 Git 프로토콜 3·4, 논리 이관 v2 및 외부 백업 형식은 유지합니다. PostgreSQL 복원·이관 시 요약을 다시 만듭니다. 미전환 team v3는 제한된 기존 목록 경로로 읽을 수 있지만, 대용량 목록 문제의 해결에는 승인된 v4 migration이 필요합니다.
+
 ## 저장 규칙 요약
 
-단계별 동기화 설정은 DB 버전·스키마·프로필 JSON·토큰 암호화·백업 형식을 변경하지 않습니다. 내부 시스템 관리자 전용 `GET /api/admin/teams/:id/external-db-sql`은 `{sql}`로 신규 외부 PostgreSQL 초기화 스크립트를 돌려줍니다. `npm run migrate -- --scope site --initialize`의 빈 DB 경로와 같은 migration SQL·순서·checksum(site 1·2·3, team 1·2·3)을 `BEGIN…COMMIT` 한 번으로 묶고, 두 스키마에 테이블이 있으면 거절하며, 앱 외 역할의 권한을 회수합니다. 스키마·저장 형식은 바꾸지 않습니다. `GET/PUT /api/admin/teams/:id/sync-setup`은 기존 `.env` 설정의 안전한 팀별 조회·추가를 제공합니다. PUT은 파일 revision을 비교하고 기존 연결 신원·다른 팀 프로필을 보존합니다. 설치 식별자를 이미 읽은 서버는 저장한 프로필을 실행 중 프로필 목록에 바로 적용하고, 서버가 식별자 없이 시작된 최초 설치에서만 재시작 필요를 반환합니다. 연결 이력이 없는 프로필의 저장소 수정도 같은 API로 처리하며 프로필 ID·외부 설치 UUID를 유지합니다. 응답에는 내부/외부 설치 ID·프로필 ID·저장소·등록 여부와 사용 중인 토큰의 앞부분(`tokenPreview`: GitHub 공통 접두어 뒤 10자, 토큰 길이의 절반 이하)만 포함하고 키·토큰 전체는 포함하지 않습니다. 앞부분은 저장 형식을 바꾸지 않고 조회 시 기존 암호문(없으면 `tokenEnv` 환경 변수)에서 계산합니다.
+단계별 동기화 설정은 DB 버전·스키마·프로필 JSON·토큰 암호화·백업 형식을 변경하지 않습니다. 내부 시스템 관리자 전용 `GET /api/admin/teams/:id/external-db-sql`은 `{sql}`로 신규 외부 PostgreSQL 초기화 스크립트를 돌려줍니다. `npm run migrate -- --scope site --initialize`의 빈 DB 경로와 같은 migration SQL·순서·checksum(site 1·2·3, team 1·2·3·4)을 `BEGIN…COMMIT` 한 번으로 묶고, 두 스키마에 테이블이 있으면 거절하며, 앱 외 역할의 권한을 회수합니다. 스키마·저장 형식은 바꾸지 않습니다. `GET/PUT /api/admin/teams/:id/sync-setup`은 기존 `.env` 설정의 안전한 팀별 조회·추가를 제공합니다. PUT은 파일 revision을 비교하고 기존 연결 신원·다른 팀 프로필을 보존합니다. 설치 식별자를 이미 읽은 서버는 저장한 프로필을 실행 중 프로필 목록에 바로 적용하고, 서버가 식별자 없이 시작된 최초 설치에서만 재시작 필요를 반환합니다. 연결 이력이 없는 프로필의 저장소 수정도 같은 API로 처리하며 프로필 ID·외부 설치 UUID를 유지합니다. 응답에는 내부/외부 설치 ID·프로필 ID·저장소·등록 여부와 사용 중인 토큰의 앞부분(`tokenPreview`: GitHub 공통 접두어 뒤 10자, 토큰 길이의 절반 이하)만 포함하고 키·토큰 전체는 포함하지 않습니다. 앞부분은 저장 형식을 바꾸지 않고 조회 시 기존 암호문(없으면 `tokenEnv` 환경 변수)에서 계산합니다.
 
 사내 서버의 동기화 로그는 DB가 아닌 파일에 저장합니다([운영 안내](OPERATIONS.md#사내-서버-동기화-로그)). `GET /api/teams/:id/sync/log?date=YYYY-MM-DD&problems=1&before=<위치>`는 팀장·시스템 관리자에게 `{ level, levels, canSetLevel, retentionDays, date, dates, entries, next }`를 돌려줍니다. `entries`는 최신순 200건이고 각 항목의 `line`은 그 줄이 그날 파일에서 시작하는 바이트 위치이며, `next`를 `before`로 넘겨 이전 기록을 이어 읽습니다. 파일은 끝에서부터 1MiB씩 비동기로 읽으므로 큰 파일도 한 쪽 분량만 읽고, 위치는 읽는 동안 기록이 더해져도 유효합니다. `problems=1`은 실패(`ok: false`)와 `state`·`worker`·`image` 기록만 고릅니다. 한 요청이 거르며 건너뛰는 줄은 4MiB(`SYNC_LOG_SCAN`)까지이므로, 걸러 본 쪽은 200건보다 적거나 비어 있어도 `next`가 있을 수 있습니다. `next`가 `null`이면 그날의 처음까지 읽은 것입니다. 화면은 빈 쪽이면 같은 날짜의 `next`로 이어 읽어 기록이 나오거나 그날의 처음에 닿을 때까지 읽습니다. `POST /api/teams/:id/sync/log/download`는 `{ date }`의 파일을 `sync-log-<날짜>.jsonl` 첨부로 스트리밍합니다. `PUT /api/admin/teams/:id/sync-log-level`은 시스템 관리자가 `{ level }`(`changes`·`cycles`·`git`)을 바꿉니다. 외부 서버에는 이 경로가 없습니다.
 

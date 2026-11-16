@@ -1,3 +1,4 @@
+import { operationListSummary } from "../../shared/sync/sync-conflict-summaries.mjs";
 import { receiptCapacity } from "../../shared/sync/sync-capacity.mjs";
 import {
   RESOLUTION_PENDING,
@@ -395,45 +396,64 @@ export async function adminRoutes(
               async (tx) => {
                 // Read sizes without parsing JSON: twenty copy conflicts can
                 // be hundreds of MB even though their summaries are small.
-                const candidates = sync[3]
-                  ? [{ conflict_id: sync[3], payload_bytes: 0 }]
-                  : (
-                      await tx.query(
-                        `SELECT conflict_id,octet_length(payload) payload_bytes FROM sync_conflicts WHERE team_id=$1 AND conflict_id>$2${page.status === "all" ? "" : page.status === "resolved" ? " AND resolution IS NOT NULL" : " AND resolution IS NULL"} ORDER BY conflict_id LIMIT $3`,
-                        [teamId, page.after, CONFLICT_PAGE_SIZE + 1],
-                      )
-                    ).rows;
+                const candidates =
+                  sync[3] && !tx.readModels
+                    ? [{ conflict_id: sync[3], payload_bytes: 0 }]
+                    : (
+                        await tx.query(
+                          `SELECT c.conflict_id,octet_length(c.payload) payload_bytes${tx.readModels ? ",s.summary" : ""} FROM sync_conflicts c ${tx.readModels ? "LEFT JOIN sync_conflict_summaries s USING(team_id,conflict_id)" : ""} WHERE c.team_id=$1 AND c.conflict_id${sync[3] ? "=" : ">"}$2${sync[3] || page.status === "all" ? "" : page.status === "resolved" ? " AND c.resolution IS NOT NULL" : " AND c.resolution IS NULL"} ORDER BY c.conflict_id LIMIT $3`,
+                          [
+                            teamId,
+                            sync[3] || page.after,
+                            CONFLICT_PAGE_SIZE + 1,
+                          ],
+                        )
+                      ).rows;
+                const cached =
+                  tx.readModels &&
+                  candidates.every((row) => row.summary != null);
                 const ids = [];
                 let bytes = 0;
                 for (const row of candidates) {
                   const size = Number(row.payload_bytes);
                   if (
                     ids.length >= CONFLICT_PAGE_SIZE ||
-                    (ids.length && bytes + size > CONFLICT_PAGE_BYTES)
+                    (!cached &&
+                      ids.length &&
+                      bytes + size > CONFLICT_PAGE_BYTES)
                   )
                     break;
                   ids.push(row.conflict_id);
                   bytes += size;
                 }
                 const next = candidates.length > ids.length ? ids.at(-1) : null;
-                // The list carries no payloads: PostgreSQL drops them, so a
-                // conflict over a sheet copy (megabytes per side) is neither
-                // parsed nor sent here. One conflict is read whole.
-                const conflicts = (
-                  await tx.query(
-                    sync[3]
-                      ? "SELECT payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=$2"
-                      : CONFLICT_SUMMARIES,
-                    sync[3] ? [teamId, sync[3]] : [teamId, ids],
-                  )
-                ).rows.map((row) => JSON.parse(row.payload));
+                // v4 lists read only stored summaries; v3 or invalidated rows
+                // use the bounded legacy path. Details read one original.
+                const summaries = cached
+                  ? candidates
+                      .slice(0, ids.length)
+                      .map((row) => JSON.parse(row.summary))
+                  : null;
+                const conflicts =
+                  cached && !sync[3]
+                    ? summaries
+                    : (
+                        await tx.query(
+                          sync[3]
+                            ? "SELECT payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=$2"
+                            : CONFLICT_SUMMARIES,
+                          sync[3] ? [teamId, sync[3]] : [teamId, ids],
+                        )
+                      ).rows.map((row) => JSON.parse(row.payload));
                 // This site's own operations among the held ones and the
                 // current writers; anything else came from the internal site.
                 // PostgreSQL extracts the two fields so Edge parses no payload.
                 const local = new Map(
                   (
                     await tx.query(
-                      "SELECT op_id,payload::jsonb->>'actorRef' actor_ref,payload::jsonb->>'createdAt' created_at FROM sync_outbox WHERE team_id=$1 AND op_id=ANY($2::text[])",
+                      tx.readModels
+                        ? `SELECT b.op_id,o."actorRef" actor_ref,o."createdAt" created_at FROM sync_outbox b LEFT JOIN sync_outbox_summaries s USING(team_id,op_id) CROSS JOIN LATERAL json_to_record(COALESCE(s.summary,b.payload)::json) AS o("actorRef" text,"createdAt" text) WHERE b.team_id=$1 AND b.op_id=ANY($2::text[])`
+                        : 'SELECT op_id,o."actorRef" actor_ref,o."createdAt" created_at FROM sync_outbox CROSS JOIN LATERAL json_to_record(payload::json) AS o("actorRef" text,"createdAt" text) WHERE team_id=$1 AND op_id=ANY($2::text[])',
                       [teamId, conflictOpIds(conflicts)],
                     )
                   ).rows.map((row) => [
@@ -464,13 +484,20 @@ export async function adminRoutes(
                 const pending = unresolved.length
                   ? (
                       await tx.query(
-                        "SELECT payload FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' AND (payload::jsonb->'resolves') ?| $2::text[]",
+                        cached
+                          ? "SELECT COALESCE(s.summary,b.payload) payload,s.summary IS NULL AS whole FROM sync_outbox b LEFT JOIN sync_outbox_summaries s USING(team_id,op_id) WHERE b.team_id=$1 AND b.status<>'acknowledged' AND EXISTS (SELECT 1 FROM json_array_elements_text(COALESCE(s.summary,b.payload)::json->'resolves') AS r(id) WHERE r.id=ANY($2::text[])) ORDER BY b.local_seq"
+                          : "SELECT payload FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' AND EXISTS (SELECT 1 FROM json_array_elements_text(payload::json->'resolves') AS r(id) WHERE r.id=ANY($2::text[])) ORDER BY local_seq",
                         [teamId, unresolved],
                       )
-                    ).rows.map((row) => JSON.parse(row.payload))
+                    ).rows.map((row) => {
+                      const value = JSON.parse(row.payload);
+                      return cached && row.whole
+                        ? operationListSummary(value)
+                        : value;
+                    })
                   : [];
-                // What a saved resolution chose is told from the conflict's
-                // later values, so those few conflicts are read whole.
+                // v4 compares saved value hashes. Only the legacy fallback
+                // reads full values to label a pending resolution.
                 const decided = sync[3]
                   ? conflicts
                   : conflicts.filter(
@@ -483,14 +510,16 @@ export async function adminRoutes(
                   local,
                   names,
                   resolutions: pendingResolutions(
-                    sync[3] || !decided.length
-                      ? decided.filter((c) => !c.resolution)
-                      : (
-                          await tx.query(
-                            "SELECT payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2::text[])",
-                            [teamId, decided.map((c) => c.conflictId)],
-                          )
-                        ).rows.map((row) => JSON.parse(row.payload)),
+                    cached
+                      ? summaries.filter((c) => !c.resolution)
+                      : sync[3] || !decided.length
+                        ? decided.filter((c) => !c.resolution)
+                        : (
+                            await tx.query(
+                              "SELECT payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2::text[])",
+                              [teamId, decided.map((c) => c.conflictId)],
+                            )
+                          ).rows.map((row) => JSON.parse(row.payload)),
                     pending,
                   ),
                 };
