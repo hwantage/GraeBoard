@@ -226,6 +226,7 @@ export async function materializeSlice(
     exclusions,
     onPendingProjection = () => {},
     incrementalPending = false,
+    projectedState = null,
   },
 ) {
   exclusions = await siteExclusions(tx, exclusions);
@@ -236,8 +237,8 @@ export async function materializeSlice(
     !incrementalPending || pendingNeedsProjection(base, state, pending)
       ? pending
       : [];
-  let projected = state;
-  if (replay.length) {
+  let projected = projectedState || state;
+  if (replay.length && !projectedState) {
     onPendingProjection(replay);
     const slice = new CanonicalSlice(tx, teamId);
     await slice.include(replay).load(state);
