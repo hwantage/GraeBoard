@@ -11,6 +11,8 @@ const changes = (operation = {}) =>
   }));
 export const operationListSummary = (operation = {}) => ({
   opId: operation.opId,
+  teamId: operation.teamId,
+  repoId: operation.repoId,
   actorRef: operation.actorRef,
   createdAt: operation.createdAt,
   writerEpoch: operation.writerEpoch,

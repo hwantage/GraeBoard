@@ -611,3 +611,9 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Work
 내부 오류 응답의 원문은 그대로 표시하며 외부 연결 오류의 진단 문구와 구분합니다. 내부 업무 polling은 7초, 외부는 30초이고 실패 재시도는 공통 정책과 Retry-After를 따릅니다. 내부 미연결 팀의 동기화 상태 조회는 60초 간격이며 업무 저장마다 조회하지 않습니다. 외부 저장 알림은 마지막 알림 이후 2초 뒤 한 번의 조회로 합칩니다. 공유 refresh는 마지막 소비자가 취소한 경우에만 네트워크를 취소합니다.
 
 프로토콜 3·4·5의 기준 이력 재생과 명시 전환 수신, `sheetCloneTask`·`sheetCloneCell` 독립성, 프로토콜 5의 행·셀 병합(`tests/sync/protocol/sync-row-records.test.mjs`)과 외부 행 단위 저장·부분 경로(`tests/sync/integration/worker-row-records.test.mjs`), receipt 별도 용량, SQLite·PostgreSQL migration 및 정리 경계는 합성 DB에서 검증합니다. 옛 프로토콜 1·2와 SQLite v33·PostgreSQL team v2 fixture는 일회성 SheetClone 전환 도구의 입력으로 검증합니다. PostgreSQL strict는 `TEST_PG_BIN=/테스트/PG/bin npm run test:postgres`로 실행합니다. 운영 백업은 별도 새 DB·이미지 경로에 실제 복구하고, `cutover:sheet-clone --dry-run` 사전 검사와 실제 사본 전환·행/이미지 보존 결과를 [패치 체크리스트](PATCH_GUIDE.md)에 별도로 기록합니다. 내부 SQLite의 `npm run restore -- 백업.sqlite 새경로.sqlite`에는 dry-run 옵션이 없습니다. 개발 합성 DB 통과를 운영 사본 확인으로 대신하지 않습니다.
+
+### 충돌 해결 후 공유 반영의 요약 조회
+
+외부 DB v4의 충돌 요약은 원문 작업의 `teamId`·`repoId`도 보관합니다. `CanonicalSlice`의 대기 작업 투영은 이 요약과 현재 `resolution`만 읽어 해결 대상의 신원을 검사하며, 실제 공유 변경은 기존 원문을 그대로 사용합니다. 누락되거나 이전 형식인 요약과 DB v3는 원문에서 식별 정보를 추출하므로 기존 데이터의 검사 의미는 유지됩니다. 대기 중인 해결이 많아도 투영 때 모든 충돌 원문을 PostgreSQL 임시 파일로 펼치지 않습니다.
+
+이미 운영 중인 v4의 요약 보완은 승인된 요약 저장소 범위에서 수행합니다. 원문·대기 작업을 백업하고 기존 요약의 `operation`에 원문과 같은 두 식별자만 추가하며, 요약 누락은 기존 재생성 함수 `rebuildConflictSummaries`로 복구할 수 있습니다. DB 버전·Git 형식·사내 SQLite 형식은 바뀌지 않습니다.
