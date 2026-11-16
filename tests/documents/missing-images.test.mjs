@@ -45,7 +45,7 @@ function fixture(t) {
         work({
           sync: {
             readLink: async () => ({ installation_id: randomUUID() }),
-            readPending: async () => [],
+            readPendingRows: async () => [],
             readExclusions: async () => [],
           },
         }),

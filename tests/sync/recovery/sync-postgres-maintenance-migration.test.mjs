@@ -19,7 +19,7 @@ import {
 
 const convert = postgresSheetCloneConversion({});
 
-test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically to team v3 without rewriting released history or data", async (t) => {
+test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically to team v4 without rewriting released history or data", async (t) => {
   const f = await postgresFixture(t);
   if (!f) return;
   // The conversion keeps every record; only the marker names protocol 3 anew.
@@ -54,7 +54,7 @@ test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically to team v3 wit
         convert,
       })
     ).to,
-    3,
+    4,
   );
   assert.equal(await teamVersion(), 1);
   assert.equal(
@@ -84,7 +84,7 @@ test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically to team v3 wit
   );
   assert.equal(await teamVersion(), 1);
   await migratePostgres(f.pool, { scope: "team", teamId: f.teamId, convert });
-  assert.equal(await teamVersion(), 3);
+  assert.equal(await teamVersion(), 4);
   assert.equal(await records(), before);
   assert.deepEqual(
     (
@@ -122,8 +122,8 @@ test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically to team v3 wit
     teamId: f.teamId,
     convert,
   });
-  assert.equal(created.teamTo, 3);
-  assert.equal(await teamVersion(), 3);
+  assert.equal(created.teamTo, 4);
+  assert.equal(await teamVersion(), 4);
   await f.pool.query(
     "DROP TABLE graeboard_site.access_tokens; DELETE FROM graeboard_site.schema_migrations WHERE version>=3",
   );
@@ -170,7 +170,7 @@ test("actual PostgreSQL team v1 and site v1/v2 upgrade atomically to team v3 wit
       convert,
     });
     assert.equal(result.teamFrom, 1);
-    assert.equal(result.teamTo, 3);
+    assert.equal(result.teamTo, 4);
     assert.equal(result.to, 3);
     assert.equal(await records(), before);
   }

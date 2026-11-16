@@ -5,10 +5,51 @@ import sharp from "sharp";
 import { imageSync } from "../../../worker/sync/sync-images.mjs";
 import { R2ImageStore } from "../../../worker/documents/images.mjs";
 import {
+  canonical,
   digest,
   emptyState,
   entityId,
 } from "../../../server/sync/core/protocol.mjs";
+
+test("received outbox receipts are checked before skipping duplicate image projection", async () => {
+  const teamId = randomUUID(),
+    state = emptyState(),
+    operation = {
+      opId: "received-operation",
+      changes: [],
+      objects: [],
+      resolves: [],
+    },
+    payload = canonical(operation),
+    row = { op_id: operation.opId, payload, operation },
+    database = {
+      withTeamTransaction: async (_team, work) =>
+        work({
+          sync: {
+            readLink: async () => ({ installation_id: "outside" }),
+            readPendingRows: async () => [row],
+            readExclusions: async () => [],
+          },
+        }),
+    },
+    adapter = imageSync(database, { teamId }, {});
+  state.receipts[operation.opId] = {
+    payloadHash: digest(payload),
+    result: "noop",
+  };
+  const options = {
+    onPendingProjection: () => assert.fail("already received"),
+  };
+  // Legacy rows without a stored hash are checked against their exact text.
+  await adapter.receive(state, "head", {}, options);
+  row.payload_hash = digest(payload);
+  await adapter.receive(state, "head", {}, options);
+  row.payload_hash = "different-operation";
+  await assert.rejects(
+    adapter.receive(state, "head", {}, options),
+    /Immutable opId payload mismatch/,
+  );
+});
 
 test("Worker image adapter transfers only missing content across 30 inherited image references", async () => {
   const teamId = randomUUID(),
@@ -84,7 +125,7 @@ test("Worker image adapter transfers only missing content across 30 inherited im
       work({
         sync: {
           readLink: async () => ({ installation_id: "outside" }),
-          readPending: async () => [],
+          readPendingRows: async () => [],
           readExclusions: async () => [],
         },
       }),

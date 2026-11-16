@@ -21,6 +21,8 @@ export const TEAM_SHEET_CLONE_CHECKSUM =
   "a1402e8af7795797b8e6ddfce63a3ee859b25bfd4f3ec9d31ae6daacb7bafd7a";
 export const ACCESS_TOKEN_CHECKSUM =
   "93267cbac2c6ec29df185703716f1a557241b9a9309790ecd0a17e3436478bb1";
+export const TEAM_CONFLICT_SUMMARIES_CHECKSUM =
+  "d7dbacf2417e398ed118a1b433e29290ba63e33345746c94e558b13d8ab3f9d8";
 export function postgresHistoryVersion(
   rows,
   scope,
@@ -34,7 +36,11 @@ export function postgresHistoryVersion(
     POSTGRES_CHECKSUMS[scope],
     ...(scope === "site" ? [SITE_KEY_CHECKSUM, ACCESS_TOKEN_CHECKSUM] : []),
     ...(scope === "team"
-      ? [TEAM_MAINTENANCE_CHECKSUM, TEAM_SHEET_CLONE_CHECKSUM]
+      ? [
+          TEAM_MAINTENANCE_CHECKSUM,
+          TEAM_SHEET_CLONE_CHECKSUM,
+          TEAM_CONFLICT_SUMMARIES_CHECKSUM,
+        ]
       : []),
     ...(scope === "control" ? [ACCESS_TOKEN_CHECKSUM] : []),
   ];

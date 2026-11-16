@@ -45,10 +45,27 @@ export function imageSync(database, profile, r2) {
       const snapshot = await database.withTeamTransaction(
         profile.teamId,
         async (tx) => {
-          const connection = await tx.sync.readLink();
+          const connection = await tx.sync.readLink(),
+            rows = await tx.sync.readPendingRows();
           return {
             connection,
-            pending: await tx.sync.readPending(),
+            pending: rows.map((row) => row.operation),
+            // The received state already applied these operations, but their
+            // outbox rows are acknowledged only in commitCanonical below.
+            // Check the same immutable hash as acknowledge() and avoid a
+            // second validation/replay of a large published resolution.
+            unreceived: rows
+              .filter((row) => {
+                const receipt = state.receipts[row.op_id];
+                if (!receipt) return true;
+                if (
+                  receipt.payloadHash !==
+                  (row.payload_hash || digest(row.payload))
+                )
+                  throw new Error("Immutable opId payload mismatch");
+                return false;
+              })
+              .map((row) => row.operation),
             exclusions: await tx.sync.readExclusions(
               connection?.installation_id,
             ),
@@ -63,9 +80,9 @@ export function imageSync(database, profile, r2) {
       const replay = pendingNeedsProjection(
         previousState,
         state,
-        snapshot.pending,
+        snapshot.unreceived,
       )
-        ? snapshot.pending
+        ? snapshot.unreceived
         : [];
       if (replay.length) onPendingProjection(replay);
       try {

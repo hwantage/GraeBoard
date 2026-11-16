@@ -5,6 +5,7 @@ import {
   siteKeyMigration,
   teamMaintenanceMigration,
   teamSheetCloneMigration,
+  teamConflictSummariesMigration,
   accessTokenMigrations,
 } from "../../server/migrations/postgres.mjs";
 
@@ -30,10 +31,12 @@ BEGIN
     OR NOT EXISTS(SELECT 1 FROM graeboard.team_meta WHERE singleton=1 AND team_id='${teamId}') THEN
     RAISE EXCEPTION 'Site/team identity mismatch';
   END IF;
-  IF (SELECT COUNT(*) FROM graeboard.schema_migrations) NOT IN (1,2,3) OR NOT EXISTS(
+  IF EXISTS(SELECT 1 FROM graeboard.schema_migrations WHERE version=4) AND NOT EXISTS(SELECT 1 FROM graeboard.schema_migrations WHERE version=3) THEN RAISE EXCEPTION 'Team migration history mismatch'; END IF;
+  IF (SELECT COUNT(*) FROM graeboard.schema_migrations) NOT IN (1,2,3,4) OR NOT EXISTS(
     SELECT 1 FROM graeboard.schema_migrations WHERE scope='team' AND version=1 AND checksum='${postgresMigrations.team.checksum}') OR EXISTS(
     SELECT 1 FROM graeboard.schema_migrations WHERE version<>1 AND NOT (scope='team' AND version=2 AND checksum='${teamMaintenanceMigration.checksum}')
-      AND NOT (scope='team' AND version=3 AND checksum='${teamSheetCloneMigration.checksum}')) OR (
+      AND NOT (scope='team' AND version=3 AND checksum='${teamSheetCloneMigration.checksum}')
+      AND NOT (scope='team' AND version=4 AND checksum='${teamConflictSummariesMigration.checksum}')) OR (
     EXISTS(SELECT 1 FROM graeboard.schema_migrations WHERE version=3) AND NOT EXISTS(SELECT 1 FROM graeboard.schema_migrations WHERE version=2)) THEN
     RAISE EXCEPTION 'Team migration history mismatch';
   END IF;

@@ -167,11 +167,18 @@ export class CanonicalSlice {
   // The same index reduceMany builds, from SQL instead of every record.
   async context(target = this.state) {
     const names = new Map(),
-      tagUsers = new Map();
+      tagUsers = new Map(),
+      loadedNames = Object.values(target.entities).filter((record) =>
+        ["tag", "filter", "sheetClone"].includes(record.entity),
+      );
     for (const row of (
       await this.tx.query(
-        "SELECT entity,entity_key,deleted,payload::json->>'name' AS name,payload::json->>'userId' AS user_id FROM sync_entities WHERE team_id=$1 AND entity IN ('tag','filter','sheetClone')",
-        [this.teamId],
+        "SELECT s.entity,s.entity_key,s.deleted,p.name,p.\"userId\" AS user_id FROM sync_entities s LEFT JOIN unnest($2::text[],$3::text[]) loaded(entity,entity_key) ON s.entity=loaded.entity AND s.entity_key=loaded.entity_key CROSS JOIN LATERAL json_to_record(s.payload::json) AS p(name text,\"userId\" text) WHERE s.team_id=$1 AND s.entity IN ('tag','filter','sheetClone') AND s.deleted=0 AND loaded.entity IS NULL",
+        [
+          this.teamId,
+          loadedNames.map((record) => record.entity),
+          loadedNames.map((record) => canonical(record.key)),
+        ],
       )
     ).rows) {
       const id = entityId(row.entity, JSON.parse(row.entity_key)),
@@ -185,6 +192,10 @@ export class CanonicalSlice {
         },
       );
       if (name) names.set(name, id);
+    }
+    for (const record of loadedNames) {
+      const name = uniqueName(record);
+      if (name) names.set(name, entityId(record.entity, record.key));
     }
     for (const [id, record] of Object.entries(target.entities))
       if (record.entity === "calendar" && !record.deleted)

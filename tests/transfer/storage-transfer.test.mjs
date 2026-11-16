@@ -614,6 +614,35 @@ test("actual PostgreSQL roundtrip and complete R2/Git backup preserve C/P/L and 
     bundle = await exportTeam(f.adapter, f.teamId, { omitJobId: job });
   const postgres = await database("team_source", "team", f.teamId);
   await importTeam(postgres, bundle);
+  const summaries = await postgres.withTeamTransaction(
+    f.teamId,
+    async (tx) => ({
+      conflicts: (
+        await tx.query(
+          "SELECT summary FROM sync_conflict_summaries WHERE team_id=$1",
+          [f.teamId],
+        )
+      ).rows,
+      pending: (
+        await tx.query(
+          "SELECT summary FROM sync_outbox_summaries WHERE team_id=$1",
+          [f.teamId],
+        )
+      ).rows,
+    }),
+  );
+  assert.equal(
+    summaries.conflicts.length,
+    1,
+    "import rebuilds the conflict list without changing the portable format",
+  );
+  assert.equal(summaries.pending.length, 1);
+  assert.doesNotMatch(
+    JSON.stringify(summaries),
+    /conflicting submission|local pending/,
+  );
+  assert.equal(JSON.parse(summaries.pending[0].summary).opId, f.pending.opId);
+
   // Exercise the documented app grants, including sequence UPDATE needed by
   // setval when importing preserved cursor/local_seq values. No schema-owner or
   // superuser fallback is available to this target adapter.

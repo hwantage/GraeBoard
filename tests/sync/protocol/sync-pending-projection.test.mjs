@@ -284,7 +284,8 @@ test("independent image receive still installs image references retained only by
       work({
         sync: {
           readLink: async () => ({ installation_id: "site" }),
-          readPending: async () => pending,
+          readPendingRows: async () =>
+            pending.map((operation) => ({ op_id: operation.opId, operation })),
           readExclusions: async () => [],
         },
       }),

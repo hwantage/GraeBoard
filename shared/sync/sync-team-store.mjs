@@ -6,6 +6,10 @@ import {
 } from "../../server/sync/core/protocol.mjs";
 import { ProtocolError } from "../../server/sync/core/errors.mjs";
 import { parseSyncOperation } from "../../server/sync/core/sync-operation-cache.mjs";
+import {
+  conflictListSummary,
+  operationListSummary,
+} from "./sync-conflict-summaries.mjs";
 
 const parse = (text) => (text === null ? null : JSON.parse(text));
 const query = (sql, values = []) => ({ sql, values });
@@ -219,6 +223,15 @@ const methods = {
       "INSERT INTO sync_outbox(op_id,team_id,payload,payload_hash,status,created_at) VALUES($1,$2,$3,$4,'pending',$5) RETURNING local_seq",
       [operation.opId, this.teamId, payload, hash, operation.createdAt],
     )).rows[0];
+    if (this.readModels)
+      yield query(
+        "INSERT INTO sync_outbox_summaries(team_id,op_id,summary) VALUES($1,$2,$3) ON CONFLICT(team_id,op_id) DO UPDATE SET summary=EXCLUDED.summary",
+        [
+          this.teamId,
+          operation.opId,
+          JSON.stringify(operationListSummary(operation)),
+        ],
+      );
     return integer(row.local_seq);
   },
   *acknowledge(ids) {
@@ -306,6 +319,20 @@ const methods = {
       (row) => [teamId, ...row],
       " ON CONFLICT(team_id,conflict_id) DO UPDATE SET payload=excluded.payload,resolution=excluded.resolution",
     );
+    if (this.readModels)
+      yield* write(
+        "sync_conflict_summaries",
+        "team_id,conflict_id,summary",
+        patch.conflicts,
+        ([id, , payload]) => [
+          teamId,
+          id,
+          JSON.stringify(
+            conflictListSummary(state.conflicts[id] || JSON.parse(payload)),
+          ),
+        ],
+        " ON CONFLICT(team_id,conflict_id) DO UPDATE SET summary=excluded.summary",
+      );
   },
   *advanceHead(expectedHead, newHead, hash) {
     const changed = yield query(
@@ -414,12 +441,16 @@ const methods = {
   },
 };
 
-export function createTeamStore(teamId, execute, { batchSize = 1 } = {}) {
+export function createTeamStore(
+  teamId,
+  execute,
+  { batchSize = 1, readModels = false } = {},
+) {
   if (typeof teamId !== "string" || !teamId)
     throw new Error("A team identity is required");
   if (!Number.isInteger(batchSize) || batchSize < 1 || batchSize > 500)
     throw new Error("Invalid storage batch size");
-  const store = { teamId, batchSize };
+  const store = { teamId, batchSize, readModels };
   for (const [name, method] of Object.entries(methods))
     store[name] = (...args) => execute(method.apply(store, args));
   return store;
