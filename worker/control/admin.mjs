@@ -1,14 +1,12 @@
 import { operationListSummary } from "../../shared/sync/sync-conflict-summaries.mjs";
 import { receiptCapacity } from "../../shared/sync/sync-capacity.mjs";
 import {
-  RESOLUTION_PENDING,
   CONFLICT_PAGE_SIZE,
   conflictPage,
   conflictOpIds,
   conflictOrigin,
   conflictPeople,
   pendingResolutions,
-  resolutionRejected,
   resolvesAny,
 } from "../../shared/sync/conflict-origin.js";
 import { plainConflictPayloads } from "../../shared/sheet-clones/sheet-clone-sync-data.js";
@@ -43,8 +41,7 @@ import { GitHubApiTransport } from "../sync/git.mjs";
 import { R2ImageStore } from "../documents/images.mjs";
 import { beginProfileSwitch } from "../sync/profile-switch.mjs";
 import { runTeam, refreshTeam, importTeam } from "../sync/sync.mjs";
-import { CanonicalSlice, reduceSlice } from "../sync/sync-partial.mjs";
-import { materializeSlice } from "../sync/materialize.mjs";
+import { resolveConflict } from "../sync/sync-resolve.mjs";
 // Bound PostgreSQL JSON work as well as the number of rows. One large
 // conflict must still fit on its own page so the cursor always advances.
 const CONFLICT_PAGE_BYTES = 8 * 1024 * 1024;
@@ -554,145 +551,7 @@ export async function adminRoutes(
         return { conflicts: conflicts.map(view), next };
       }
       assert(sync[4] === "resolve", 400, "충돌 해결 요청을 확인하세요.");
-      return db.withTeamTransaction(teamId, async (tx) => {
-        // The conflicts being resolved, their records and those pending
-        // operations touch (see CanonicalSlice), not the whole of C.
-        const pending = await tx.sync.readPending(),
-          link = await tx.sync.readLink(),
-          frontier = body.frontier || [sync[3]],
-          slice = new CanonicalSlice(tx, teamId).include(pending);
-        if (Array.isArray(frontier))
-          for (const id of [sync[3], ...frontier])
-            if (typeof id === "string") slice.resolves.add(id);
-        let state = await slice.load();
-        const conflict = state.conflicts[sync[3]];
-        assert(
-          conflict && !conflict.resolution,
-          409,
-          "충돌 상태가 변경되었습니다.",
-        );
-        assert(
-          body.expectedHead === link.canonical_head,
-          409,
-          "최신 공유본을 다시 확인하세요.",
-        );
-        assert(
-          !(
-            await tx.query(
-              "SELECT 1 FROM site_maintenance_jobs WHERE phase NOT IN ('complete','cancelled')",
-            )
-          ).rows.length,
-          409,
-          "팀 자료 정리 중입니다.",
-        );
-        assert(
-          Array.isArray(frontier) &&
-            frontier.includes(sync[3]) &&
-            frontier.every(
-              (id) => state.conflicts[id] && !state.conflicts[id].resolution,
-            ),
-          400,
-          "해결 범위를 확인하세요.",
-        );
-        assert(!resolvesAny(pending, frontier), 409, RESOLUTION_PENDING);
-        for (const change of conflict.operation.changes)
-          slice.touch(change.entity, change.key, change.action);
-        state = await slice.load(state);
-        const choice = body.choice || body.strategy || "current";
-        assert(
-          [
-            "current",
-            "submitted",
-            "edited",
-            "custom",
-            "keep",
-            "apply",
-          ].includes(choice),
-          400,
-          "충돌 해결 방법을 확인하세요.",
-        );
-        const changes = [];
-        for (const [index, original] of conflict.operation.changes.entries()) {
-          if (["current", "keep"].includes(choice)) continue;
-          const current =
-              state.entities[entityId(original.entity, original.key)],
-            desired = ["current", "keep"].includes(choice)
-              ? current?.payload
-              : ["custom", "edited"].includes(choice)
-                ? Array.isArray(body.desired)
-                  ? body.desired[index]
-                  : (body.desired?.[entityId(original.entity, original.key)] ??
-                    body.desired)
-                : original.desired;
-          assert(
-            current || original.action === "create",
-            409,
-            "대상이 변경되었습니다.",
-          );
-          changes.push({
-            ...original,
-            base: current?.payload ?? null,
-            baseVersion: current?.version ?? null,
-            generation: current?.deleted
-              ? crypto.randomUUID()
-              : current?.generation || crypto.randomUUID(),
-            action: current?.deleted
-              ? "restore"
-              : current
-                ? original.action === "delete" &&
-                  !["current", "keep"].includes(choice)
-                  ? "delete"
-                  : "edit"
-                : "create",
-            desired,
-            fields: [
-              ...new Set([
-                ...Object.keys(current?.payload || {}),
-                ...Object.keys(desired || {}),
-              ]),
-            ],
-          });
-        }
-        const op = {
-          protocol: protocolVersion(state),
-          reducer: protocolVersion(state),
-          repoId: link.repo_id,
-          teamId,
-          opId: crypto.randomUUID(),
-          writerEpoch: link.writer_epoch,
-          actorRef: ctx.user.id,
-          createdAt: new Date().toISOString(),
-          dependsOn: [],
-          changes,
-          objects: [],
-          resolves: frontier,
-        };
-        // Checked after the pending operations, which publish first, as the
-        // Node server does: a resolution archived again would leave this
-        // conflict open and add another one.
-        const { state: resolved } = reduceSlice(
-          state,
-          [...pending, op],
-          null,
-          await slice.context(state),
-        );
-        if (!["applied", "noop"].includes(resolved.receipts[op.opId].result)) {
-          const { message, details } = resolutionRejected(
-            resolved.conflicts[op.opId]?.reason,
-          );
-          assert(false, 409, message, details);
-        }
-        await tx.sync.enqueue(op);
-        // C is unchanged; only what pending operations touch projects anew.
-        await materializeSlice(tx, teamId, {
-          base: state,
-          state,
-          pending: [...pending, op],
-          exclusions: await tx.sync.readExclusions(),
-        });
-        ctx.changedTeams.add(teamId);
-        return { ok: true, opId: op.opId };
-      });
+      return resolveConflict(ctx, db, teamId, sync[3], body);
     }
     if (["run", "pull", "refresh"].includes(sync[2])) {
       if (["pull", "refresh"].includes(sync[2])) await refreshTeam(ctx.env, p);

@@ -730,7 +730,8 @@ export class SyncService {
           legacyHash: needHash,
           mark: this.mark,
         });
-    if (reduction && reduction.head === parent)
+    if (reduction && reduction.head === parent) {
+      this.chargeBytes(reduction.workBytes || 0);
       return {
         previousState: reduction.base,
         state: reduction.state,
@@ -738,6 +739,7 @@ export class SyncService {
         resultSum: reduction.sum,
         slice: true,
       };
+    }
     const previousState =
       whole || (await this.store.readState({ mark: this.mark }));
     if (!whole)
@@ -796,11 +798,16 @@ export class SyncService {
             this.mark("behind", { head: link.canonical_head });
             break;
           }
+          const workBytes = Math.min(
+            this.maxRunBytes - this.runBytes,
+            SYNC_EVENT_BATCH_BYTES,
+          );
           const pending = operationBatch(
-            await this.store.readPending(),
+            await (this.store.readPendingForPublish?.(workBytes) ||
+              this.store.readPending()),
             this.maxOperations,
             SYNC_FILE_MAX_BYTES,
-            Math.min(this.maxRunBytes - this.runBytes, SYNC_EVENT_BATCH_BYTES),
+            workBytes,
           );
           if (!pending.length) break;
           // As in receive(), finish the first atomic command even if it

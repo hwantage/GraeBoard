@@ -327,10 +327,20 @@ test("existing import boundary suite catches direct and concealed SQLite/native 
     "a new service is not automatically an external import exception",
   );
   f.put("server/sync/core/sync-operation-cache.mjs");
+  f.put(
+    "worker/entry.mjs",
+    'import "../server/sync/core/sync-operation-cache.mjs";\n',
+  );
+  assert.equal(
+    run().status,
+    0,
+    "the reviewed request-scoped cache is portable",
+  );
+  f.put("server/sync/core/unregistered-cache.mjs");
   for (const target of [
     "db",
     "sync/node/git-cli",
-    "sync/core/sync-operation-cache",
+    "sync/core/unregistered-cache",
   ]) {
     f.put("worker/entry.mjs", `import "../server/${target}.mjs";\n`);
     assert.equal(run().status, 1, target);
