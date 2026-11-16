@@ -185,18 +185,30 @@ export const resolvesAny = (pending, conflictIds) =>
 
 const changeKey = (change) => JSON.stringify([change.entity, change.key]);
 
-function canonical(value) {
-  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
-  if (value && typeof value === "object")
+// Same JSON value comparison as the previous sorted serialization, without
+// building two multi-megabyte strings just to label a saved resolution.
+function sameValue(left, right) {
+  if (left === right) return true;
+  if (typeof left === "string" || typeof right === "string") return false;
+  const a = left && typeof left === "object",
+    b = right && typeof right === "object";
+  if (!a || !b)
     return (
-      "{" +
-      Object.keys(value)
-        .sort()
-        .map((key) => JSON.stringify(key) + ":" + canonical(value[key]))
-        .join(",") +
-      "}"
+      !a && !b && JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
     );
-  return JSON.stringify(value ?? null);
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  if (Array.isArray(left))
+    return (
+      left.length === right.length &&
+      left.every((value, i) => sameValue(value, right[i]))
+    );
+  const keys = Object.keys(left);
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every(
+      (key) => Object.hasOwn(right, key) && sameValue(left[key], right[key]),
+    )
+  );
 }
 
 /**
@@ -216,7 +228,7 @@ export function pendingResolutions(conflicts, pending) {
     const later = new Map(
       conflict.operation.changes.map((change) => [
         changeKey(change),
-        canonical(change.desired),
+        change.desired,
       ]),
     );
     const own = (op.changes || []).filter((change) =>
@@ -227,9 +239,8 @@ export function pendingResolutions(conflicts, pending) {
       createdAt: op.createdAt,
       choice: !own.length
         ? "current"
-        : own.every(
-              (change) =>
-                later.get(changeKey(change)) === canonical(change.desired),
+        : own.every((change) =>
+              sameValue(later.get(changeKey(change)), change.desired),
             )
           ? "submitted"
           : "edited",

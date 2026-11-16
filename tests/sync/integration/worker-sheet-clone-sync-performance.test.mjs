@@ -6,12 +6,59 @@ import assert from "node:assert/strict";
 import { sheetCloneSyncFixture } from "../../support/worker-sheet-clone-sync-fixture.mjs";
 import { createPublisher } from "../../../worker/sync/sync.mjs";
 import { PostgresDatabase } from "../../../worker/storage/postgres.mjs";
+import { CanonicalSlice } from "../../../worker/sync/sync-partial.mjs";
+import { uniqueName } from "../../../server/sync/core/reducer.mjs";
+import { SyncInterruption } from "../../../server/sync/core/errors.mjs";
 import {
   canonical,
   entityId,
   stateHash,
 } from "../../../server/sync/core/protocol.mjs";
 import { defaultView } from "../../../shared/domain.js";
+
+test(
+  "a published large command recovers a lost local commit without replaying its acknowledged image projection",
+  {
+    skip: !existsSync(join(process.env.TEST_PG_BIN || "", "postgres")),
+    timeout: 180000,
+  },
+  async (t) => {
+    const f = await sheetCloneSyncFixture(t),
+      commit = PostgresDatabase.prototype.commitCanonical;
+    let interrupted = false;
+    PostgresDatabase.prototype.commitCanonical = async function (...args) {
+      if (args[0] === f.teamId && !interrupted) {
+        interrupted = true;
+        throw new SyncInterruption(
+          "simulated lost local commit after publication",
+        );
+      }
+      return commit.apply(this, args);
+    };
+    try {
+      await assert.rejects(f.run(), /simulated lost local commit/);
+    } finally {
+      PostgresDatabase.prototype.commitCanonical = commit;
+    }
+    assert.equal((await f.pg.adapter.readPending(f.teamId)).length, 4);
+    const recovered = await f.run({ receiveOnly: true });
+    assert.equal(recovered.pending, 3);
+    const images = recovered.phases.filter((p) => p.phase === "receiveImages");
+    assert.equal(images.length, 1);
+    assert.equal(
+      images[0].cloneValidated,
+      false,
+      "a matching canonical receipt must not validate the large pending JSON again for images",
+    );
+    for (
+      let i = 0;
+      i < 4 && (await f.pg.adapter.readPending(f.teamId)).length;
+      i++
+    )
+      await f.run();
+    await f.verify();
+  },
+);
 
 test(
   "continuous small remote commits cannot starve the large external clone or its document edits",
@@ -256,6 +303,29 @@ test(
       internal = f.app.locals.sync.store(f.teamId).readState();
     assert.equal(stateHash(external), stateHash(internal));
     assert.ok(external.entities[entityId("sheetClone", [remote.id])]);
+    // Name validation must use the already loaded copy rather than parsing
+    // its database payload again. Poison only that redundant read, inside a
+    // savepoint, and still require the other copies' names from PostgreSQL.
+    await f.pg.adapter.withTeamTransaction(f.teamId, async (tx) => {
+      const id = entityId("sheetClone", [remote.id]),
+        record = external.entities[id];
+      await tx.query("SAVEPOINT loaded_name");
+      try {
+        await tx.query(
+          "UPDATE sync_entities SET payload='already loaded' WHERE team_id=$1 AND entity='sheetClone' AND entity_key=$2",
+          [f.teamId, canonical(record.key)],
+        );
+        const { names } = await new CanonicalSlice(tx, f.teamId).context({
+          entities: { [id]: record },
+        });
+        for (const [key, item] of Object.entries(external.entities)) {
+          const name = uniqueName(item);
+          if (name) assert.equal(names.get(name), key);
+        }
+      } finally {
+        await tx.query("ROLLBACK TO SAVEPOINT loaded_name");
+      }
+    });
     assert.equal(
       external.entities[entityId("sheetClone", [f.clone.id])],
       undefined,

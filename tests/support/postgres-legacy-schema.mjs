@@ -14,7 +14,16 @@ const legacyKey = (entity, key) =>
   entity === "document" && LEGACY_SCOPE[key[0]]
     ? [LEGACY_SCOPE[key[0]], ...key.slice(1)]
     : key;
+export async function revertTeamToV3(pool) {
+  await pool.query(`DROP TRIGGER IF EXISTS invalidate_conflict_summary ON graeboard.sync_conflicts;
+DROP TRIGGER IF EXISTS invalidate_outbox_summary ON graeboard.sync_outbox;
+DROP FUNCTION IF EXISTS graeboard.invalidate_conflict_summary();
+DROP FUNCTION IF EXISTS graeboard.invalidate_outbox_summary();
+DROP TABLE IF EXISTS graeboard.sync_conflict_summaries,graeboard.sync_outbox_summaries;
+DELETE FROM graeboard.schema_migrations WHERE version=4`);
+}
 export async function revertTeamToV2(pool) {
+  await revertTeamToV3(pool);
   await pool.query("DELETE FROM graeboard.schema_migrations WHERE version>=3");
   for (const table of ["sync_entities", "site_entities"])
     for (const row of (
