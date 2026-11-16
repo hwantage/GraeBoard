@@ -115,6 +115,51 @@ export class CanonicalSlice {
       target,
     );
   }
+  async conflicts(ids) {
+    if (this.conflictDetails)
+      return (
+        await this.tx.query(
+          "SELECT conflict_id,payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2)",
+          [this.teamId, ids],
+        )
+      ).rows;
+    const rows = [],
+      missing = new Set(ids);
+    if (this.tx.readModels)
+      for (const row of (
+        await this.tx.query(
+          "SELECT c.conflict_id,c.resolution,s.summary FROM sync_conflicts c JOIN sync_conflict_summaries s USING(team_id,conflict_id) WHERE c.team_id=$1 AND c.conflict_id=ANY($2)",
+          [this.teamId, ids],
+        )
+      ).rows) {
+        const { operation } = JSON.parse(row.summary);
+        if (
+          typeof operation?.teamId !== "string" ||
+          typeof operation?.repoId !== "string"
+        )
+          continue;
+        rows.push({
+          conflict_id: row.conflict_id,
+          payload: JSON.stringify({
+            resolution: row.resolution,
+            operation: { teamId: operation.teamId, repoId: operation.repoId },
+          }),
+        });
+        missing.delete(row.conflict_id);
+      }
+    // Older summaries and v3 databases retain the original identity check.
+    // Scalar extraction avoids spilling an entire operation to a temporary file.
+    if (missing.size)
+      rows.push(
+        ...(
+          await this.tx.query(
+            `SELECT conflict_id,json_build_object('resolution',resolution,'operation',json_build_object('teamId',json_extract_path_text(payload::json,'operation','teamId'),'repoId',json_extract_path_text(payload::json,'operation','repoId')))::text AS payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2)`,
+            [this.teamId, [...missing]],
+          )
+        ).rows,
+      );
+    return rows;
+  }
   // Reads every wanted record the target lacks. Each call may follow further
   // include()s; records already in the target are kept as they are.
   async load(target = this.state) {
@@ -156,17 +201,7 @@ export class CanonicalSlice {
         target.receipts[row.op_id] = JSON.parse(row.receipt);
     const resolves = [...this.resolves].filter((id) => !target.conflicts[id]);
     if (resolves.length)
-      for (const row of (
-        await this.tx.query(
-          this.conflictDetails
-            ? "SELECT conflict_id,payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2)"
-            : `SELECT conflict_id,json_build_object('resolution',resolution,'operation',json_build_object('teamId',o."teamId",'repoId',o."repoId"))::text AS payload
-               FROM (SELECT conflict_id,payload,resolution FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2) OFFSET 0) selected
-               CROSS JOIN LATERAL json_to_record(selected.payload::json) AS c(operation json)
-               CROSS JOIN LATERAL json_to_record(c.operation) AS o("teamId" text,"repoId" text)`,
-          [team, resolves],
-        )
-      ).rows) {
+      for (const row of await this.conflicts(resolves)) {
         if (this.conflictDetails)
           this.conflictBytes += Buffer.byteLength(row.payload);
         target.conflicts[row.conflict_id] = JSON.parse(row.payload);

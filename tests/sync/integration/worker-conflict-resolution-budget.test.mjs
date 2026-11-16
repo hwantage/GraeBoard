@@ -18,6 +18,7 @@ import { reduceMany } from "../../../server/sync/core/reducer.mjs";
 import { unpackSheetCloneData } from "../../../shared/sheet-clones/sheet-clone-sync-data.js";
 import { boundStore } from "../../../worker/sync/sync-store.mjs";
 import { materialize } from "../../../worker/sync/materialize.mjs";
+import { CanonicalSlice } from "../../../worker/sync/sync-partial.mjs";
 
 const enabled = existsSync(join(process.env.TEST_PG_BIN || "", "postgres"));
 test(
@@ -79,6 +80,53 @@ test(
     assert.ok(bytes > 9 * 1024 * 1024, `realistic conflict size: ${bytes}`);
     const pg = await postgresFixture(t, f),
       before = await pg.adapter.readState(f.teamId);
+    await pg.adapter.withTeamTransaction(f.teamId, async (tx) => {
+      const query = tx.query;
+      let blocks = 0;
+      tx.query = async (sql, args) => {
+        const result = await query(sql, args);
+        if (/FROM sync_conflicts/.test(sql)) {
+          const plan = (
+            await query("EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON) " + sql, args)
+          ).rows[0]["QUERY PLAN"][0].Plan;
+          blocks +=
+            (plan["Shared Hit Blocks"] || 0) +
+            (plan["Shared Read Blocks"] || 0);
+          assert.equal(plan["Temp Written Blocks"] || 0, 0);
+        }
+        return result;
+      };
+      const compact = new CanonicalSlice(tx, f.teamId, {
+        conflictDetails: false,
+      });
+      for (const op of operations) compact.resolves.add(op.opId);
+      const state = await compact.load();
+      for (const op of operations)
+        assert.deepEqual(state.conflicts[op.opId].operation, {
+          teamId: op.teamId,
+          repoId: op.repoId,
+        });
+      assert.ok(
+        blocks < 128,
+        `identity checks must not read large TOAST bodies: ${blocks} blocks`,
+      );
+      tx.query = query;
+      // Existing v4 summaries and missing cache rows fall back to the same
+      // original identities instead of assuming the current link identity.
+      const id = operations[0].opId;
+      await tx.query(
+        "DELETE FROM sync_conflict_summaries WHERE team_id=$1 AND conflict_id=$2",
+        [f.teamId, id],
+      );
+      const fallback = new CanonicalSlice(tx, f.teamId, {
+        conflictDetails: false,
+      });
+      fallback.resolves.add(id);
+      assert.deepEqual(
+        (await fallback.load()).conflicts[id],
+        state.conflicts[id],
+      );
+    });
     const transaction = PostgresDatabase.prototype.withTeamTransaction;
     let trace,
       failWrite = false;
