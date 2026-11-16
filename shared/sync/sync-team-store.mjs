@@ -5,7 +5,7 @@ import {
   equal,
 } from "../../server/sync/core/protocol.mjs";
 import { ProtocolError } from "../../server/sync/core/errors.mjs";
-import { parseSyncOperation } from "../../server/sync/core/sync-operation-cache.mjs";
+import { parseStoredSyncOperation } from "../../server/sync/core/sync-operation-cache.mjs";
 import {
   conflictListSummary,
   operationListSummary,
@@ -194,8 +194,14 @@ const methods = {
     )).rows.map((row) => ({
       ...row,
       local_seq: integer(row.local_seq),
-      operation: parseSyncOperation(row.payload),
+      operation: parseStoredSyncOperation(row.payload),
     }));
+  },
+  *readPendingPrefix(limit) {
+    return (yield query(
+      "SELECT op_id,payload_hash FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged' ORDER BY local_seq LIMIT $2",
+      [this.teamId, limit],
+    )).rows;
   },
   *readPending() {
     return (yield* methods.readPendingRows.call(this)).map(

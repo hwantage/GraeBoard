@@ -4,8 +4,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 // projection can see it; mutable callers and a different text for the same opId
 // always go through validation again. The bounded memo lives for one run.
 const scopes = new AsyncLocalStorage();
-const MAX_BYTES = 8 * 1024 * 1024;
-const MAX_TEXT_BYTES = 32 * 1024 * 1024;
+const MAX_BYTES = 16 * 1024 * 1024;
+const MAX_TEXT_BYTES = 48 * 1024 * 1024;
 const MAX_ENTRIES = 128;
 function freeze(value) {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
@@ -44,6 +44,15 @@ export function parseSyncOperation(text) {
   }
   return operation;
 }
+// Outbox writers store canonical JSON. Reuse those bytes for budgeting and
+// hashing too; this does not mark the command validated or skip state checks.
+export function parseStoredSyncOperation(text) {
+  const operation = parseSyncOperation(text),
+    scope = active();
+  if (scope?.prepared.has(operation))
+    rememberSyncCanonical(scope, operation, text);
+  return operation;
+}
 // Metadata is available only for this run's own deeply immutable JSON.
 export const preparedSyncOperation = (operation) =>
   active()?.prepared.get(operation);
@@ -73,7 +82,7 @@ export function parseStoredSyncJson(text) {
     scope &&
     value &&
     typeof value === "object" &&
-    scope.storedBytes + bytes <= MAX_TEXT_BYTES / 2
+    scope.storedBytes + bytes <= 16 * 1024 * 1024
   ) {
     freeze(value);
     scope.jsonObjects.add(value);

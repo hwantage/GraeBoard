@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   withSyncOperationCache,
   parseSyncOperation,
+  parseStoredSyncOperation,
   preparedSyncOperation,
   parseStoredSyncJson,
   resolveSyncConflict,
@@ -41,6 +42,28 @@ const operation = () =>
       },
     },
   });
+
+test("two large stored pending commands retain exact bytes without inheriting validation", () =>
+  withSyncOperationCache(() => {
+    const texts = ["first", "second"].map((id) => {
+      const op = operation();
+      op.opId = id;
+      op.changes[0].desired.name = "x".repeat(6 * 1024 * 1024);
+      return canonical(op);
+    });
+    const parsed = texts.map(parseStoredSyncOperation);
+    for (const [i, op] of parsed.entries()) {
+      assert.strictEqual(parseStoredSyncOperation(texts[i]), op);
+      assert.equal(syncCanonicalCache().texts.get(op), texts[i]);
+      assert.equal(preparedSyncOperation(op).validated, undefined);
+      assert.throws(
+        () =>
+          validateOperation(op, { ...identity, repoId: "foreign" }, state()),
+        /foreign/,
+      );
+    }
+    assert.ok(syncCanonicalCache().textBytes <= 48 * 1024 * 1024);
+  }));
 
 test("large canonical conflict resolution preserves exact bytes and checksums without reserializing originals", () => {
   const conflict = {
@@ -308,7 +331,9 @@ test("mutable callers, invalid packed data and memo capacity overflow never inhe
         ),
       /Invalid sheetClone payload/,
     );
-    const oversized = JSON.stringify({ text: "x".repeat(8 * 1024 * 1024 + 1) });
+    const oversized = JSON.stringify({
+      text: "x".repeat(16 * 1024 * 1024 + 1),
+    });
     assert.notStrictEqual(
       parseSyncOperation(oversized),
       parseSyncOperation(oversized),

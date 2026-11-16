@@ -260,6 +260,81 @@ test(
         !sliced.base.conflicts[operations[i].opId].current,
         "pending coverage does not load the earlier conflict originals",
       );
+    assert.equal(
+      (await store.pendingResolutionPrefix(batch))[0].op_id,
+      first.opId,
+    );
+    assert.equal(await store.pendingResolutionPrefix([pending[1]]), null);
+    assert.equal(await store.pendingResolutionPrefix([null]), null);
+    const siteRow = () =>
+      pg.adapter.withTeamTransaction(
+        f.teamId,
+        async (tx) =>
+          (
+            await tx.query(
+              "SELECT payload,revision FROM site_entities WHERE team_id=$1 AND entity='sheetClone' AND entity_key=$2",
+              [f.teamId, canonical([f.sheetCloneId])],
+            )
+          ).rows,
+      );
+    const savedSite = await siteRow();
+    await assert.rejects(
+      pg.adapter.commitCanonical(
+        f.teamId,
+        f.link.canonical_head,
+        "d".repeat(40),
+        {
+          ...sliced.state,
+          receipts: {
+            ...sliced.state.receipts,
+            [first.opId]: {
+              ...sliced.state.receipts[first.opId],
+              payloadHash: "0".repeat(64),
+            },
+          },
+        },
+        [first.opId],
+        async () => {
+          throw new Error("must not reach materialization");
+        },
+        {
+          previousState: sliced.base,
+          stateHash: null,
+          preserveProjection: true,
+        },
+      ),
+      /Cannot acknowledge an unverified operation/,
+    );
+    assert.equal(
+      (await pg.adapter.readLink(f.teamId)).canonical_head,
+      f.link.canonical_head,
+    );
+    trace = { pendingReads: 0, conflictBytes: 0, siteReads: 0 };
+    await pg.adapter.commitCanonical(
+      f.teamId,
+      f.link.canonical_head,
+      "c".repeat(40),
+      sliced.state,
+      batch.map((op) => op.opId),
+      async (_tx, input) => {
+        assert.equal(input.preserveProjection, true);
+        assert.deepEqual(input.pending, []);
+        assert.ok(input.pendingBytes > 0);
+      },
+      { previousState: sliced.base, stateHash: null, preserveProjection: true },
+    );
+    assert.equal(
+      trace.pendingReads,
+      0,
+      "acknowledging own saved resolution never reloads pending bodies",
+    );
+    trace = null;
+    assert.deepEqual(
+      await siteRow(),
+      savedSite,
+      "the already saved C+P projection and revision stay unchanged",
+    );
+    assert.equal((await pg.adapter.readPending(f.teamId)).length, 16);
     const published = reduceMany(before, pending);
     for (const op of pending)
       assert.ok(
@@ -267,11 +342,19 @@ test(
       );
     await pg.adapter.commitCanonical(
       f.teamId,
-      f.link.canonical_head,
+      "c".repeat(40),
       "b".repeat(40),
       published,
       pending.map((op) => op.opId),
-      (tx, input) => materialize(tx, f.teamId, input),
+      (tx, input) => {
+        assert.equal(
+          input.preserveProjection,
+          false,
+          "an already acknowledged first command cannot prove the remaining prefix",
+        );
+        return materialize(tx, f.teamId, input);
+      },
+      { preserveProjection: true },
     );
     assert.equal((await pg.adapter.readPending(f.teamId)).length, 0);
     const listed = await adminRoutes(

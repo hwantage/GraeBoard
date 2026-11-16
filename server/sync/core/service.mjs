@@ -309,7 +309,8 @@ export class SyncService {
         }
       };
       let previousState = state,
-        slice = false;
+        slice = false,
+        preserveProjection = false;
       const parent = link.canonical_head || null;
       await this.checkCommit(commit.oid, parent);
       const added = await this.verifyFiles(commit, parent);
@@ -579,8 +580,12 @@ export class SyncService {
               "SYNC_FORMAT",
               "Operation envelope exceeds count budget",
             );
+          const prefix =
+            link.mode === "active"
+              ? await this.store.pendingResolutionPrefix?.(envelope.operations)
+              : null;
           const cover =
-            state && !Number.isFinite(this.maxRunBytes)
+            prefix || (state && !Number.isFinite(this.maxRunBytes))
               ? []
               : await this.store.readPending();
           // Use the received bytes: serializing untrusted input here would
@@ -598,6 +603,19 @@ export class SyncService {
             },
           );
           ({ previousState, state, slice } = reduced);
+          if (prefix) {
+            if (
+              prefix.some(
+                (row) =>
+                  state.receipts[row.op_id]?.payloadHash !== row.payload_hash,
+              )
+            )
+              throw new ProtocolError(
+                "SYNC_INTEGRITY",
+                "Immutable opId payload mismatch",
+              );
+            preserveProjection = true;
+          }
           if (pendingNeedsProjection(previousState, state, cover))
             onPendingProjection(cover);
           operations = envelope.operations.map((op) => op.opId);
@@ -635,7 +653,7 @@ export class SyncService {
             onPendingProjection(pending);
         }
       }
-      if (!this.deferImages)
+      if (!this.deferImages && !preserveProjection)
         await this.images?.receive?.(state, commit.oid, this.transport, {
           added,
           verifiedImages,
@@ -653,6 +671,7 @@ export class SyncService {
         mark: this.mark,
         onPendingProjection,
         incrementalPending: !!parent && link.mode === "active" && !transition,
+        preserveProjection,
       });
       this.mark("commitCanonical", { commit: commit.oid });
       if (this.budget !== null) this.budget--;
@@ -875,6 +894,9 @@ export class SyncService {
                   stateSize,
                   slice,
                   mark: this.mark,
+                  preserveProjection: pending.every(
+                    (op) => op.resolves?.length,
+                  ),
                 })
               : await this.receive(await this.store.readLink());
           this.mark("commitPublished", { head: link.canonical_head });
