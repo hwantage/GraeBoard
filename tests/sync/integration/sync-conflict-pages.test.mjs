@@ -161,6 +161,8 @@ test(
       assert.equal(detail.resolved, true);
       expectAuthorLookup(site, [detail]);
       assert.equal(detail.desired[0].value, value);
+      const { base, current, desired, ...summary } = detail;
+      assert.deepEqual(defaultPage.conflicts[1], summary);
       // An unread page and the other tab deliberately contain invalid JSON.
       // If the query parses them before applying its filters/limit it fails.
       const insert = async (id, resolution) => {
@@ -196,5 +198,94 @@ test(
       await remove("00-other-tab");
       await remove("zz-unread-page");
     }
+
+    // Production had 38 open conflicts of about 9 MB each. A count-only
+    // page parsed about 186 MB in PostgreSQL and hit its statement timeout.
+    // Keep oversized records intact, but leave later records to More.
+    const largeValue = "large-copy-conflict-".repeat(170000);
+    const largeRows = ["zz-large-a", "zz-large-b"].map((id) => {
+      const payload = JSON.parse(rows[0].payload);
+      payload.conflictId = payload.opId = payload.operation.opId = id;
+      payload.operation.changes[0].base.payload.value = largeValue;
+      payload.operation.changes[0].desired.value = largeValue;
+      Object.values(payload.current)[0].payload.value = largeValue;
+      return { id, payload: JSON.stringify(payload) };
+    });
+    for (const { id, payload } of largeRows)
+      await pgQuery("INSERT INTO sync_conflicts VALUES($1,$2,$2,$3,NULL)", [
+        f.teamId,
+        id,
+        payload,
+      ]);
+    // A malformed later payload makes accidental parsing of the next page
+    // fail deterministically, independent of the test machine's speed.
+    await pgQuery("INSERT INTO sync_conflicts VALUES($1,$2,$2,$3,NULL)", [
+      f.teamId,
+      "zz-large-c",
+      "unread payload",
+    ]);
+    const first = ok(await f.outside(prefix + "?status=open&after=page-074"));
+    assert.deepEqual(
+      first.conflicts.map((c) => c.conflictId),
+      [largeRows[0].id],
+    );
+    assert.equal(first.next, largeRows[0].id);
+    const second = ok(
+      await f.outside(prefix + "?status=open&after=" + first.next),
+    );
+    assert.deepEqual(
+      second.conflicts.map((c) => c.conflictId),
+      [largeRows[1].id],
+    );
+    assert.equal(second.next, largeRows[1].id);
+    await pgQuery(
+      "DELETE FROM sync_conflicts WHERE team_id=$1 AND conflict_id=$2",
+      [f.teamId, "zz-large-c"],
+    );
+    const last = ok(
+      await f.outside(prefix + "?status=open&after=" + first.next),
+    );
+    assert.deepEqual(
+      last.conflicts.map((c) => c.conflictId),
+      [largeRows[1].id],
+    );
+    assert.equal(last.next, null);
+    const detail = ok(await f.outside(prefix + "/" + largeRows[0].id));
+    assert.equal(detail.desired[0].value, largeValue);
+    const { base, current, desired, ...summary } = detail;
+    assert.deepEqual(first.conflicts[0], summary);
+
+    // Several individually small records also fill the byte budget. Use
+    // multibyte text so counting characters instead of bytes would miss it.
+    const mediumValue = "가".repeat(350000);
+    const mediumIds = ["zz-medium-a", "zz-medium-b", "zz-medium-c"];
+    for (const id of mediumIds) {
+      const payload = JSON.parse(rows[0].payload);
+      payload.conflictId = payload.opId = payload.operation.opId = id;
+      payload.operation.changes[0].base.payload.value = mediumValue;
+      payload.operation.changes[0].desired.value = mediumValue;
+      Object.values(payload.current)[0].payload.value = mediumValue;
+      await pgQuery("INSERT INTO sync_conflicts VALUES($1,$2,$2,$3,NULL)", [
+        f.teamId,
+        id,
+        JSON.stringify(payload),
+      ]);
+    }
+    const mediumPage = ok(
+      await f.outside(prefix + "?status=open&after=" + largeRows[1].id),
+    );
+    assert.deepEqual(
+      mediumPage.conflicts.map((c) => c.conflictId),
+      mediumIds.slice(0, 2),
+    );
+    assert.equal(mediumPage.next, mediumIds[1]);
+    const mediumLast = ok(
+      await f.outside(prefix + "?status=open&after=" + mediumPage.next),
+    );
+    assert.deepEqual(
+      mediumLast.conflicts.map((c) => c.conflictId),
+      [mediumIds[2]],
+    );
+    assert.equal(mediumLast.next, null);
   },
 );
