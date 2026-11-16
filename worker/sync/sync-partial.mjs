@@ -5,13 +5,14 @@ import {
   sumFromLanes,
 } from "../../server/sync/core/protocol.mjs";
 import { reduce, uniqueName } from "../../server/sync/core/reducer.mjs";
+import { parseStoredSyncJson } from "../../server/sync/core/sync-operation-cache.mjs";
 
 const recordFromRow = (row) => ({
   entity: row.entity,
   key: JSON.parse(row.entity_key),
   generation: row.generation,
   version: row.version,
-  payload: row.payload == null ? null : JSON.parse(row.payload),
+  payload: row.payload == null ? null : parseStoredSyncJson(row.payload),
   deleted: !!row.deleted,
 });
 
@@ -204,7 +205,9 @@ export class CanonicalSlice {
       for (const row of await this.conflicts(resolves)) {
         if (this.conflictDetails)
           this.conflictBytes += Buffer.byteLength(row.payload);
-        target.conflicts[row.conflict_id] = JSON.parse(row.payload);
+        target.conflicts[row.conflict_id] = this.conflictDetails
+          ? parseStoredSyncJson(row.payload)
+          : JSON.parse(row.payload);
       }
     return target;
   }

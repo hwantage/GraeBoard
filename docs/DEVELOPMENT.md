@@ -617,3 +617,5 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Work
 외부 DB v4의 충돌 요약은 원문 작업의 `teamId`·`repoId`도 보관합니다. `CanonicalSlice`의 대기 작업 투영은 이 요약과 현재 `resolution`만 읽어 해결 대상의 신원을 검사하며, 실제 공유 변경은 기존 원문을 그대로 사용합니다. 누락되거나 이전 형식인 요약과 DB v3는 원문에서 식별 정보를 추출하므로 기존 데이터의 검사 의미는 유지됩니다. 대기 중인 해결이 많아도 투영 때 모든 충돌 원문을 PostgreSQL 임시 파일로 펼치지 않습니다.
 
 이미 운영 중인 v4의 요약 보완은 승인된 요약 저장소 범위에서 수행합니다. 원문·대기 작업을 백업하고 기존 요약의 `operation`에 원문과 같은 두 식별자만 추가하며, 요약 누락은 기존 재생성 함수 `rebuildConflictSummaries`로 복구할 수 있습니다. DB 버전·Git 형식·사내 SQLite 형식은 바뀌지 않습니다.
+
+외부 `CanonicalSlice`는 DB의 canonical JSON 원문을 읽을 때 깊게 동결한 객체와 원문 바이트를 실행 범위 안에서 함께 보관합니다. 기존 PostgreSQL 상태 합계와 같이 저장된 canonical 바이트를 전제로 하며, 수신 JSON에는 이 경로를 적용하지 않습니다. 해결 표시만 바뀐 충돌은 나머지 원문 바이트를 보존해 상태 합계·용량 검사·DB 패치에 재사용합니다. 파싱된 명령 캐시 8MiB·128개는 유지하고 저장 JSON은 16MiB, canonical 문자열 전체는 32MiB로 제한하며 실행 종료 시 해제합니다. 사내 저장 형식이나 공유 프로토콜은 바뀌지 않습니다.
