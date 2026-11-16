@@ -21,14 +21,15 @@ const recordFromRow = (row) => ({
 // conflicts the operations name. Name uniqueness comes from SQL, so the cost
 // follows the change instead of the team's whole state.
 export class CanonicalSlice {
-  constructor(tx, teamId) {
-    Object.assign(this, { tx, teamId });
+  constructor(tx, teamId, { conflictDetails = true } = {}) {
+    Object.assign(this, { tx, teamId, conflictDetails });
     this.state = emptyState();
     this.wanted = new Map();
     this.prefixes = new Map();
     this.tags = new Set();
     this.opIds = new Set();
     this.resolves = new Set();
+    this.conflictBytes = 0;
     this.tagsRead = new WeakSet();
     this.want("protocol", []);
   }
@@ -157,11 +158,19 @@ export class CanonicalSlice {
     if (resolves.length)
       for (const row of (
         await this.tx.query(
-          "SELECT conflict_id,payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2)",
+          this.conflictDetails
+            ? "SELECT conflict_id,payload FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2)"
+            : `SELECT conflict_id,json_build_object('resolution',resolution,'operation',json_build_object('teamId',o."teamId",'repoId',o."repoId"))::text AS payload
+               FROM (SELECT conflict_id,payload,resolution FROM sync_conflicts WHERE team_id=$1 AND conflict_id=ANY($2) OFFSET 0) selected
+               CROSS JOIN LATERAL json_to_record(selected.payload::json) AS c(operation json)
+               CROSS JOIN LATERAL json_to_record(c.operation) AS o("teamId" text,"repoId" text)`,
           [team, resolves],
         )
-      ).rows)
+      ).rows) {
+        if (this.conflictDetails)
+          this.conflictBytes += Buffer.byteLength(row.payload);
         target.conflicts[row.conflict_id] = JSON.parse(row.payload);
+      }
     return target;
   }
   // The same index reduceMany builds, from SQL instead of every record.
