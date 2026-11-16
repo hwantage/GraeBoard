@@ -201,13 +201,39 @@ export class PostgresDatabase extends DatabaseAdapter {
     return this.withTeamTransaction(teamId, async (tx) => {
       if ((await tx.sync.readLink())?.canonical_head !== expectedHead)
         throw new Error("Canonical head changed; recompute before retry");
+      const prefix =
+        options.preserveProjection && ackOpIds.length
+          ? await tx.sync.readPendingPrefix(ackOpIds.length)
+          : [];
+      const preserveProjection =
+        !!options.preserveProjection &&
+        ackOpIds.length > 0 &&
+        prefix.length === ackOpIds.length &&
+        prefix.every(
+          (row, i) =>
+            row.op_id === ackOpIds[i] &&
+            row.payload_hash &&
+            row.payload_hash === state.receipts[row.op_id]?.payloadHash,
+        );
       await tx.sync.writeState(state, newHead, previous, patch);
       mark("writeState");
       await tx.sync.acknowledge(ackOpIds);
-      const pending = await tx.sync.readPending();
+      const pending = preserveProjection ? [] : await tx.sync.readPending();
+      const pendingBytes = preserveProjection
+        ? Number(
+            (
+              await tx.query(
+                "SELECT COALESCE(sum(octet_length(payload)),0) AS bytes FROM sync_outbox WHERE team_id=$1 AND status<>'acknowledged'",
+                [teamId],
+              )
+            ).rows[0].bytes,
+          )
+        : undefined;
       const result = await materialize?.(tx, {
         state,
         pending,
+        pendingBytes,
+        preserveProjection,
         exclusions: await tx.sync.readExclusions(),
       });
       mark("materialize");

@@ -1,4 +1,4 @@
-import { parseSyncOperation } from "../../server/sync/core/sync-operation-cache.mjs";
+import { parseStoredSyncOperation } from "../../server/sync/core/sync-operation-cache.mjs";
 import {
   isRecoveryError,
   normalizeSyncError,
@@ -217,6 +217,31 @@ export function boundStore(
         { readOnly: true },
       ),
     readPending: () => database.readPending(teamId),
+    // A locally saved resolution is already in the site's C+P projection.
+    // Only the exact leading commands can move from P to C without replay.
+    pendingResolutionPrefix: (operations) => {
+      if (
+        !operations.length ||
+        operations.some(
+          (op) => !Array.isArray(op?.resolves) || !op.resolves.length,
+        )
+      )
+        return null;
+      return call(
+        async (tx) => {
+          const rows = await tx.sync.readPendingPrefix(operations.length);
+          return rows.length === operations.length &&
+            rows.every(
+              (row, i) =>
+                row.op_id === operations[i].opId &&
+                /^[a-f0-9]{64}$/.test(row.payload_hash || ""),
+            )
+            ? rows
+            : null;
+        },
+        { readOnly: true },
+      );
+    },
     // A small "keep" command can resolve a multi-MB conflict. Bound the
     // publication by the source records it must read/hash as well as its wire
     // bytes; readPending itself remains complete for projection and recovery.
@@ -248,7 +273,7 @@ export function boundStore(
               "SELECT payload FROM sync_outbox WHERE team_id=$1 AND op_id=ANY($2::text[]) ORDER BY local_seq",
               [teamId, ids],
             )
-          ).rows.map((row) => parseSyncOperation(row.payload));
+          ).rows.map((row) => parseStoredSyncOperation(row.payload));
         },
         { readOnly: true },
       ),
@@ -329,17 +354,21 @@ export function boundStore(
           if (
             Number.isFinite(limits.maxBytes) &&
             size.bytes +
-              projection.pending.reduce(
-                (bytes, operation) =>
-                  bytes + Buffer.byteLength(canonical(operation)),
-                0,
-              ) >
+              (projection.pendingBytes ??
+                projection.pending.reduce(
+                  (bytes, operation) =>
+                    bytes + Buffer.byteLength(canonical(operation)),
+                  0,
+                )) >
               limits.maxBytes
           )
             throw new CapacityError(
               "External state and pending capacity exceeded; prior data is preserved",
             );
-          if (options.slice)
+          if (projection.preserveProjection) {
+            // C+P is unchanged after acknowledging its exact prefix. The
+            // transaction rechecks the prefix after concurrent local saves.
+          } else if (options.slice)
             await materializeSlice(tx, teamId, {
               ...projection,
               base: options.previousState,
