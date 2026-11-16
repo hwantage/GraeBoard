@@ -1,4 +1,5 @@
 import { diffChars } from "diff";
+import { resolveSyncConflict } from "./sync-operation-cache.mjs";
 import { forkRecordMap } from "../../../shared/sync/record-map.mjs";
 import {
   canonical,
@@ -547,7 +548,7 @@ export function reduce(
   else if (op.resolves)
     for (const id of op.resolves)
       if (conflicts[id])
-        conflicts[id] = { ...conflicts[id], resolution: op.opId };
+        conflicts[id] = resolveSyncConflict(conflicts[id], op.opId);
   const receipts = context ? state.receipts : { ...state.receipts };
   receipts[op.opId] = receipt;
   return {

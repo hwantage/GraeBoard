@@ -5,6 +5,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 // always go through validation again. The bounded memo lives for one run.
 const scopes = new AsyncLocalStorage();
 const MAX_BYTES = 8 * 1024 * 1024;
+const MAX_TEXT_BYTES = 32 * 1024 * 1024;
 const MAX_ENTRIES = 128;
 function freeze(value) {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
@@ -54,12 +55,59 @@ export const syncRunPayloads = () => active()?.payloads;
 export function rememberSyncCanonical(scope, value, text) {
   if (scope?.jsonObjects.has(value) && !scope.texts.has(value)) {
     const bytes = Buffer.byteLength(text);
-    if (scope.textBytes + bytes <= MAX_BYTES) {
+    if (scope.textBytes + bytes <= MAX_TEXT_BYTES) {
       scope.texts.set(value, text);
       scope.textBytes += bytes;
     }
   }
   return text;
+}
+
+// Only for canonical JSON text read from sync storage. Its writers and SQL
+// state checksums use exactly these bytes. Never use for received/untrusted JSON.
+export function parseStoredSyncJson(text) {
+  const value = JSON.parse(text),
+    scope = active(),
+    bytes = Buffer.byteLength(text);
+  if (
+    scope &&
+    value &&
+    typeof value === "object" &&
+    scope.storedBytes + bytes <= MAX_TEXT_BYTES / 2
+  ) {
+    freeze(value);
+    scope.jsonObjects.add(value);
+    rememberSyncCanonical(scope, value, text);
+    scope.storedBytes += bytes;
+  }
+  return value;
+}
+
+export function resolveSyncConflict(conflict, resolution) {
+  const resolved = { ...conflict, resolution },
+    scope = active(),
+    text = scope?.texts.get(conflict),
+    suffix = ',"resolution":' + JSON.stringify(conflict.resolution) + "}";
+  // Canonical conflict records end with resolution. Every other field is
+  // shared unchanged; replacing this suffix preserves their exact bytes.
+  if (
+    typeof resolution === "string" &&
+    text &&
+    scope.jsonObjects.has(conflict) &&
+    text.endsWith(suffix)
+  ) {
+    Object.freeze(resolved);
+    scope.jsonObjects.add(resolved);
+    rememberSyncCanonical(
+      scope,
+      resolved,
+      text.slice(0, -suffix.length) +
+        ',"resolution":' +
+        JSON.stringify(resolution) +
+        "}",
+    );
+  }
+  return resolved;
 }
 
 export function withSyncOperationCache(work) {
@@ -72,6 +120,7 @@ export function withSyncOperationCache(work) {
     texts: new WeakMap(),
     jsonObjects: new WeakSet(),
     textBytes: 0,
+    storedBytes: 0,
     payloads: { validated: new WeakMap(), latest: new Map() },
   };
   const close = () => {
