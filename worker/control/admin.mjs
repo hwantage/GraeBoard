@@ -42,6 +42,8 @@ import { R2ImageStore } from "../documents/images.mjs";
 import { beginProfileSwitch } from "../sync/profile-switch.mjs";
 import { runTeam, refreshTeam, importTeam } from "../sync/sync.mjs";
 import { resolveConflict } from "../sync/sync-resolve.mjs";
+import { createExternalSyncLog } from "../sync/sync-log-api.mjs";
+const externalSyncLog = createExternalSyncLog();
 // Bound PostgreSQL JSON work as well as the number of rows. One large
 // conflict must still fit on its own page so the cursor always advances.
 const CONFLICT_PAGE_BYTES = 8 * 1024 * 1024;
@@ -356,6 +358,11 @@ export async function adminRoutes(
         })),
     };
   }
+  const log = /^\/teams\/([^/]+)\/sync\/log$/.exec(path);
+  if (log)
+    return externalSyncLog(ctx.request, ctx.env, log[1], () =>
+      ctx.team(log[1], { manage: true, allowUnready: true }),
+    );
   const sync =
     /^\/teams\/([^/]+)\/sync(?:\/(check|enable|pause|resume|run|pull|refresh|disconnect|checkpoint|upgrade|conflicts)(?:\/([^/]+)(?:\/(resolve))?)?)?$/.exec(
       path,

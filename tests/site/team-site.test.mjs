@@ -221,8 +221,26 @@ test(
       "refs/heads/main",
       github.text(["commit-tree", tree, "-m", "init"]),
     ]);
+    let logCalls = 0;
     globalThis.fetch = (input, init) => {
-      const target = new URL(typeof input === "string" ? input : input.url);
+      const target = new URL(input instanceof Request ? input.url : input);
+      if (target.hostname === "api.supabase.com") {
+        logCalls++;
+        assert.match(target.searchParams.get("sql"), /LIMIT 51$/);
+        return Promise.resolve(
+          Response.json({
+            result: [
+              {
+                id: randomUUID(),
+                timestamp_text: "2026-11-17T08:34:36.867000",
+                message: "CPU Time exceeded",
+                cpu_ms: "2000",
+                reason: "CPUTime",
+              },
+            ],
+          }),
+        );
+      }
       if (target.origin === "https://api.github.com")
         return github.fetch(target.href, init);
       assert.equal(target.hostname, "127.0.0.1");
@@ -402,6 +420,9 @@ test(
       PG_SITE: { connectionString: url, pool },
       GRAEBOARD_GATEWAY_SECRET: "fixture-gateway-secret-with-enough-entropy",
       GRAEBOARD_EDGE_URL: "https://fixture.supabase.co/functions/v1/graeboard",
+      GRAEBOARD_LOG_PROJECT_REF: "abcdefghijklmnopqrst",
+      GRAEBOARD_LOG_FUNCTION_ID: randomUUID(),
+      GRAEBOARD_LOGS_TOKEN: "sbp_fixture_logs",
       R2_TEAM: bucket(),
       GIT_TOKEN: "fixture-secret",
       SYNC_PROFILES: JSON.stringify([profile]),
@@ -704,6 +725,39 @@ test(
     assert.equal(
       success(await outside("member-google", "/bootstrap")).user.id,
       member,
+    );
+    const logProbe = `/teams/${teamId}/sync/log`;
+    const callsBeforeLogs = github.calls.length,
+      workBeforeLogs = work.length;
+    const logPage = success(await outside("lead-google", logProbe));
+    assert.equal(logPage.entries[0].error.code, "EDGE_CPU_LIMIT");
+    assert.equal(logPage.entries[0].cpuMs, 2000);
+    assert.equal((await outside("lead-google", logProbe)).status, 200);
+    assert.equal(logCalls, 1, "consecutive reads reuse the bounded Edge cache");
+    assert.equal(
+      github.calls.length,
+      callsBeforeLogs,
+      "log reads must not call GitHub",
+    );
+    assert.equal(
+      work.length,
+      workBeforeLogs,
+      "log reads must not schedule background sync",
+    );
+    assert.equal((await outside("member-google", logProbe)).status, 403);
+    assert.equal((await outside("not-registered", logProbe)).status, 401);
+    assert.equal(
+      (await outside("lead-google", `/teams/${otherTeam}/sync/log`)).status,
+      403,
+    );
+    assert.equal(
+      (await outside("lead-google", logProbe, {}, "POST")).status,
+      405,
+    );
+    assert.equal(
+      logCalls,
+      1,
+      "unauthorized requests do not read cached or upstream logs",
     );
     assert.equal(
       success(await outside("member-google", "/bootstrap")).user.systemRole,

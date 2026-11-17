@@ -1,11 +1,24 @@
 export type SyncLogLevel = "changes" | "cycles" | "git";
 
 // One line of the internal server's synchronization log
-// (server/sync/node/sync-log.mjs). `line` is its position in the day's file.
+// (server/sync/node/sync-log.mjs) or bounded Supabase logs from Edge.
+// `line` is the internal file position or an external log's stable UUID.
 export type SyncLogEntry = {
   at: string;
-  line: number;
-  kind: "cycle" | "git" | "action" | "state" | "server" | "worker" | "image";
+  line: number | string;
+  kind:
+    | "cycle"
+    | "git"
+    | "action"
+    | "state"
+    | "server"
+    | "worker"
+    | "image"
+    | "external";
+  message?: string;
+  phase?: string;
+  executionId?: string;
+  cpuMs?: number;
   ok?: boolean;
   ms?: number;
   // cycle
@@ -51,6 +64,7 @@ export type SyncLogEntry = {
 };
 
 export type SyncLogPage = {
+  source?: "supabase";
   level: SyncLogLevel;
   levels: SyncLogLevel[];
   canSetLevel: boolean;
@@ -58,5 +72,5 @@ export type SyncLogPage = {
   date: string;
   dates: string[];
   entries: SyncLogEntry[];
-  next: number | null;
+  next: number | string | null;
 };

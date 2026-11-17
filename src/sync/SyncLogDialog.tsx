@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Download, RefreshCw } from "lucide-react";
+import { useSite } from "../platform/site-context";
 import { api, download, send } from "../platform/api";
 import { Button } from "../ui/Button";
 import { ErrorNote } from "../ui/ErrorNote";
@@ -56,6 +57,25 @@ function describe(entry: SyncLogEntry): {
   text: string;
 } {
   const failed = entry.ok === false;
+  if (entry.kind === "external")
+    return {
+      tone: failed ? "fail" : "info",
+      label: failed ? "오류" : "진행",
+      text:
+        entry.event === "EDGE_CPU_LIMIT"
+          ? "외부 실행 CPU 한도 초과"
+          : entry.event === "EDGE_MEMORY_LIMIT"
+            ? "외부 실행 메모리 한도 초과"
+            : entry.event === "EDGE_WALL_CLOCK_LIMIT"
+              ? "외부 실행 시간 한도 초과"
+              : entry.event === "EDGE_RESOURCE_LIMIT"
+                ? "외부 실행 자원 한도 초과"
+                : entry.phase === "failed"
+                  ? "동기화 실행 실패"
+                  : entry.phase
+                    ? `동기화 · ${entry.phase}`
+                    : entry.error?.message || "외부 실행 오류",
+    };
   if (entry.kind === "cycle") {
     if (failed)
       return {
@@ -189,6 +209,16 @@ function Details({
     add("오류 코드", entry.error?.code);
     add("실패한 Git 명령", command && `git ${command.args}`);
   }
+  if (entry.kind === "external") {
+    add("실행 ID", entry.executionId);
+    add("동기화 단계", entry.phase);
+    add(
+      "CPU 사용 시간",
+      entry.cpuMs === undefined ? undefined : `${entry.cpuMs}ms`,
+    );
+    add("응답 상태", entry.error?.status);
+    add("오류 코드", entry.error?.code);
+  }
   if (entry.kind === "git") {
     add("명령", `git ${entry.args}`);
     add("종료 코드", entry.code);
@@ -220,6 +250,12 @@ function Details({
           </div>
         ))}
       </dl>
+      {entry.kind === "external" && entry.message && (
+        <>
+          <p className="sync-log-raw-title">외부 로그 메시지</p>
+          <pre className="sync-log-raw">{entry.message}</pre>
+        </>
+      )}
       {(entry.stderr || command?.stderr) && (
         <>
           <p className="sync-log-raw-title">Git 출력 원문</p>
@@ -239,27 +275,34 @@ export default function SyncLogDialog({
   teamName: string;
   onClose: () => void;
 }) {
+  const { external } = useSite();
+  const activeAbort = useRef<AbortController | null>(null);
   const [page, setPage] = useState<SyncLogPage | null>(null);
   const [entries, setEntries] = useState<SyncLogEntry[]>([]);
   const [date, setDate] = useState("");
   const [problems, setProblems] = useState(false);
-  const [open, setOpen] = useState<Set<number>>(new Set());
+  const [open, setOpen] = useState<Set<number | string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const request = useRef(0);
   const load = useCallback(
-    // `before` is a position in the file of `day`: a page continues its own day.
-    async (before?: number, day = date) => {
+    // A file position or opaque external cursor continues its own day.
+    async (before?: number | string, day = date) => {
       const id = ++request.current;
+      activeAbort.current?.abort();
+      const controller = new AbortController();
+      activeAbort.current = controller;
       setBusy(true);
       setError("");
       try {
-        const read = (from: string, cursor?: number) => {
+        const read = (from: string, cursor?: number | string) => {
           const query = new URLSearchParams();
           if (from) query.set("date", from);
           if (problems) query.set("problems", "1");
           if (cursor !== undefined) query.set("before", String(cursor));
-          return api<SyncLogPage>(`/teams/${teamId}/sync/log?${query}`);
+          return api<SyncLogPage>(`/teams/${teamId}/sync/log?${query}`, {
+            signal: controller.signal,
+          });
         };
         let result = await read(day, before);
         // The server reads a filtered day a part at a time: a part with
@@ -267,6 +310,7 @@ export default function SyncLogDialog({
         // start.
         while (
           id === request.current &&
+          result.source !== "supabase" &&
           !result.entries.length &&
           result.next !== null
         )
@@ -294,6 +338,7 @@ export default function SyncLogDialog({
     void load();
     return () => {
       request.current++;
+      activeAbort.current?.abort();
     };
   }, [load]);
   async function changeLevel(level: SyncLogLevel) {
@@ -319,7 +364,11 @@ export default function SyncLogDialog({
   return (
     <Modal
       title="동기화 로그"
-      help={`사내 서버가 ${teamName} 팀을 동기화하며 남긴 기록입니다. 실패한 줄을 펼치면 Git이 출력한 원문과 조치 안내를 볼 수 있습니다.`}
+      help={
+        external
+          ? `${teamName} 팀 외부 서버의 동기화 기록과 실행 오류입니다. 오류를 펼치면 원인과 조치 안내를 볼 수 있습니다.`
+          : `사내 서버가 ${teamName} 팀을 동기화하며 남긴 기록입니다. 실패한 줄을 펼치면 Git이 출력한 원문과 조치 안내를 볼 수 있습니다.`
+      }
       wide
       className="sync-log-dialog"
       onClose={onClose}
@@ -346,49 +395,57 @@ export default function SyncLogDialog({
             onChange={(e) => setProblems(e.target.value === "problems")}
           >
             <option value="all">전체</option>
-            <option value="problems">실패와 상태 변화만</option>
+            <option value="problems">
+              {external ? "오류만" : "실패와 상태 변화만"}
+            </option>
           </Select>
         </label>
-        <label>
-          기록 수준
-          <Select
-            value={page?.level || "cycles"}
-            disabled={!page?.canSetLevel || busy}
-            title={
-              page && !page.canSetLevel
-                ? "기록 수준은 시스템 관리자가 바꿉니다."
-                : undefined
-            }
-            onChange={(e) => void changeLevel(e.target.value as SyncLogLevel)}
-          >
-            {(page?.levels || (["cycles"] as SyncLogLevel[])).map((value) => (
-              <option key={value} value={value}>
-                {levelNames[value]}
-              </option>
-            ))}
-          </Select>
-        </label>
+        {!external && (
+          <label>
+            기록 수준
+            <Select
+              value={page?.level || "cycles"}
+              disabled={!page?.canSetLevel || busy}
+              title={
+                page && !page.canSetLevel
+                  ? "기록 수준은 시스템 관리자가 바꿉니다."
+                  : undefined
+              }
+              onChange={(e) => void changeLevel(e.target.value as SyncLogLevel)}
+            >
+              {(page?.levels || (["cycles"] as SyncLogLevel[])).map((value) => (
+                <option key={value} value={value}>
+                  {levelNames[value]}
+                </option>
+              ))}
+            </Select>
+          </label>
+        )}
         <span className="sync-log-toolbar-actions">
           <Button {...busyProps(busy)} onClick={() => void load()}>
             <RefreshCw size={15} aria-hidden="true" />
             새로 고침
           </Button>
-          <Button
-            {...busyProps(false, !page || (!entries.length && !problems))}
-            onClick={() => void save()}
-          >
-            <Download size={15} aria-hidden="true" />
-            내려받기
-          </Button>
+          {!external && (
+            <Button
+              {...busyProps(false, !page || (!entries.length && !problems))}
+              onClick={() => void save()}
+            >
+              <Download size={15} aria-hidden="true" />
+              내려받기
+            </Button>
+          )}
         </span>
       </div>
       <ErrorNote error={error} />
       {!page && !error && <LoadingState label="동기화 로그를 불러오는 중…" />}
       {page && !entries.length && (
         <p className="field-help">
-          {problems
-            ? "이 날짜에는 실패나 상태 변화가 없습니다."
-            : "이 날짜에는 기록이 없습니다."}
+          {external
+            ? "조회 범위에 해당하는 로그가 없습니다. 로그 반영 지연이나 Supabase 보관 기간에 따라 기록이 보이지 않을 수 있습니다."
+            : problems
+              ? "이 날짜에는 실패나 상태 변화가 없습니다."
+              : "이 날짜에는 기록이 없습니다."}
         </p>
       )}
       {!!entries.length && (
@@ -437,9 +494,15 @@ export default function SyncLogDialog({
       )}
       {page && (
         <p className="field-help sync-log-note">
-          기록은 한국 시간 기준 날짜별 파일로 {page.retentionDays}일 동안
-          보관합니다. 내려받은 파일에는 저장소 주소와 프록시 주소가 들어 있을 수
-          있습니다.
+          {external ? (
+            "최근 24시간을 한국 시간 날짜로 나누어 조회합니다. 실행 한도 오류는 동기화 외의 요청과 함께 발생할 수 있습니다. 같은 조회는 15초 동안 재사용하며 자동으로 새로 고치지 않습니다."
+          ) : (
+            <>
+              기록은 한국 시간 기준 날짜별 파일로 {page.retentionDays}일 동안
+              보관합니다. 내려받은 파일에는 저장소 주소와 프록시 주소가 들어
+              있을 수 있습니다.
+            </>
+          )}
         </p>
       )}
     </Modal>

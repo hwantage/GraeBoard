@@ -130,6 +130,8 @@ export function syncLogFailedCommand(
         other.ok === false &&
         other.command === step[2] &&
         String(other.code ?? "network") === step[1] &&
+        typeof other.line === "number" &&
+        typeof entry.line === "number" &&
         other.line < entry.line &&
         time >= start &&
         time <= end
@@ -143,6 +145,39 @@ export function syncLogGuidance(
   entries: SyncLogEntry[] = [],
 ): SyncLogGuidance | null {
   if (entry.ok !== false) return null;
+  if (entry.kind === "external") {
+    const code = entry.error?.code;
+    if (code === "EDGE_CPU_LIMIT")
+      return {
+        cause: "Supabase 외부 실행이 CPU 사용 시간 한도를 초과해 종료됐습니다.",
+        action:
+          "동기화 실행도 중단됐다면 잠금이 만료된 뒤 다시 시도합니다. 공유 대기 건수와 반영 시각이 계속 그대로이면 운영자에게 이 실행 ID를 전달하세요.",
+      };
+    if (code === "EDGE_MEMORY_LIMIT")
+      return {
+        cause: "Supabase 외부 실행이 메모리 한도를 초과해 종료됐습니다.",
+        action:
+          "반복되면 처리할 자료의 크기와 한 번에 처리하는 작업량을 점검해야 합니다. 운영자에게 실행 ID를 전달하세요.",
+      };
+    if (code === "EDGE_WALL_CLOCK_LIMIT" || code === "EDGE_RESOURCE_LIMIT")
+      return {
+        cause: "Supabase 외부 실행이 시간 또는 실행 자원 한도로 종료됐습니다.",
+        action:
+          "반영 시각과 공유 대기 건수가 이후에 변하는지 확인하세요. 반복되면 운영자가 같은 실행 ID의 로그를 점검해야 합니다.",
+      };
+    if (code === "EDGE_RATE_LIMIT")
+      return {
+        cause: "외부 요청이 호출 한도로 거절됐습니다.",
+        action:
+          "잠시 기다린 뒤 다시 확인하세요. 반복되면 호출 빈도와 서비스 사용량을 점검해야 합니다.",
+      };
+    return {
+      cause:
+        "외부 서버에서 오류가 기록됐습니다. 아래 메시지와 실행 ID로 원인을 확인할 수 있습니다.",
+      action:
+        "공유 대기와 반영 시각을 확인하고, 같은 오류가 반복되면 운영자에게 이 기록을 전달하세요.",
+    };
+  }
   if (entry.kind === "git" && entry.timedOut)
     return {
       cause: "Git 명령이 제한 시간 안에 끝나지 않아 중단됐습니다.",

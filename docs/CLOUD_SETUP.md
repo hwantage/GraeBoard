@@ -314,6 +314,18 @@ Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https:
 
 **이 팀에 연결** 직후 `일시정지`, `Git 반영: 아직 없음`은 최초 게시 전 상태입니다. **연결 검사**가 성공해야 **초기 게시** 버튼이 활성화됩니다. Git 검사는 `api.github.com`에서 비공개 저장소 조회와 임시 `graeboard-probe/<UUID>` 브랜치 생성·삭제를 확인합니다. 실제 초기 게시의 `github.com` Git CLI 통신과 전체 자료·이미지 전송은 별도 단계입니다. 내부 초기 게시와 외부 가져오기를 마치기 전에는 `외부망 반영: 확인 대기`를 완료로 해석하지 않습니다.
 
+### 외부 동기화 로그 연결
+
+외부의 **동기화 로그**는 기존 Supabase Edge Function에서 Supabase [Logs API](https://supabase.com/docs/reference/api/v1-get-project-logs)를 읽습니다. 배포용 `SUPABASE_ACCESS_TOKEN`과 별도로 로그 조회 전용 토큰을 사용합니다. Cloudflare gateway의 기존 전달 경로는 그대로입니다.
+
+1. Supabase 계정의 Access Tokens에서 대상 프로젝트가 속한 조직에 대한 **Analytics Logs Read (`analytics_logs_read`)** 권한만 가진 토큰을 만듭니다. 토큰 소유 계정에도 해당 프로젝트 로그 접근 권한이 있어야 합니다. 데이터베이스 `anon`·`service_role` 키는 이 API의 토큰이 아닙니다.
+2. Fork의 Actions Secret **`TEAM_SITE_SECRETS`** JSON에 `"GRAEBOARD_LOGS_TOKEN": "발급한 토큰"`을 추가합니다. 기존 토큰·키 값을 함께 유지합니다. 설정 안내에서 JSON을 새로 만들었다면 이 선택 값을 다시 추가합니다. 토큰을 `TEAM_SITE_CONFIG`, 브라우저 설정, Cloudflare gateway에 넣지 않습니다.
+3. 해당 변경이 포함된 배포를 실행합니다. 스크립트는 배포한 `graeboard` 함수의 UUID를 찾아 `GRAEBOARD_LOG_FUNCTION_ID`, 프로젝트 Reference ID를 `GRAEBOARD_LOG_PROJECT_REF`에 설정합니다. 이 값들과 `GRAEBOARD_LOGS_TOKEN`은 Supabase Edge Secrets에만 넣습니다. 배포 후 팀장으로 외부 **동기화 로그**를 엽니다.
+
+기존 변수 방식으로 직접 관리하는 설치는 Supabase Edge Secrets에 위 세 값을 등록합니다. 함수 UUID는 Supabase 함수 상세 또는 `supabase functions list --project-ref <Reference ID> --output json`의 `graeboard` 항목 `id`입니다. 프로젝트 Reference ID나 함수 이름을 UUID 대신 넣지 않습니다. Supabase가 예약한 `SUPABASE_` 접두어 대신 `GRAEBOARD_` 이름을 사용합니다.
+
+선택 토큰이 없으면 기존 배포·동기화는 계속되며, 로그 팝업에 연결 미설정을 표시합니다. 토큰 만료·권한 오류는 전용 토큰을 교체해 다시 배포합니다. 토큰을 폐기할 때는 Supabase에서 먼저 취소하고 Edge Secret도 삭제합니다. JSON에서 선택 값을 빼는 것만으로 기존 Secret을 삭제하지는 않습니다. 로그 조회의 범위·제한과 오류 해석은 [운영 안내](OPERATIONS.md#외부-서버-동기화-로그)를 따릅니다.
+
 ### 새 release 내보내기와 팀 Fork 반영
 
 원본 관리자가 `main`의 변경을 팀 사이트에 내보내는 절차입니다. 저장 형식이 바뀌는 릴리스는 [내부·외부 배포 순서](OPERATIONS.md#내부외부-git-동기화-운영)를 먼저 확인합니다.
