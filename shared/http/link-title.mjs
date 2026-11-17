@@ -150,34 +150,139 @@ export function decodeLinkTitleHtml(bytes, contentType = "") {
   return new TextDecoder().decode(bytes);
 }
 
-export function extractLinkTitle(html) {
-  const clean = (text) =>
-    Array.from(
-      decodeHTML(text)
-        .replace(
-          /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g,
-          "",
-        )
-        .replace(/\s+/g, " ")
-        .trim(),
-    )
-      .slice(0, 200)
-      .join("");
-  // Comments and raw script/style text cannot supply metadata.
-  const head = html.replace(
+const cleanLinkTitle = (text, html = true) =>
+  Array.from(
+    (html ? decodeHTML(text) : text)
+      .replace(
+        /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g,
+        "",
+      )
+      .replace(/\s+/g, " ")
+      .trim(),
+  )
+    .slice(0, 200)
+    .join("");
+
+// Comments and raw script/style text cannot supply metadata.
+const linkTitleMarkup = (html) =>
+  html.replace(
     /<!--[\s\S]*?(?:-->|$)|<(script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi,
     "",
   );
-  const title = clean(
+export function extractLinkTitle(html, preferSocialTitle = false) {
+  const head = linkTitleMarkup(html);
+  const title = cleanLinkTitle(
     /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i.exec(head)?.[1] || "",
   );
-  if (title) return title;
+  if (
+    title &&
+    (!preferSocialTitle || !/^(?:YouTube|Claude Artifact)$/i.test(title))
+  )
+    return title;
   for (const match of head.matchAll(/<meta\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi)) {
     const attrs = htmlAttributes(match[0]);
-    if ((attrs.property || attrs.name || "").toLowerCase() === "og:title")
-      return clean(attrs.content || "");
+    if ((attrs.property || attrs.name || "").toLowerCase() === "og:title") {
+      const socialTitle = cleanLinkTitle(attrs.content || "");
+      if (socialTitle) return socialTitle;
+    }
   }
+  return title || null;
+}
+
+// Only known public metadata endpoints are constructed here. Never follow an
+// oEmbed URL advertised by an untrusted page, and send no cookies or API keys.
+export function linkTitleMetadataUrl(url) {
+  const host = url.hostname.toLowerCase();
+  let video;
+  if (host === "youtu.be") video = url.pathname.slice(1).split("/")[0];
+  else if (
+    [
+      "youtube.com",
+      "www.youtube.com",
+      "m.youtube.com",
+      "music.youtube.com",
+    ].includes(host)
+  )
+    video =
+      url.pathname === "/watch"
+        ? url.searchParams.get("v")
+        : /^\/(?:shorts|live|embed)\/([^/]+)/.exec(url.pathname)?.[1];
+  if (video && /^[\w-]{11}$/.test(video))
+    return new URL(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(`https://www.youtube.com/watch?v=${video}`)}&format=json`,
+    );
+  const artifact =
+    host === "claude.ai" &&
+    /^\/public\/artifacts\/([\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12})(?:\/embed)?\/?$/i.exec(
+      url.pathname,
+    );
+  return artifact
+    ? new URL(`https://claude.ai/api/published_artifacts/${artifact[1]}`)
+    : null;
+}
+function metadataKind(url) {
+  if (url.hostname === "www.youtube.com" && url.pathname === "/oembed")
+    return "youtube";
+  if (
+    url.hostname === "claude.ai" &&
+    /^\/api\/published_artifacts\/[\da-f-]{36}$/i.test(url.pathname)
+  )
+    return "claude";
+  if (
+    url.hostname === "claude.ai" &&
+    /^\/api\/frame\/[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(
+      url.pathname,
+    )
+  )
+    return "claude-frame";
   return null;
+}
+export function linkTitleRequestHeaders(url) {
+  return {
+    Accept: metadataKind(url) ? "application/json" : "text/html",
+    "Accept-Encoding": "identity",
+    "User-Agent": "GraeBoard-LinkTitle/1.0",
+    ...(metadataKind(url) === "claude-frame"
+      ? { "X-Frame-CP": "go", "X-Frame-Platform": "web" }
+      : {}),
+  };
+}
+export function acceptsLinkTitleContent(url, contentType) {
+  return metadataKind(url)
+    ? /^application\/json(?:\s*;|\s*$)/i.test(contentType || "")
+    : /^text\/html(?:\s*;|\s*$)/i.test(contentType || "");
+}
+export function extractLinkTitleResponse(url, bytes, contentType) {
+  const kind = metadataKind(url);
+  if (!kind) {
+    const html = decodeLinkTitleHtml(bytes, contentType);
+    const title = extractLinkTitle(html, !!linkTitleMetadataUrl(url));
+    // New Claude share URLs carry their canonical ID on the root element.
+    // Construct one fixed public endpoint; never follow page-supplied URLs.
+    if (
+      url.hostname === "claude.ai" &&
+      /^\/(?:code\/)?artifact\/[\w-]{1,64}\/?$/.test(url.pathname)
+    ) {
+      const root = /<html\b(?:[^>"']|"[^"]*"|'[^']*')*>/i.exec(
+        linkTitleMarkup(html),
+      );
+      const id = root && htmlAttributes(root[0])["data-frame-uuid"];
+      if (/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id || ""))
+        return { title, metadata: `https://claude.ai/api/frame/${id}` };
+    }
+    return { title };
+  }
+  try {
+    const data = JSON.parse(new TextDecoder().decode(bytes));
+    const title =
+      kind === "claude" ? (data.artifact?.title ?? data.title) : data.title;
+    return {
+      title:
+        typeof title === "string" ? cleanLinkTitle(title, false) || null : null,
+    };
+  } catch {
+    return { title: null };
+  }
 }
 
 // The transport accepts a previously checked literal IP, never a hostname.
@@ -197,9 +302,7 @@ export function requestLinkTitle(url, address, signal) {
         maxHeaderSize: 16384,
         headers: {
           Host: url.host,
-          Accept: "text/html",
-          "Accept-Encoding": "identity",
-          "User-Agent": "GraeBoard-LinkTitle/1.0",
+          ...linkTitleRequestHeaders(url),
         },
       },
       (response) => {
@@ -211,9 +314,7 @@ export function requestLinkTitle(url, address, signal) {
         if (
           status < 200 ||
           status >= 300 ||
-          !/^text\/html(?:\s*;|\s*$)/i.test(
-            response.headers["content-type"] || "",
-          ) ||
+          !acceptsLinkTitleContent(url, response.headers["content-type"]) ||
           ![undefined, "identity"].includes(
             response.headers["content-encoding"],
           )
@@ -228,11 +329,13 @@ export function requestLinkTitle(url, address, signal) {
           if (complete) return;
           complete = true;
           const bytes = Buffer.concat(chunks);
-          resolve({
-            title: extractLinkTitle(
-              decodeLinkTitleHtml(bytes, response.headers["content-type"]),
+          resolve(
+            extractLinkTitleResponse(
+              url,
+              bytes,
+              response.headers["content-type"],
             ),
-          });
+          );
           response.destroy();
         };
         response.on("data", (chunk) => {
@@ -271,7 +374,7 @@ export function createLinkTitleService({
       "링크 제목 조회가 많습니다. 잠시 후 다시 시도하세요.",
     );
     users.set(userId, entry);
-    let url = linkTitleUrl(value);
+    const original = linkTitleUrl(value);
     const controller = new AbortController();
     let timer;
     try {
@@ -283,41 +386,62 @@ export function createLinkTitleService({
           }, timeoutMs);
         }),
         (async () => {
-          for (let redirects = 0; redirects <= 3; redirects++) {
-            const host = url.hostname
-              .replace(/^\[|\]$/g, "")
-              .toLowerCase()
-              .replace(/\.$/, "");
-            const addresses = isIP(host)
-              ? [{ address: host }]
-              : await resolve(host);
-            controller.signal.throwIfAborted();
-            requireThat(
-              addresses.length &&
-                addresses.every(({ address }) =>
-                  allowedLinkTitleAddress(
-                    address,
-                    permitsPrivate(host, privateHosts),
+          const read = async (initial) => {
+            let url = initial;
+            for (let redirects = 0; redirects <= 3; redirects++) {
+              const host = url.hostname
+                .replace(/^\[|\]$/g, "")
+                .toLowerCase()
+                .replace(/\.$/, "");
+              const addresses = isIP(host)
+                ? [{ address: host }]
+                : await resolve(host);
+              controller.signal.throwIfAborted();
+              requireThat(
+                addresses.length &&
+                  addresses.every(({ address }) =>
+                    allowedLinkTitleAddress(
+                      address,
+                      permitsPrivate(host, privateHosts),
+                    ),
                   ),
-                ),
-              400,
-              "허용되지 않는 링크 주소입니다.",
-            );
-            const result = await request(
-              url,
-              addresses[0].address,
-              controller.signal,
-            );
-            controller.signal.throwIfAborted();
-            if (!Object.hasOwn(result, "redirect"))
-              return { title: result.title };
-            requireThat(
-              result.redirect && redirects < 3,
-              400,
-              "링크 이동 횟수를 확인하세요.",
-            );
-            url = linkTitleUrl(new URL(result.redirect, url).href);
+                400,
+                "허용되지 않는 링크 주소입니다.",
+              );
+              const result = await request(
+                url,
+                addresses[0].address,
+                controller.signal,
+              );
+              controller.signal.throwIfAborted();
+              if (!Object.hasOwn(result, "redirect")) return result;
+              requireThat(
+                result.redirect && redirects < 3,
+                400,
+                "링크 이동 횟수를 확인하세요.",
+              );
+              url = linkTitleUrl(new URL(result.redirect, url).href);
+            }
+          };
+          const metadata = linkTitleMetadataUrl(original);
+          if (metadata) {
+            try {
+              const result = await read(metadata);
+              if (result.title) return { title: result.title };
+            } catch {
+              controller.signal.throwIfAborted();
+            }
           }
+          const result = await read(original);
+          if (result.metadata) {
+            try {
+              const metadataResult = await read(linkTitleUrl(result.metadata));
+              if (metadataResult.title) return { title: metadataResult.title };
+            } catch {
+              controller.signal.throwIfAborted();
+            }
+          }
+          return { title: result.title };
         })(),
       ]);
     } finally {

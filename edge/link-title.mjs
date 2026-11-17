@@ -1,6 +1,7 @@
 import {
-  decodeLinkTitleHtml,
-  extractLinkTitle,
+  acceptsLinkTitleContent,
+  extractLinkTitleResponse,
+  linkTitleRequestHeaders,
 } from "../shared/http/link-title.mjs";
 
 // Deno's node:https adapter uses fetch internally and cannot keep the URL's
@@ -35,7 +36,11 @@ export async function requestEdgeLinkTitle(
       await connection.handshake();
     }
     const outgoing = new TextEncoder().encode(
-      `GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${url.host}\r\nAccept: text/html\r\nAccept-Encoding: identity\r\nUser-Agent: GraeBoard-LinkTitle/1.0\r\nConnection: close\r\n\r\n`,
+      `GET ${url.pathname}${url.search} HTTP/1.1\r\nHost: ${url.host}\r\n${Object.entries(
+        linkTitleRequestHeaders(url),
+      )
+        .map(([name, value]) => `${name}: ${value}\r\n`)
+        .join("")}Connection: close\r\n\r\n`,
     );
     let sent = 0;
     while (sent < outgoing.length)
@@ -86,7 +91,7 @@ export async function requestEdgeLinkTitle(
     if (
       status < 200 ||
       status >= 300 ||
-      !/^text\/html(?:\s*;|\s*$)/i.test(headers.get("content-type") || "") ||
+      !acceptsLinkTitleContent(url, headers.get("content-type")) ||
       ![null, "identity"].includes(headers.get("content-encoding"))
     )
       return { title: null };
@@ -134,11 +139,7 @@ export async function requestEdgeLinkTitle(
       bytes.set(chunk, offset);
       offset += chunk.length;
     }
-    return {
-      title: extractLinkTitle(
-        decodeLinkTitleHtml(bytes, headers.get("content-type")),
-      ),
-    };
+    return extractLinkTitleResponse(url, bytes, headers.get("content-type"));
   } finally {
     signal.removeEventListener("abort", close);
     close();

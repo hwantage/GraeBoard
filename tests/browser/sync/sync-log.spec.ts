@@ -403,9 +403,135 @@ test("팀장은 로그를 보되 기록 수준은 바꾸지 못하고, 좁은 �
   ).toBe(true);
 });
 
-test("외부 서버에는 동기화 로그 버튼이 없다", async ({ page }) => {
+test("외부 동기화 로그는 CPU 오류의 원인·조치·실행 ID를 보여 주고 자동 반복 조회하지 않는다", async ({
+  page,
+}, testInfo) => {
   await open(page, { site: "external" });
+  let count = 0;
+  const cpu = {
+    line: "cpu-event",
+    kind: "external",
+    at: at("05:02:11"),
+    ok: false,
+    event: "EDGE_CPU_LIMIT",
+    cpuMs: 2000,
+    executionId: "11111111-1111-4111-8111-111111111111",
+    error: { code: "EDGE_CPU_LIMIT", message: "CPU Time exceeded" },
+    message: "CPU Time exceeded",
+  };
+  const cursor =
+    "2026-11-13T05:02:11.000000|22222222-2222-4222-8222-222222222222";
+  await page.route("**/api/teams/*/sync/log?*", (route) => {
+    count++;
+    const q = new URL(route.request().url()).searchParams;
+    return route.fulfill({
+      json: {
+        source: "supabase",
+        level: "cycles",
+        levels: [],
+        canSetLevel: false,
+        retentionDays: 1,
+        date: "2026-11-13",
+        dates: ["2026-11-13", "2026-11-12"],
+        entries: q.has("before")
+          ? [
+              {
+                ...cpu,
+                line: "previous",
+                event: "EDGE_MEMORY_LIMIT",
+                error: {
+                  code: "EDGE_MEMORY_LIMIT",
+                  message: "Memory limit exceeded",
+                },
+                message: "Memory limit exceeded",
+              },
+            ]
+          : [cpu],
+        next: q.has("before") ? null : cursor,
+      },
+    });
+  });
+  await page.getByRole("button", { name: "동기화 로그", exact: true }).click();
+  const box = dialog(page);
   await expect(
-    page.getByRole("button", { name: "동기화 로그", exact: true }),
+    box.getByText("외부 실행 CPU 한도 초과", { exact: true }),
+  ).toBeVisible();
+  await box.locator(".sync-log-row").click();
+  await expect(box.locator(".sync-log-guidance")).toContainText(
+    "CPU 사용 시간 한도를 초과",
+  );
+  await expect(box).toContainText("11111111-1111-4111-8111-111111111111");
+  await expect(box).toContainText("2000ms");
+  await expect(box.locator(".sync-log-raw")).toHaveText("CPU Time exceeded");
+  await box.screenshot({ path: testInfo.outputPath("external-log.png") });
+  await expect(box.getByLabel("기록 수준")).toHaveCount(0);
+  await expect(
+    box.getByRole("button", { name: "내려받기", exact: true }),
   ).toHaveCount(0);
+  // Move past ordinary timers after the first result; viewing never polls logs.
+  await page.clock.install();
+  await page.clock.fastForward(60000);
+  expect(count).toBe(1);
+  await box.getByRole("button", { name: "이전 기록 더 보기" }).click();
+  await expect(box.locator(".sync-log-entry")).toHaveCount(2);
+  await expect(
+    box.getByRole("button", { name: "이전 기록 더 보기" }),
+  ).toHaveCount(0);
+  expect(count).toBe(2);
+  await box.getByRole("button", { name: "새로 고침", exact: true }).click();
+  await expect(box.locator(".sync-log-entry")).toHaveCount(1);
+  expect(count).toBe(3);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await box.locator(".sync-log-row").click();
+  await expect(box.locator(".sync-log-raw")).toBeVisible();
+  expect(
+    await box.evaluate((element) => element.scrollWidth <= element.clientWidth),
+  ).toBe(true);
 });
+
+for (const { status, error, expected } of [
+  {
+    status: 503,
+    error:
+      "Supabase 로그 연결이 설정되지 않았습니다. 운영자가 로그 조회 토큰·프로젝트·graeboard 함수 ID를 Edge Function에 등록해야 합니다.",
+    expected: "Supabase 로그 연결이 설정되지 않았습니다",
+  },
+  {
+    status: 502,
+    error:
+      "Supabase 로그 조회 토큰의 만료 또는 analytics_logs_read 권한을 확인하세요.",
+    expected: "analytics_logs_read",
+  },
+  {
+    status: 429,
+    error: "Supabase 로그 조회 한도에 도달했습니다. 잠시 후 새로 고치세요.",
+    expected: "Supabase 로그 조회 한도",
+  },
+])
+  test(`외부 로그 ${status} 오류는 Supabase 헤더와 함께 원인·요청 ID를 표시한다`, async ({
+    page,
+  }) => {
+    await open(page, { site: "external" });
+    await page.route("**/api/teams/*/sync/log?*", (route) =>
+      route.fulfill({
+        status,
+        headers: {
+          "sb-error-code": "EDGE_FUNCTION_ERROR",
+          "sb-request-id": "log-request",
+        },
+        json: { error },
+      }),
+    );
+    await page
+      .getByRole("button", { name: "동기화 로그", exact: true })
+      .click();
+    const box = dialog(page);
+    await expect(box).toContainText(expected);
+    await expect(box).toContainText(`HTTP ${status}`);
+    await expect(box).toContainText("요청 ID log-request");
+    await expect(box).not.toContainText("데이터베이스 연결");
+    await expect(box).not.toContainText("조회 범위에 해당하는 로그가 없습니다");
+    await expect(
+      box.getByRole("button", { name: "새로 고침", exact: true }),
+    ).toBeEnabled();
+  });

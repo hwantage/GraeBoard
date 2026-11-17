@@ -19,7 +19,7 @@ SheetClone 일회성 변환 명령은 최신 앱이 아닌 **고정 전체 커�
 `shared/`는 `calendar/`·`documents/`·`formatting/`·`http/`·`identity/`·`insights/`·`sheet-clones/`·`site/`·`storage/`·`sync/`·`transfer/`에 도메인 계약을 모읍니다. 루트의 domain·coreProperties·search·validation·date-validation 5개는 유지합니다. `http/link-title.mjs`의 Node 네트워크와 `transfer/workbook.mjs`의 Node crypto 의존을 브라우저 경계와 구분합니다.
 Node와 외부 라우트는 문서·일정·업무·사본·인증/제어·이력·이관·이벤트/HTTP로 묶습니다. 공통 서비스는 `server/storage/` 기능 폴더에, SQLite repository는 같은 기능 폴더에, PostgreSQL repository는 `worker/storage/` 기능 폴더에 둡니다.
 
-동기화는 `server/sync/core/` 17개(cache 포함)·`server/sync/node/` 20개·`worker/sync/` 12개로 배치합니다. 외부 direct import는 portable 17개와 공통 서비스/규칙 14개에 한정하며 background Worker·Git/자격 증명/SQLite 경계를 유지합니다.
+동기화는 `server/sync/core/` 17개(cache 포함)·`server/sync/node/` 20개·`worker/sync/` 13개로 배치합니다. `worker/sync/sync-log-api.mjs`는 Supabase Edge에서 실행하는 로그 조회 모듈입니다. 외부 direct import는 portable 17개와 공통 서비스/규칙 14개에 한정하며 background Worker·Git/자격 증명/SQLite 경계를 유지합니다.
 
 `scripts/`는 `admin/`·`deploy/`·`performance/`·`sync/`·`testing/`·`transfer/`로 실행 목적을 구분하고 루트 `licenses.mjs`와 `team-site-deploy.mjs`를 유지합니다. 후자는 팀 Fork의 workflow 정의와 동기화 후 checkout SHA가 다른 버전이어도 호출할 수 있는 고정 CLI입니다. P7은 32개 이동과 이 정확한 경로 보존으로 완료했습니다. npm 명령은 같은 저장소 루트의 환경·데이터 경로를 사용합니다.
 
@@ -178,6 +178,8 @@ SSE는 로그인 세션과 팀 접근을 구독 시점, 이벤트 전송 전, 15
 
 전체 행·열 선택은 선택한 업무 ID·열 키와 서식만 서버로 보내며 셀마다 요청을 만들지 않습니다. 서버는 공통 규칙과 영향을 받는 기존 셀 예외만 변경합니다. `shared/formatting/formatting.js`가 표시·행 복사·XLSX 반출에서 같은 상속 계산을 사용하고, `src/sheet/format-selection.js`가 숨김을 포함한 선택 영역의 테두리를 같은 패턴끼리 묶습니다. 셀 예외와 값은 개별 버전으로, 공통 규칙은 팀별 revision으로 충돌을 검사합니다. `format-audit` 재시도·이력 정리·업무별 이력 조회도 일반 셀 변경과 같은 보관 계약을 따릅니다. 공통 규칙 전송은 문서별 `$formats` 사전으로 중복을 제거합니다.
 
+연간 날짜 열은 `shared/domain.js`의 `annualWeekDate`(월요일 키 + 4일)를 `weeksForPeriod`와 `HistoryPanel`이 함께 사용합니다. 이력 표시는 연도를 포함한 금요일이며 셀 키·원본 이력·복원 요청은 기존 월요일 그대로입니다. 사본 편집 이력은 기존 개수/revision 요약만 기록하며 셀 날짜가 없는 요약 형식은 변경하지 않습니다.
+
 저장 규칙의 기준 문서는 [데이터 형식과 API](DATA_FORMAT.md#저장-규칙-요약)입니다. 내부 모델은 긴 서식 이름을 사용하되, 변경 이력의 JSON 표시는 `pack`으로 저장 형식을 그대로 재구성합니다. 셀 서식 요약 JSON도 `compactStyle`로 축약합니다. 업무 생성·이동·삭제 이력에는 `taskAuditSnapshot`으로 관계없는 행 규칙과 업무 ID를 제외합니다. 실시간 업무 응답의 팀별 공통 상태는 유지합니다.
 
 `tests/formatting/common-formatting.test.mjs`는 공통 행·열 저장, 연도 경계, 1,000행 빈 셀 미생성, 속성별 우선순위, 셀 예외 재적용, 복사, 충돌·권한·이력 복원과 업무 이력의 불필요한 규칙 제외를 실제 API로 검증합니다. `tests/browser/sheet/common-formatting.spec.ts`는 화면의 행 선택→월 이동→새해→새로고침, 열 서식→셀 예외→재적용→실행취소·재실행, 큰 글자의 행 높이·테두리, 축약된 이력 JSON 표시를 확인합니다.
@@ -185,6 +187,12 @@ SSE는 로그인 세션과 팀 접근을 구독 시점, 이벤트 전송 전, 15
 `/api/teams/:id/events`와 `/api/sheet-clones/:id/events`는 성공한 변경 뒤 재조회 알림을 보냅니다. 개인 보기 저장은 알리지 않으며 셀 값은 기존 델타 스트림을 유지합니다. `useResourceSync`는 같은 리소스의 연결을 탭 안에서 공유하고 짧은 연속 알림을 묶습니다. 페이지별 `X-Client-ID`로 이미 응답을 반영한 자기 변경 알림의 중복 조회를 줄이며 같은 계정의 다른 탭은 별도로 갱신합니다. 편집·저장 중에는 갱신을 보류하고 화면·팀을 떠날 때 연결과 요청을 정리합니다. 사본의 독립 셀 수정은 `rebaseSheetCloneCells`로 최신 시트에 재적용하되 동일 셀·행 삭제·구조 작업 충돌은 기존 오류 흐름으로 남깁니다. 원격 변경 뒤 실행취소 기준에는 상대방의 최신 값이 포함됩니다. 문서 유무·개수는 사본 시트 revision과 독립적이므로 같은 revision 응답에서도 기존 문서 메타데이터 갱신 경로를 사용합니다. 조회 중 로컬 문서나 이름이 바뀌면 오래된 응답을 적용하지 않고 다시 읽습니다.
 
 ### 업무 문서와 에디터 선택
+
+URL 붙여넣기는 기존 `DocumentLinkTitle` → 인증된 `/api/link-title` → `createLinkTitleService` 경로를 사용합니다. YouTube watch/단축/shorts/live/embed 주소는 고정 HTTPS oEmbed 주소, Claude 공개 Artifact UUID 주소는 고정 `claude.ai/api/published_artifacts/:id`에서 JSON 제목을 먼저 조회합니다. Node와 Edge는 동일 URL 선택·JSON/HTML 제목 파서를 공유하며 제공자 조회와 HTML 대체 조회 전체에 기존 5초 제한을 적용합니다. 각 리다이렉트의 DNS·IP 검사, IP 고정 접속, 256KiB 응답 제한, 인증·요청 빈도 제한을 유지합니다. 응답이 광고하는 임의 oEmbed 주소·스크립트는 실행/조회하지 않고 제공자 실패/제목 없음은 기존 HTML 또는 URL 대체 경로로 돌아갑니다. 사용자가 선택한 텍스트와 조회 중 수정·삭제한 링크를 바꾸지 않는 편집기 위치 추적은 그대로 사용합니다.
+
+Claude의 새 `/artifact/:id`·`/code/artifact/:id` 공유 주소는 HTML 루트의 `data-frame-uuid`를 검사한 뒤 고정 `https://claude.ai/api/frame/:uuid`에서 공개 제목을 한 번 더 조회합니다. Node·Edge 공통 요청 헤더의 `X-Frame-CP: go`·`X-Frame-Platform: web`은 이 정확한 API 경로에만 붙이고 로그인 쿠키·토큰은 보내지 않습니다. 페이지에 적힌 임의 주소나 스크립트는 사용하지 않으며 후속 조회에도 같은 전체 5초 제한·DNS/IP 검사·응답 상한을 적용합니다. 조회 실패 시 원래 HTML 제목 또는 URL을 유지합니다. 실제 제공자 차단 여부는 실행 환경에 따라 다를 수 있습니다.
+
+`AnnualMemoPanel`의 전체 화면은 고정 **꼬리 메모** 제목 → 기존 `DocumentPanel` 탭 → 선택 문서 순서로 표시합니다. 인라인 문서들을 재마운트하지 않고 CSS로 선택 문서만 보이게 하므로 원문/리치 선택·초안·undo를 유지합니다. 닫기와 접기는 기존 flush 성공 뒤 진행하며 모바일은 기존 아코디언 닫기를 사용합니다. `MemoLinkPanel`도 같은 패널에 초기 문서 ID를 전달해 원본·사본의 목록, 읽기 전용·발표, 제목/순서 저장과 링크 열기 흐름을 공유합니다. 메모 링크 페이지의 브라우저 제목은 `DocumentPanel` 한 곳에서 선택한 문서 이름을 보고하며, 목록 로딩·오류 중에만 초기 링크 제목을 대체값으로 사용합니다. `MemoLinkPanel`은 현재 선택 문서를 열린 대상으로 등록하고, 같은 팀·연도(원본) 또는 같은 사본의 메모 링크는 `App.openLink`에서 기존 목록의 `selectDocument`로 전달합니다. 위에 중첩 패널이 있으면 각 패널의 닫기/flush를 거친 뒤 선택하며, 이름 변경·본문 저장 실패는 이동을 중단하고 초안을 유지합니다. 다른 팀·연도·사본의 링크는 기존처럼 별도 패널로 엽니다.
 
 업무 상세·꼬리 메모의 순서 변경은 `DocumentPanel` → 기존 `/reorder` 명령을 공유합니다. 원본 업무는 기존 `task_documents.position`, 사본 업무는 기존 문서 배열 순서, 외부는 기존 document entity의 position을 사용합니다. `expectedIds` 충돌·재시도·숨긴 문서 위치·권한 검사를 유지하며 DB 스키마·영속 형식은 변경하지 않습니다. 상세를 처음 열 때는 요청한 문서·보관된 초안이 없으면 저장된 순서의 첫 탭을 선택합니다. 외부 문서 브라우저도 업무별 문서를 같은 position 순서(`byDocumentPosition`)로 돌려주므로 작업 이름이 첫 탭의 문서를 엽니다.
 
@@ -389,6 +397,8 @@ XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/transfer
 
 ### 시크릿 캘린더
 
+시크릿 보기의 `hidden/only/all` 선택은 일정 v2 저장 형식을 바꾸지 않고 별도 사용자별 localStorage 키 `weekly-plan:secret-calendar-mode:<userId>`로 기억합니다. 기존 `visible:false`는 숨기기, `visible:true`는 전체 보기로 호환하고, only 선택은 visible 상태에서만 적용합니다. 쓰기는 기존 boolean도 함께 유지하며 다른 탭의 storage 이벤트와 로컬 알림을 구독합니다. `Calendar`의 상단 표시 월에 대한 기존 `monthWeeks` 범위(edge week 포함), 또는 본인의 주간 조회 query와 겹치는 본인·현재 팀의 로컬 일정만 배지에 한 번씩 셉니다. 스크롤로 앞뒤 여러 달을 불러왔어도 배지는 상단 표시 월을 따릅니다. 제목 검색·요일 숨기기·모드별 필터 전의 목록에서 세므로 검색으로 복귀 버튼이 비활성화되지 않습니다. only는 본인의 일반 일정만 숨기며 공용/타인의 보기는 유지합니다. 현재 범위의 시크릿 개수가 0이면 버튼은 계속 비활성화하되 only의 표시용 모드만 all로 바꿔 일반 일정을 표시합니다. 아이콘·툴팁·검색·카드 표시도 이 유효 모드를 사용하고 저장된 선호는 덮어쓰지 않습니다. 마지막 일정 삭제, 주·월 이동, 팀 전환과 다른 탭의 갱신에 동일하게 적용하며 시크릿이 있는 범위로 돌아오거나 삭제를 실행취소하면 only 선호가 다시 적용됩니다.
+
 `src/calendar/secret-calendar.ts`·`useSecretCalendar`는 사용자별 localStorage에 시크릿 일정의 제목·기간·태그 연결·체크·표시 순서와 보이기 선택을 저장합니다. 본인 개인 월간과 팀 주간의 본인 줄에 표시 전용으로 합치며 서버 일정의 저장 순서는 바꾸지 않습니다. 사용법과 저장 범위는 [시크릿 일정 안내](USER_GUIDE.md#시크릿-일정)를 따릅니다.
 
 `DocumentEditor`는 선택적 `DocumentStorage`로 조회·저장·이미지·구독 경로를 주입받으며, 미지정이면 기존 API·SSE를 사용합니다. `src/calendar/secret-document-storage.ts`는 사용자별 IndexedDB v2의 `documents`에 본문·revision·이미지 메타데이터를, `images`에 이미지 바이트를 분리해 저장합니다. 로컬 자료는 서버·Git 동기화·DB 백업에 포함하지 않으며 브라우저 저장소를 지우면 사라집니다. 구버전 저장소 이전과 정리 검증은 [시크릿 캘린더 이력](DEVELOPMENT_HISTORY.md#시크릿-캘린더)에 보존합니다.
@@ -554,6 +564,12 @@ PG 테스트는 임시 서버를 직접 실행합니다. 일반 `npm test`에서
 충돌 보관함은 내부·외부 모두 `SyncConflictBox` → `SyncConflictDiff` → `shared/sync/conflict-diff.js`로 비교 내용을 표시합니다. 사본 전체처럼 큰 payload의 줄 배열은 함수 인자로 펼치지 않고 순서대로 옮겨 브라우저 인자 수 한도를 피합니다. 표시할 줄이 200개를 넘으면 업무표에서 사용하는 `@tanstack/react-virtual`로 화면에 들어오는 줄만 그리며, 접힌 같은 줄을 펼친 경우도 동일하게 처리합니다. 비교 내용과 줄 번호는 유지하고 긴 줄의 실제 높이를 측정합니다. `SyncConflictDiff`는 펼친 충돌에만 마운트하고, 목록 줄의 종류·수정한 사람 요약은 불러온 목록마다 한 번 계산합니다. `changedFields`는 정렬 JSON 문자열을 만들지 않고 값을 직접 비교하며, 비교한 객체 쌍을 기억해 업무마다 반복되는 공통 서식 규칙을 다시 순회하지 않습니다. 한쪽이 `DIFF_LINE_LIMIT`(20만 줄)를 넘으면 바뀐 최상위 필드만 줄 비교하고(`partial`), 그것도 넘으면 줄 비교를 생략합니다(`omitted`). 업무 438건 사본은 약 100만 줄입니다. `tests/sync/protocol/conflict-diff.test.mjs`는 16만 줄의 생성·삭제·접힘과 큰 사본의 부분 비교를, `tests/browser/sync/data-sync.spec.ts`는 외부 모드에서 문서 11개와 큰 사본을 포함한 12개 항목 펼치기·끝까지 스크롤·긴 같은 줄 펼치기·비교 전환·닫기를, 그리고 업무 438건 사본 충돌 15개의 열기·전체 선택 덮어쓰기·한 항목 펼치기를 확인합니다.
 
 원본 JSON은 `SyncConflictRaw`에서 펼친 동안만 직렬화·표시하고, 접으면 표시 내용과 측정 상태를 해제합니다. 긴 JSON은 같은 가상 스크롤 라이브러리를 사용하며, JSON 문자열 안의 긴 문서도 조각별 배치 크기를 제한합니다. UTF-16 서로게이트 쌍을 나누지 않고 전체 텍스트를 순서대로 표시하며 짧은 값과 직접 편집의 문자열 변환은 기존 형식을 유지합니다. 끝에 도달한 뒤 줄 높이를 측정해도 마지막 값을 유지하고, ResizeObserver 측정은 애니메이션 프레임으로 모아 처리합니다. 같은 브라우저 suite에서 내부·외부 모드의 900업무×30셀 사본 세 버전, 긴 문자열·한글·이모지, 처음/끝 이동·키보드 스크롤·접기/다시 열기와 기존 해결 동작을 확인합니다.
+
+외부 동기화 로그는 같은 `SyncLogDialog`를 쓰며 기존 Supabase Edge API의 `worker/control/admin.mjs` → `worker/sync/sync-log-api.mjs`가 Management Logs API를 조회합니다. `/teams/:id/sync/log`는 기존 인증·팀 관리 권한을 확인하며 공유본·미전송·Git·예약 동기화에 접근하지 않습니다. 캐시·동시 요청 병합 전에도 현재 권한을 검사합니다. Cloudflare gateway의 전달 코드는 바꾸지 않습니다. Edge 전용 `GRAEBOARD_LOGS_TOKEN`, 함수 UUID와 프로젝트 Reference ID를 직접 등록하거나 배포 스크립트에서 연결합니다([설정](CLOUD_SETUP.md#외부-동기화-로그-연결)).
+
+외부 로그 조회의 429·502·503 응답에는 Supabase가 `sb-error-code: EDGE_FUNCTION_ERROR`를 추가할 수 있습니다. `apiErrorMessage`는 정확한 로그 GET 경로에서 `syncLogErrorMessage`가 허용한 고정 문구만 통과시켜 설정 누락·토큰 권한·조회 한도를 구분하고 HTTP 상태와 요청 ID를 함께 표시합니다. 다른 경로, 알 수 없는 본문, 실제 CPU/시작/요청 제한 코드는 기존 분류를 유지합니다. 실제 미설정 handler 응답에 Supabase 헤더를 붙인 단위 회귀와 세 브라우저의 팝업 검사로 확인합니다.
+
+외부 쿼리는 최근 24시간, 정확한 함수·팀 경로, 50+1행, 메시지 1,200자, 응답 256KiB·8초로 제한합니다. ClickHouse 출력 별칭은 `timestamp_text`를 써 원래 시간 열과 충돌하지 않게 하며, 마이크로초와 UUID 내림차순의 커서로 같은 시각의 여러 기록도 이어 읽습니다. `failed` 단계는 오류 필터에도 포함합니다. Edge 인스턴스당 15초·8쪽 캐시, 같은 요청 병합, 최소 3초 간격과 upstream 429 대기를 적용합니다. UI는 직접 요청할 때만 한 쪽을 읽고 이전 요청·팝업 종료를 취소합니다. 외부는 내부 파일의 빈 조각을 자동으로 이어 읽는 루프를 사용하지 않습니다. 기존 로그를 읽을 뿐 상세 단계 기록이나 DB 저장을 추가하지 않습니다. `tests/site/edge-sync-log.test.mjs`의 조회 경계 검사, `team-site.test.mjs`의 PostgreSQL 권한·Git/백그라운드 실행 없음 검사, 배포 토큰 범위 검사와 `browser/sync/sync-log.spec.ts`로 검증합니다. `npx deno run tests/support/edge-sync-log-deno.mjs`는 최대 크기 합성 응답의 디코딩·가공을 Deno에서 확인하는 수동 검사입니다. 인증·네트워크·호스팅 격리 환경은 별도이며 [운영 제한](OPERATIONS.md#외부-서버-동기화-로그)을 함께 확인합니다.
 
 ## 업무 저장소 계약
 

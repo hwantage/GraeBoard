@@ -136,6 +136,41 @@ export function secretEntries(store: Store, userId: string, teamId: string) {
 export function setSecretCalendarVisible(userId: string, visible: boolean) {
   write(userId, { ...readSecretCalendar(userId), visible });
 }
+// View preferences are separate from the unchanged version-2 event store.
+// The legacy visible choice remains authoritative for hidden/all; only adds
+// a narrower view when visible, including when an older tab changes it.
+export type SecretCalendarMode = "hidden" | "only" | "all";
+export const secretCalendarModeKey = (userId: string) =>
+  `weekly-plan:secret-calendar-mode:${userId}`;
+export function secretCalendarMode(
+  userId: string,
+  visible: boolean,
+): SecretCalendarMode {
+  if (!visible) return "hidden";
+  return localStorage.getItem(secretCalendarModeKey(userId)) === "only"
+    ? "only"
+    : "all";
+}
+export function setSecretCalendarMode(
+  userId: string,
+  mode: SecretCalendarMode,
+) {
+  const store = readSecretCalendar(userId);
+  const key = secretCalendarModeKey(userId);
+  const previous = localStorage.getItem(key);
+  try {
+    localStorage.setItem(key, mode);
+    write(userId, { ...store, visible: mode !== "hidden" });
+  } catch (error) {
+    try {
+      if (previous === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, previous);
+    } catch {
+      /* Preserve the original storage error. */
+    }
+    throw error;
+  }
+}
 export function getSecretEntry(userId: string, teamId: string, id: string) {
   const value = readSecretCalendar(userId).entries.find(
     (item) => item.id === id && item.teamId === teamId,

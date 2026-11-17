@@ -18,6 +18,38 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-18 — 새 Claude 아티팩트 공유 주소의 실제 제목 조회
+
+- `/artifact/Bsxkr6atfFSNs6MpuJKoyF`를 붙여넣으면 실제 이름 대신 HTML의 `Claude Artifact`가 표시됐습니다. 기존 코드는 `/public/artifacts/:uuid`만 처리했습니다. 공개 페이지의 루트 `data-frame-uuid`와 실제 `/api/frame/:uuid` 응답을 확인해 새 `/artifact/:id`·`/code/artifact/:id` 주소를 지원합니다.
+- 공통 HTML 파서가 유효한 UUID로 고정 HTTPS API 주소만 만들고, Node·Edge가 같은 공개 조회 헤더를 사용합니다. 로그인 쿠키·토큰 없이 제목을 조회하며 기존 DNS/IP 검사·고정 IP 접속·전체 5초 제한·응답 256KiB 상한을 유지합니다. 실패하면 기존 HTML 제목/URL을 사용하고 편집·실행취소·저장 동작과 DB 형식은 바꾸지 않습니다.
+- 실제 사용자 URL은 Node 22.23.1의 공통 서비스와 Deno 2.9.6의 `requestEdgeLinkTitle` 경로에서 모두 **실내 공기질 기록**을 반환했습니다. Node 한 번의 로컬 조회는 약 0.5초였습니다. 초기 작업 공간의 Node 22.17.1에서는 같은 API가 Cloudflare 403으로 거절됐으므로 모든 실행 환경에서의 제공자 접근을 보장하지 않습니다. 실제 Supabase 배포 후의 동작은 별도입니다.
+- 회귀 입력은 실제 공개 HTML/API 구조를 바탕으로 최소화했습니다. 기존 코드에서 Node 서비스·인증된 Node API·Edge 전송의 새 주소 검사가 실패하고 수정 후 통과했습니다. 추가로 유사 호스트·다른 경로·주석/스크립트·잘못된 UUID·사설 IP·조회 실패·시간 초과·중첩 후속 조회 차단을 확인했습니다. 관련 Node 검사 12건 통과.
+- 최종 검증: Node 22.23.1·PostgreSQL 17 전체 854건 통과(실패·취소·skip 0), 프런트엔드·Supabase Edge 빌드, 구조 오류 0·import 경계 위반 0. Node 24.18.0으로 Chromium·Firefox·WebKit의 붙여넣기·비동기 수정/삭제·선택 글자·실행취소 관련 15건을 모두 통과했습니다. 별도 임시 DB와 Node 22.23.1 서버의 Orca 브라우저에서 실제 주소를 붙여넣기 이벤트로 입력해, 대역 없는 `/api/link-title` 조회 뒤 **실내 공기질 기록** 링크가 표시되고 원래 주소가 보존되는 것을 확인했습니다. 운영 데이터·main·release 배포는 변경하지 않았습니다.
+
+## 2026-11-18 — PR #178·#179·#180·#181의 최신 main 통합
+
+- 사용자 지시에 따라 #110은 제외하고 변경 이력 날짜 표시(#178), 붙여넣기 링크 제목(#179), 시크릿 일정 배지·3단 보기(#180), 꼬리 메모 전체 화면 탭(#181)을 기준 main `11d2c17`의 별도 작업 공간에 통합했습니다. 각 PR의 원래 커밋을 개별 merge commit의 부모로 보존했습니다.
+- 충돌은 개발 안내·개발 변경 이력의 추가 문단에서만 발생해 양쪽 내용을 유지했습니다. 비문서 파일 22개 중 21개는 원래 PR과 바이트 단위로 동일하며, 공통 `tests/site/team-site.test.mjs`에는 최신 main의 외부 동기화 로그 검사와 #179의 링크 제목 검사를 모두 보존했습니다. #110의 커밋은 통합 이력에 포함하지 않았습니다.
+- 실제 호출 경로의 링크 제목 전송·응답 처리, 같은 목록 메모 링크의 저장 후 탭 선택, 브라우저 제목 소유, 시크릿 0개 구간의 보기 복귀와 월요일 저장 키·금요일 이력 표시를 재검토했습니다. Claude 실제 API 응답이 차단돼 제목 형식을 확인하지 못했다는 #179의 기존 검증 한계는 유지합니다.
+- 통합본에서 Node 22.23.1·PostgreSQL 17로 전체 `npm test` 852건, 프런트엔드·Supabase Edge 빌드, 구조·아키텍처 검사와 `git diff --check`를 통과했습니다. 검증 중 소스·테스트·빌드 산출물을 고정하고 서버 검사와 브라우저 검사를 순차 실행했습니다.
+- 관련 Chromium·Firefox·WebKit 검사 261건의 최초 실행은 258건 통과·기존 WebKit 전용 스크롤바 조건부 건너뜀 2건·실패 1건이었습니다. 실패는 WebKit에서 원본 메모의 다른 시트 링크 클릭 후 두 번째 목록이 열리지 않은 경우입니다. 실행 기록에는 해당 링크를 여는 서버 요청이나 JavaScript 예외가 없었고, 코드를 바꾸지 않은 동일 항목 5회 반복 및 WebKit 문서 링크 전체 24건 재검증은 모두 통과했습니다. 최초 실패 원인은 확정하지 못했으므로 간헐적 실패 이력을 보존하며, 수정 완료나 최초 전체 실행 통과로 간주하지 않습니다.
+
+## 2026-11-17 — 외부 로그 연결 오류 원인 표시와 설정 안내 보완
+
+- Supabase가 처리된 오류 응답에도 붙이는 `sb-error-code: EDGE_FUNCTION_ERROR` 때문에 로그 연결 미설정(503)과 토큰 권한 오류(502)가 일반 서버·DB 장애 안내로 바뀌는 문제를 수정했습니다. 정확한 외부 로그 GET 경로에서 승인된 고정 안내만 표시하며 HTTP 상태·요청 ID를 유지합니다. 알 수 없는 본문, 다른 API 경로, 실제 CPU·함수 시작·요청 제한 코드는 기존 분류를 유지합니다. 서버 조회·동기화 처리·DB 형식은 바꾸지 않았습니다.
+- 실제 로그 handler의 미설정 응답에 Supabase 헤더를 붙인 검사와 토큰·요금제·조회 한도 검사가 수정 전 실패하고 수정 후 통과했습니다. 브라우저 회귀도 오류 헤더와 요청 ID를 포함하도록 보완했습니다.
+- 기존 GitHub Secret 원문을 읽을 수 없는 경우 `TEAM_SITE_SECRETS`를 덮어쓰지 않고 Supabase Edge Secrets에 로그 토큰·프로젝트·함수 UUID를 직접 등록하도록 설정 안내를 고쳤습니다. 원본 JSON을 보관한 자동 관리 방식과 같은 커밋의 강제 재배포 조건도 구분했습니다.
+- 검증(기준 main `871d7f8`): Node 22.23.1·`TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 850/850 통과(실패·취소·skip 0), 프런트엔드·Edge 빌드, 구조 오류 0·import 경계 위반 0. `sync-log.spec.ts` 21/21이 Chromium·Firefox·WebKit에서 통과했습니다(`E2E_PORT=4441`). 개발 외부 사이트의 실제 로그 조회는 해당 Supabase 프로젝트의 전용 토큰 등록 후 별도 확인이 필요합니다.
+
+## 2026-11-17 — 외부 Supabase 동기화 로그 조회
+
+- 외부에서도 기존 **동기화 로그** 팝업을 열어 CPU·메모리·시간 한도 종료, 실행 실패, 동기화 HTTP 오류와 제공된 실행 ID·CPU 사용 시간을 확인합니다. 팀장·시스템 관리자 권한을 매번 확인하고, 조회 오류를 빈 기록으로 숨기지 않습니다. 사내 파일 로그·기록 수준·내려받기 동작은 유지합니다.
+- Supabase Management Logs API 조회와 가공은 기존 Supabase Edge Function에서 처리합니다. Cloudflare gateway의 전달 코드는 유지합니다. Edge 로그 경로는 Git·공유본·미전송 명령을 읽거나 동기화를 예약하지 않습니다. 최근 24시간, 50+1행, 메시지 1,200자, 응답 256KiB·8초, 인스턴스별 15초·8쪽 캐시/동시 요청 병합/최소 3초 간격으로 제한하고 UI의 자동 조회는 추가하지 않았습니다. 기존 Supabase 기록만 읽으며 DB 스키마·저장 형식은 변경하지 않았습니다.
+- 선택 Secret `GRAEBOARD_LOGS_TOKEN`은 Supabase Edge에만 전달하고 배포용 토큰을 대체값으로 사용하지 않습니다. 배포 때 graeboard 함수 UUID·프로젝트를 설정하며 Actions 출력에서 선택 토큰도 마스킹합니다. 외부 토큰 발급·연결·교체·폐기와 조회 범위는 사용·운영·클라우드·개발 안내에 반영했습니다. 기존 진단의 `failed` 단계와 팀 디렉터리 동기화 오류도 오류 조회에 포함합니다.
+- 운영 Supabase의 공개 Logs API를 로그인된 관리자 세션에서 읽기 전용으로 확인했습니다. 첫 쿼리에서 ClickHouse 시간 열과 출력 별칭의 충돌을 발견해 `timestamp_text`로 고쳤습니다. 수정한 쿼리는 CPU 사용 2,000ms를 포함한 오류 3건을 반환했고, 전체 기록의 첫 50건과 다음 50건을 중복 없이 조회했습니다. 운영 데이터·설정·토큰을 바꾸거나 이 기능을 배포하지 않았습니다. 전용 최소 권한 토큰으로 배포한 뒤의 화면 확인과 실제 운영 CPU 측정은 별도입니다.
+- 로컬 Deno 2.9.6 수동 검사에서 4바이트 문자로 채운 256,593바이트 응답을 매번 캐시 없이 50회 처리했습니다. 첫 실행 18.43ms·중앙값 1.34ms·최대 18.43ms였고, 마스킹 정규식에 부담을 주는 `token` 반복 문자열은 중앙값 9.06ms·최대 11.10ms였습니다. 모두 50건으로 제한해 반환했습니다. 합성 응답의 로컬 경과 시간이며 인증·네트워크·운영 동시 부하를 제외하므로 Supabase의 실제 CPU 한도 보장 수치는 아닙니다.
+- 최종 검증(기준 main `7f167e5`): Node 22.23.1·`TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 848/848 통과(실패·취소·skip 0). 프런트엔드·Edge 빌드, 생성된 Edge 함수의 `deno check`, 구조 오류 0·import 경계 위반 0을 확인했습니다. `sync-log`·`data-sync` 브라우저 81/81이 Chromium·Firefox·WebKit에서 통과했습니다(`E2E_PORT=4439`). 외부 오류 상세·페이지 이동·좁은 화면·자동 조회 없음·조회 실패 표시와 기존 사내 로그·동기화 흐름을 확인했습니다. 실제 API 권한·배포 설정·호출 경로를 자체 검토했고 추가 차단 결함은 발견하지 못했습니다. 로그는 `/tmp/graeboard-log-*.log`, 화면은 `/tmp/graeboard-log-browser-results/`에 남겼습니다.
+
 ## 2026-11-17 — 운영자 PC의 프로토콜 5 전환 준비
 
 - 미병합 #162의 외부 운영자 전환 기능을 최신 main에 통합했습니다. 외부는 PC의 Node에서 기존 `SyncService.upgrade`로 PostgreSQL·Git을 전환하고 사내는 같은 전환 커밋을 받습니다. `--upgrade` 기본은 읽기 전용이며 `--execute`와 전환 전 head/hash가 필요합니다. 이미지 비밀값은 전환에서 요구하지 않고 혼합 CLI 실행 옵션은 설정 파일을 열기 전에 거절합니다.
@@ -50,6 +82,41 @@
 - PostgreSQL 요약은 큰 본문 전체를 `jsonb`로 변환한 뒤 값을 제거하던 방식에서 `json_to_record`로 목록에 필요한 필드만 추출하는 방식으로 바꿨습니다. 운영의 같은 미해결 한 건에 대한 읽기 전용 `EXPLAIN ANALYZE`는 기존 6,104.652ms, 변경 조회 951.511ms였습니다. 이는 SQL 한 건의 측정이며 배포된 HTTP 응답 시간 보장이 아닙니다.
 - 회귀 검사는 9MB 이상 충돌, 다음 쪽의 읽으면 실패하는 JSON, 8MiB 아래 항목들의 누적·한글 바이트 경계, 마지막 커서, 전체 상세 보존과 목록·상세 메타데이터 일치를 포함합니다. 수정 전에는 다음 쪽 JSON까지 해석해 500으로 실패했고 수정 후 통과했습니다. 운영 충돌의 해결·삭제나 DB 스키마·영속 형식 변경은 수행하지 않았습니다.
 - 최종 검증: Node 22.23.1·PostgreSQL 17 전체 826/826 통과(실패·취소·skip 0, 약 14분 18초), 관련 검사 8/8 통과, 프런트엔드·Edge 빌드 성공, 구조 오류 0·import 경계 위반 0. Node 24.18.0·`E2E_PORT=4449`에서 Chromium·Firefox·WebKit의 충돌 목록 이어 읽기·완료 내역·큰 사본 비교/선택 9/9 통과. Node 22의 기존 Playwright 수집 오류(`Unexpected module status 3`)는 설치된 Node 24 실행기로 우회했으며 의존성·런타임 설정은 바꾸지 않았습니다. 포맷·`git diff --check`와 실제 호출 경로 자체 검토도 통과했습니다.
+
+## 2026-11-16 — 연간 변경 이력의 금요일 날짜 표시 분리
+
+- 연간 머리글과 변경 이력이 `annualWeekDate`를 공유해 월요일 키 `2026-11-16`은 `2026-11-20(금)`, 연말 키 `2026-12-28`은 `2027-01-01(금)`으로 표시합니다. 셀·원본 이력의 월요일 키와 복원 요청은 유지하고, 날짜 셀이 없는 사본 편집 이력의 개수/revision 요약은 바꾸지 않습니다. DB 스키마·영속 형식 변경은 없습니다.
+- 합본 PR #177에서 이 기능만 공통 base `ecfb556b32762c0d6121b840739ced186e01e02c`의 독립 브랜치로 분리했습니다. `shared/domain.js`, `src/Panels.tsx`, `tests/browser/sheet/history-dates.spec.ts`는 1차 리뷰 보완까지 포함한 최종 소스 `9420992e56d978f9bf8889c204e3caddd5465b96`와 동일합니다. 해당 리뷰의 수정은 다른 기능에 한정되어 이 기능의 추가 수정이나 독립성 보정은 없으며, 개발·사용 안내도 이 기능의 문단만 가져왔습니다.
+- 독립 검증: Node 22.23.1·PostgreSQL 17.11에서 `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 826/826 통과(실패·취소·skip 0). 기존 날짜·기간 검사에서 월·주 이동, 2000~2100년의 연말 주차 중복 방지, 인사이트의 표시 월 경계, 다음 연도 공통 서식도 확인했습니다. `npm run build`, `npm run build:edge`, `npm run check:structure`(722개 파일·오류 0·기존 검토 알림 38), `npm run check:architecture`(447개 모듈·위반 0)가 통과했습니다. 프런트 빌드에는 기존 700kB 초과 청크 경고가 남습니다.
+- `E2E_PORT=4445 npm run test:e2e -- tests/browser/sheet/history-dates.spec.ts`를 Chromium·Firefox·WebKit에서 실행해 3/3 통과했습니다. 실제 금요일 머리글·변경 이력·연도 경계와 월요일 복원 요청·원본 이력 키를 확인했습니다. 임시 DB·이미지만 사용했으며 운영 데이터 변경·푸시·PR 생성·병합·배포는 수행하지 않았습니다. 이번 826건과 브라우저 3건은 독립 실행 결과이며 과거 합본의 검증 건수를 포함하지 않습니다.
+
+## 2026-11-16 — 붙여넣기 링크 제목 독립 분리
+
+- 기준 `ecfb556b32762c0d6121b840739ced186e01e02c`에서 `fix/pasted-provider-titles`를 시작해 합본 최종 소스 `9420992e56d978f9bf8889c204e3caddd5465b96`의 링크 제목 소스·검사 4개만 옮겼습니다. 해당 파일은 원본과 바이트 단위로 동일하며, 개발·사용 안내도 URL 붙여넣기 문단만 반영했습니다. DB 스키마·영속 저장 형식과 편집기 구현은 변경하지 않았습니다.
+- 기존 `DocumentLinkTitle` → 인증된 제목 API → 공통 서비스 → Node/Edge 전송 경로를 재사용합니다. YouTube는 고정 oEmbed 주소, Claude 공개 Artifact는 고정 공개 메타데이터 주소를 먼저 조회하고 실패하면 기존 HTML/URL 동작으로 돌아갑니다. DNS/IP·리다이렉트 검사, IP 고정 접속, 256KiB 응답과 총 5초 제한을 유지합니다. 일반 HTML의 제목 우선순위를 보존하고 일반 서비스명인 `YouTube`·`Claude Artifact`에만 OG 제목을 우선하는 기존 보완도 포함했습니다.
+- 리뷰 보완 범위: 첫 리뷰 수정 커밋은 이 4개 소스·검사 파일을 변경하지 않았습니다. 리뷰에서 정정한 Claude 근거 범위는 유지합니다. 공개 HTML의 API 경로는 확인했지만 API는 Cloudflare 차단 응답이었고, `artifact.title`·`data.title` 구조는 실제 공개 응답/클라이언트에서 확인하지 못한 추정 fixture입니다. fixture 기반 Node·Edge·API 처리를 검증한 것으로, 실제 Claude 제목 조회 성공은 미검증입니다. 공개 YouTube 단축 URL의 실제 서비스 조회 성공은 기존 부모 검증 근거이며 이번 실행에서 다시 조회한 결과로 세지 않습니다. 사용자 이미지의 특정 URL도 제공되지 않았습니다.
+- 이번 독립 Node 검증: Node 22.23.1·PostgreSQL 17.11에서 `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test`로 828건 통과, 실패·취소·skip 0건(854080ms). 링크 제목 10건과 실제 PostgreSQL을 사용하는 `team-site` 4건을 포함합니다. team-site의 제목 전송은 fixture이며 실제 제공자 응답 성공을 대신하지 않습니다. 과거 합본의 828건·리뷰 99건을 이번 실행으로 재집계하지 않았습니다.
+- `npm run build`, `npm run build:edge`, `npm run check:structure`, `npm run check:architecture`와 변경 소스·검사 4개의 Prettier 검사가 통과했습니다. 구조 721개 파일·오류 0·기존 검토 알림 38건, import 경계 447개 모듈·위반 0건이며 기존 700kB 초과 번들 경고는 남아 있습니다.
+- 브라우저 검증: `E2E_PORT=4444 npx playwright test tests/browser/documents/document-input.spec.ts --grep '외부 URL은|조회 중 고친 URL|링크 앞 문단 편집|제목 조회 중 링크|제목 조회 속성이'`로 Chromium·Firefox·WebKit 15건 모두 통과(실패·skip 0건). URL 즉시 링크화, 제목 변경 undo/redo, 조회 중 수정·삭제, 실패 시 보존, 선택 글자·코드·원문 붙여넣기, 앞 문단 편집 후 위치 추적과 제목 조회 비활성화를 확인했습니다. 임시 DB·이미지와 독립 포트만 사용했으며 로그·상세 보고서는 `/tmp/graeboard-split-link-*`에 기록했습니다.
+
+## 2026-11-16 — 시크릿 일정 배지와 3단 보기 독립 분리
+
+- 합본의 최종 소스 `9420992`에서 시크릿 일정 기능만 공통 base `ecfb556` 기반 `feat/secret-calendar-view-modes`로 분리했습니다. `Calendar.tsx`·`secret-calendar.css`·`secret-calendar.ts`·`useSecretCalendar.ts`·`secret-calendar.spec.ts`는 원본과 바이트 단위로 동일하며, 개발·사용 안내는 해당 기능 문단만 반영했습니다.
+- 현재 개인 월간의 상단 표시 월 범위 또는 본인의 주간 기간과 겹치는 시크릿 일정 개수를 배지로 표시하고 숨기기 → 시크릿만 보기 → 전체 보기로 전환합니다. 기존 버튼·로컬 저장·storage 이벤트·삭제·실행취소 경로를 재사용합니다. 일정 v2·IndexedDB·서버 DB 형식은 유지하고 보기 선호만 별도 사용자별 localStorage 키에 기억합니다.
+- 1차 리뷰의 `only + 현재 범위 0개` 잠금 수정을 포함합니다. 0개일 때 버튼은 비활성화하되 표시용 모드만 전체 보기로 바꿔 일반 일정을 보여 주고, 저장된 only 선호는 보존합니다. 마지막 일정 삭제·빈 주/월·팀 이동·다른 탭·새로고침에서 일반 일정이 표시되고, 시크릿이 있는 범위로 복귀하거나 삭제를 실행취소하면 only로 돌아오는 회귀를 유지했습니다.
+- 독립 검증: Node 22.23.1·npm 10.9.8에서 `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` **826/826 통과**(실패·취소·skip 0). `npm run build`·`npm run build:edge` 성공, `npm run check:structure` 오류 0(기존 역할 검토 안내 38건), `npm run check:architecture` 위반 0을 확인했습니다. 프런트 빌드의 700kB 초과 청크 안내는 남아 있습니다.
+- `E2E_PORT=4446 PLAYWRIGHT_JSON_OUTPUT_FILE=/tmp/graeboard-split-secret-browser.json npx playwright test tests/browser/calendar/secret-calendar.spec.ts --reporter=list,json --output=/tmp/graeboard-split-secret-browser-results` **87/87 통과**(Chromium·Firefox·WebKit 각 29건, 실패·skip 0). 범위 겹침·3단 모드·0개 비활성/일반 일정 표시·검색·선호 보존·다른 탭·팀 전환·삭제복원과 기존 문서/이미지·소유자 격리 회귀를 실행했습니다. 생성된 390px 모바일 배지와 팀 주간 화면도 확인했습니다.
+- 그래프 MCP가 세션에 노출되지 않아 `rg`·파일 읽기로 실제 호출 경로를 확인했습니다. Node/PG와 브라우저 검사는 이 워크트리 안에서 순차 실행하고 임시 DB·이미지만 사용했습니다. 이번 독립 실행 수치만 기록하며 과거 합본의 검증 수치를 재사용하지 않습니다. 푸시·PR·병합·배포와 운영 화면 검증은 수행하지 않았습니다. 실행 로그·원본 해시·최종 커밋 보고서는 `/tmp/graeboard-split-secret-*`에 보존했습니다.
+
+## 2026-11-16 — 꼬리 메모 전체 화면 탭 독립 분리
+
+- 공통 기준 `ecfb556b32762c0d6121b840739ced186e01e02c`에서 메모 기능을 독립 분리했습니다. source/test 10개는 합본의 리뷰 보완을 포함한 `9420992e56d978f9bf8889c204e3caddd5465b96`과 동일하며, 현재 개발·사용 안내에는 메모 관련 문단만 반영했습니다.
+- 전체 화면은 고정 **꼬리 메모** 제목 아래 기존 문서 탭과 선택 본문을 표시합니다. `AnnualMemoPanel`이 하나의 dialog를 소유하고 `AnnualMemoDocumentPanel`·`DocumentPanel`의 편집기·선택·초안·저장·실행취소 경로를 공유합니다. 원본·사본 링크, 읽기 전용·발표, 모바일 전환도 같은 목록을 사용합니다.
+- 1차 리뷰에서 확인된 메모 주소의 탭 이동 후 React #185와 최초 메모 링크 무시를 보완한 상태입니다. 브라우저 제목은 `DocumentPanel`만 보고하며, 메모 이름이 `문서 1`이어도 실제 이름을 우선합니다. 같은 팀·연도 또는 사본의 링크는 기존 목록의 탭을 선택하고, 중첩 패널은 저장 후 닫습니다. 저장 실패 시 선택과 입력을 보존하며 다른 팀·연도·사본은 별도 패널로 엽니다.
+- 독립 검증: Node 22.23.1·npm 10.9.8·PostgreSQL 17.11에서 `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 826/826 통과(실패·취소·skip 0). `npm run build`·`npm run build:edge` 성공(기존 700kB chunk 경고 유지), `npm run check:structure` 오류 0·검토 알림 38, `npm run check:architecture` 위반 0, 변경 source/test 10개 Prettier 통과.
+- 독립 브라우저 검증: `E2E_PORT=4447`의 임시 SQLite·이미지 서버에서 Chromium·Firefox·WebKit 156건 중 154통과·2건너뜀·실패 0(재시도 0). `annual-memos`·`document-links` 전체, `document-browser` 꼬리 메모, `task-documents` 전체 페이지·열람자, `workspace-improvements` 메모·모바일, `sheet-format-memo` 발표 회귀를 실행했습니다. Chromium·Firefox는 각 51통과·1건너뜀, WebKit은 52통과이며 건너뜀은 기존 WebKit 전용 일반 스크롤바 검사입니다. 원본·사본의 제목 단일 소유와 `문서 1` 이름, 같은 목록 링크 이동·저장 실패·재시도·중첩 닫기, 다른 목록 분리도 포함합니다. 전체 화면·390px 모바일 스크린샷을 직접 확인했습니다.
+- 검증 후 추가 source/test 변경 없이 분리 범위와 원본 일치를 확인했습니다. 정확한 명령·집계·제약·파일 비교는 `/tmp/graeboard-split-memo-report.json`, 실행 로그와 브라우저 화면은 `/tmp/graeboard-split-memo-*`에 보존합니다. 실제 모바일 기기·운영 배포 검증은 수행하지 않았습니다.
+- DB 스키마·영속 저장 형식·서버 API 변경은 없습니다. 메인·원본 워크트리는 읽기만 했으며, 의존성은 메인의 `node_modules` 심볼릭 링크를 사용합니다. 그래프 도구가 세션에 노출되지 않아 Git diff·`rg`·소스 읽기로 실제 호출 경로와 기존 회귀를 확인했습니다. 과거 합본 검증 수치는 이번 독립 실행 결과로 계산하지 않습니다.
 
 ## 2026-11-15 — JSON 파일명에 선택 주차 표시
 

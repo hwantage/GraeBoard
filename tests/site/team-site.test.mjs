@@ -21,6 +21,7 @@ import { PostgresDatabase } from "../../worker/storage/postgres.mjs";
 import { openDatabase, json } from "../../server/db.mjs";
 import { createApp } from "../../server/app.mjs";
 import { DEFAULT_SETTINGS } from "../../shared/domain.js";
+import { extractLinkTitleResponse } from "../../shared/http/link-title.mjs";
 import { unpack } from "../../shared/formatting/compact.js";
 import { GitCliTransport } from "../../server/sync/node/git-cli.mjs";
 import { createWorker } from "../../worker/entry.mjs";
@@ -221,8 +222,26 @@ test(
       "refs/heads/main",
       github.text(["commit-tree", tree, "-m", "init"]),
     ]);
+    let logCalls = 0;
     globalThis.fetch = (input, init) => {
-      const target = new URL(typeof input === "string" ? input : input.url);
+      const target = new URL(input instanceof Request ? input.url : input);
+      if (target.hostname === "api.supabase.com") {
+        logCalls++;
+        assert.match(target.searchParams.get("sql"), /LIMIT 51$/);
+        return Promise.resolve(
+          Response.json({
+            result: [
+              {
+                id: randomUUID(),
+                timestamp_text: "2026-11-17T08:34:36.867000",
+                message: "CPU Time exceeded",
+                cpu_ms: "2000",
+                reason: "CPUTime",
+              },
+            ],
+          }),
+        );
+      }
       if (target.origin === "https://api.github.com")
         return github.fetch(target.href, init);
       assert.equal(target.hostname, "127.0.0.1");
@@ -402,6 +421,9 @@ test(
       PG_SITE: { connectionString: url, pool },
       GRAEBOARD_GATEWAY_SECRET: "fixture-gateway-secret-with-enough-entropy",
       GRAEBOARD_EDGE_URL: "https://fixture.supabase.co/functions/v1/graeboard",
+      GRAEBOARD_LOG_PROJECT_REF: "abcdefghijklmnopqrst",
+      GRAEBOARD_LOG_FUNCTION_ID: randomUUID(),
+      GRAEBOARD_LOGS_TOKEN: "sbp_fixture_logs",
       R2_TEAM: bucket(),
       GIT_TOKEN: "fixture-secret",
       SYNC_PROFILES: JSON.stringify([profile]),
@@ -421,7 +443,30 @@ test(
     const worker = createWorker({
       linkTitleOptions: {
         resolve: async () => [{ address: "93.184.215.14" }],
-        request: async () => ({ title: "외부 링크 제목" }),
+        request: async (url) =>
+          url.pathname === "/artifact/Bsxkr6atfFSNs6MpuJKoyF"
+            ? extractLinkTitleResponse(
+                url,
+                Buffer.from(
+                  '<html data-frame-uuid="5818ef99-be20-435b-8537-bfc15751ef56"><title>Claude Artifact</title></html>',
+                ),
+                "text/html",
+              )
+            : url.pathname === "/api/frame/5818ef99-be20-435b-8537-bfc15751ef56"
+              ? extractLinkTitleResponse(
+                  url,
+                  Buffer.from(JSON.stringify({ title: "실내 공기질 기록" })),
+                  "application/json",
+                )
+              : {
+                  title:
+                    url.pathname === "/oembed"
+                      ? "외부 영상 제목"
+                      : url.pathname ===
+                          "/api/published_artifacts/3880f246-db08-4c6e-8294-5cbeb8c618ec"
+                        ? "외부 아티팩트 제목"
+                        : "외부 링크 제목",
+                },
       },
       verify: async (request) => ({
         issuer: env.ACCESS_ISSUER,
@@ -620,6 +665,23 @@ test(
       ),
       { title: "외부 링크 제목" },
     );
+    for (const [url, title] of [
+      ["https://youtu.be/dQw4w9WgXcQ", "외부 영상 제목"],
+      ["https://claude.ai/artifact/Bsxkr6atfFSNs6MpuJKoyF", "실내 공기질 기록"],
+      [
+        "https://claude.ai/public/artifacts/3880f246-db08-4c6e-8294-5cbeb8c618ec",
+        "외부 아티팩트 제목",
+      ],
+    ])
+      assert.deepEqual(
+        success(
+          await outside(
+            "lead-google",
+            `/link-title?url=${encodeURIComponent(url)}`,
+          ),
+        ),
+        { title },
+      );
     assert.equal(
       (await outside("lead-google", "/link-title?url=http%3A%2F%2F127.0.0.1"))
         .status,
@@ -704,6 +766,39 @@ test(
     assert.equal(
       success(await outside("member-google", "/bootstrap")).user.id,
       member,
+    );
+    const logProbe = `/teams/${teamId}/sync/log`;
+    const callsBeforeLogs = github.calls.length,
+      workBeforeLogs = work.length;
+    const logPage = success(await outside("lead-google", logProbe));
+    assert.equal(logPage.entries[0].error.code, "EDGE_CPU_LIMIT");
+    assert.equal(logPage.entries[0].cpuMs, 2000);
+    assert.equal((await outside("lead-google", logProbe)).status, 200);
+    assert.equal(logCalls, 1, "consecutive reads reuse the bounded Edge cache");
+    assert.equal(
+      github.calls.length,
+      callsBeforeLogs,
+      "log reads must not call GitHub",
+    );
+    assert.equal(
+      work.length,
+      workBeforeLogs,
+      "log reads must not schedule background sync",
+    );
+    assert.equal((await outside("member-google", logProbe)).status, 403);
+    assert.equal((await outside("not-registered", logProbe)).status, 401);
+    assert.equal(
+      (await outside("lead-google", `/teams/${otherTeam}/sync/log`)).status,
+      403,
+    );
+    assert.equal(
+      (await outside("lead-google", logProbe, {}, "POST")).status,
+      405,
+    );
+    assert.equal(
+      logCalls,
+      1,
+      "unauthorized requests do not read cached or upstream logs",
     );
     assert.equal(
       success(await outside("member-google", "/bootstrap")).user.systemRole,
