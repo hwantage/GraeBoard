@@ -269,6 +269,8 @@ test("the workers.dev address belongs to the deployed Worker name", () => {
 
 test("--check masks every token and key in GitHub Actions and reports missing values", () => {
   const { secrets, env } = siteEnv();
+  secrets.GRAEBOARD_LOGS_TOKEN = "private-log-read-token";
+  env.TEAM_SITE_SECRETS = JSON.stringify(secrets);
   const check = (extra) =>
     spawnSync(process.execPath, ["scripts/team-site-deploy.mjs", "--check"], {
       encoding: "utf8",
@@ -452,5 +454,75 @@ test("the deployment schedules the gateway Cron unless the config pauses it", (t
   assert.deepEqual(
     deployed((site) => ({ ...site, cron: false })),
     [],
+  );
+});
+
+test("optional read-only log token goes only to Supabase Edge and deployment discovers the exact function ID", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "graeboard-log-deploy-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const { env, secrets } = siteEnv();
+  const functionId = randomUUID();
+  const calls = [];
+  let bulk;
+  deployTeamSite(
+    {
+      ...env,
+      RUNNER_TEMP: dir,
+      TEAM_SITE_SECRETS: JSON.stringify({
+        ...secrets,
+        GRAEBOARD_LOGS_TOKEN: "logs-read-only",
+      }),
+    },
+    {
+      cwd: dir,
+      run(command, args, options) {
+        calls.push({ command, args, ...options });
+        if (
+          command === "supabase" &&
+          args[0] === "functions" &&
+          args[1] === "list"
+        )
+          return JSON.stringify([
+            { id: randomUUID(), slug: "another" },
+            { id: functionId, slug: "graeboard" },
+          ]);
+        if (args[1] === "bulk") {
+          bulk = JSON.parse(readFileSync(args[2], "utf8"));
+        }
+        if (command === "npx" && args[1] === "secret")
+          bulk = JSON.parse(readFileSync(args[3], "utf8"));
+        if (command === "npx" && args[1] === "deploy")
+          return "https://graeboard-team.somansadev.workers.dev";
+        return "";
+      },
+    },
+  );
+  const gateway = JSON.parse(
+    readFileSync(join(dir, ".env.gateway.json"), "utf8"),
+  );
+  assert.equal(gateway.vars.GRAEBOARD_LOG_FUNCTION_ID, undefined);
+  assert.equal(bulk.GRAEBOARD_LOGS_TOKEN, undefined);
+  assert.equal(bulk.SUPABASE_ACCESS_TOKEN, undefined);
+  assert.doesNotMatch(JSON.stringify(gateway), /logs-read-only|sb-token/);
+  const edge = calls.find(
+    (c) =>
+      c.command === "supabase" &&
+      c.args[0] === "secrets" &&
+      c.args[1] === "set",
+  );
+  const values = edgeValues(edge.args);
+  assert.equal(values.GRAEBOARD_LOGS_TOKEN, "logs-read-only");
+  assert.equal(values.GRAEBOARD_LOG_FUNCTION_ID, functionId);
+  assert.equal(values.GRAEBOARD_LOG_PROJECT_REF, "b".repeat(20));
+  assert.throws(
+    () =>
+      readDeployConfig({
+        ...env,
+        TEAM_SITE_SECRETS: JSON.stringify({
+          ...secrets,
+          GRAEBOARD_LOGS_TOKEN: [],
+        }),
+      }),
+    /GRAEBOARD_LOGS_TOKEN/,
   );
 });

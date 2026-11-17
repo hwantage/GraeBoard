@@ -784,8 +784,7 @@ export default function TeamSyncSettings({
                     재개
                   </Button>
                 )}
-                {/* Only the internal server keeps a synchronization log. */}
-                {admin && !external && !!status.profileId && (
+                {admin && !!status.profileId && (
                   <Button onClick={() => setLogOpen(true)}>동기화 로그</Button>
                 )}
                 {admin && linked && (

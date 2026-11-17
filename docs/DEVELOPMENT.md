@@ -19,7 +19,7 @@ SheetClone 일회성 변환 명령은 최신 앱이 아닌 **고정 전체 커�
 `shared/`는 `calendar/`·`documents/`·`formatting/`·`http/`·`identity/`·`insights/`·`sheet-clones/`·`site/`·`storage/`·`sync/`·`transfer/`에 도메인 계약을 모읍니다. 루트의 domain·coreProperties·search·validation·date-validation 5개는 유지합니다. `http/link-title.mjs`의 Node 네트워크와 `transfer/workbook.mjs`의 Node crypto 의존을 브라우저 경계와 구분합니다.
 Node와 외부 라우트는 문서·일정·업무·사본·인증/제어·이력·이관·이벤트/HTTP로 묶습니다. 공통 서비스는 `server/storage/` 기능 폴더에, SQLite repository는 같은 기능 폴더에, PostgreSQL repository는 `worker/storage/` 기능 폴더에 둡니다.
 
-동기화는 `server/sync/core/` 17개(cache 포함)·`server/sync/node/` 20개·`worker/sync/` 12개로 배치합니다. 외부 direct import는 portable 17개와 공통 서비스/규칙 14개에 한정하며 background Worker·Git/자격 증명/SQLite 경계를 유지합니다.
+동기화는 `server/sync/core/` 17개(cache 포함)·`server/sync/node/` 20개·`worker/sync/` 13개로 배치합니다. `worker/sync/sync-log-api.mjs`는 Supabase Edge에서 실행하는 로그 조회 모듈입니다. 외부 direct import는 portable 17개와 공통 서비스/규칙 14개에 한정하며 background Worker·Git/자격 증명/SQLite 경계를 유지합니다.
 
 `scripts/`는 `admin/`·`deploy/`·`performance/`·`sync/`·`testing/`·`transfer/`로 실행 목적을 구분하고 루트 `licenses.mjs`와 `team-site-deploy.mjs`를 유지합니다. 후자는 팀 Fork의 workflow 정의와 동기화 후 checkout SHA가 다른 버전이어도 호출할 수 있는 고정 CLI입니다. P7은 32개 이동과 이 정확한 경로 보존으로 완료했습니다. npm 명령은 같은 저장소 루트의 환경·데이터 경로를 사용합니다.
 
@@ -554,6 +554,10 @@ PG 테스트는 임시 서버를 직접 실행합니다. 일반 `npm test`에서
 충돌 보관함은 내부·외부 모두 `SyncConflictBox` → `SyncConflictDiff` → `shared/sync/conflict-diff.js`로 비교 내용을 표시합니다. 사본 전체처럼 큰 payload의 줄 배열은 함수 인자로 펼치지 않고 순서대로 옮겨 브라우저 인자 수 한도를 피합니다. 표시할 줄이 200개를 넘으면 업무표에서 사용하는 `@tanstack/react-virtual`로 화면에 들어오는 줄만 그리며, 접힌 같은 줄을 펼친 경우도 동일하게 처리합니다. 비교 내용과 줄 번호는 유지하고 긴 줄의 실제 높이를 측정합니다. `SyncConflictDiff`는 펼친 충돌에만 마운트하고, 목록 줄의 종류·수정한 사람 요약은 불러온 목록마다 한 번 계산합니다. `changedFields`는 정렬 JSON 문자열을 만들지 않고 값을 직접 비교하며, 비교한 객체 쌍을 기억해 업무마다 반복되는 공통 서식 규칙을 다시 순회하지 않습니다. 한쪽이 `DIFF_LINE_LIMIT`(20만 줄)를 넘으면 바뀐 최상위 필드만 줄 비교하고(`partial`), 그것도 넘으면 줄 비교를 생략합니다(`omitted`). 업무 438건 사본은 약 100만 줄입니다. `tests/sync/protocol/conflict-diff.test.mjs`는 16만 줄의 생성·삭제·접힘과 큰 사본의 부분 비교를, `tests/browser/sync/data-sync.spec.ts`는 외부 모드에서 문서 11개와 큰 사본을 포함한 12개 항목 펼치기·끝까지 스크롤·긴 같은 줄 펼치기·비교 전환·닫기를, 그리고 업무 438건 사본 충돌 15개의 열기·전체 선택 덮어쓰기·한 항목 펼치기를 확인합니다.
 
 원본 JSON은 `SyncConflictRaw`에서 펼친 동안만 직렬화·표시하고, 접으면 표시 내용과 측정 상태를 해제합니다. 긴 JSON은 같은 가상 스크롤 라이브러리를 사용하며, JSON 문자열 안의 긴 문서도 조각별 배치 크기를 제한합니다. UTF-16 서로게이트 쌍을 나누지 않고 전체 텍스트를 순서대로 표시하며 짧은 값과 직접 편집의 문자열 변환은 기존 형식을 유지합니다. 끝에 도달한 뒤 줄 높이를 측정해도 마지막 값을 유지하고, ResizeObserver 측정은 애니메이션 프레임으로 모아 처리합니다. 같은 브라우저 suite에서 내부·외부 모드의 900업무×30셀 사본 세 버전, 긴 문자열·한글·이모지, 처음/끝 이동·키보드 스크롤·접기/다시 열기와 기존 해결 동작을 확인합니다.
+
+외부 동기화 로그는 같은 `SyncLogDialog`를 쓰며 기존 Supabase Edge API의 `worker/control/admin.mjs` → `worker/sync/sync-log-api.mjs`가 Management Logs API를 조회합니다. `/teams/:id/sync/log`는 기존 인증·팀 관리 권한을 확인하며 공유본·미전송·Git·예약 동기화에 접근하지 않습니다. 캐시·동시 요청 병합 전에도 현재 권한을 검사합니다. Cloudflare gateway의 전달 코드는 바꾸지 않습니다. Edge 전용 `GRAEBOARD_LOGS_TOKEN`, 함수 UUID와 프로젝트 Reference ID를 배포 스크립트에서 연결합니다([설정](CLOUD_SETUP.md#외부-동기화-로그-연결)).
+
+외부 쿼리는 최근 24시간, 정확한 함수·팀 경로, 50+1행, 메시지 1,200자, 응답 256KiB·8초로 제한합니다. ClickHouse 출력 별칭은 `timestamp_text`를 써 원래 시간 열과 충돌하지 않게 하며, 마이크로초와 UUID 내림차순의 커서로 같은 시각의 여러 기록도 이어 읽습니다. `failed` 단계는 오류 필터에도 포함합니다. Edge 인스턴스당 15초·8쪽 캐시, 같은 요청 병합, 최소 3초 간격과 upstream 429 대기를 적용합니다. UI는 직접 요청할 때만 한 쪽을 읽고 이전 요청·팝업 종료를 취소합니다. 외부는 내부 파일의 빈 조각을 자동으로 이어 읽는 루프를 사용하지 않습니다. 기존 로그를 읽을 뿐 상세 단계 기록이나 DB 저장을 추가하지 않습니다. `tests/site/edge-sync-log.test.mjs`의 조회 경계 검사, `team-site.test.mjs`의 PostgreSQL 권한·Git/백그라운드 실행 없음 검사, 배포 토큰 범위 검사와 `browser/sync/sync-log.spec.ts`로 검증합니다. `npx deno run tests/support/edge-sync-log-deno.mjs`는 최대 크기 합성 응답의 디코딩·가공을 Deno에서 확인하는 수동 검사입니다. 인증·네트워크·호스팅 격리 환경은 별도이며 [운영 제한](OPERATIONS.md#외부-서버-동기화-로그)을 함께 확인합니다.
 
 ## 업무 저장소 계약
 

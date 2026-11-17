@@ -78,6 +78,14 @@ export function readDeployConfig(env) {
       fail(`TEAM_SITE_CONFIG에 Edge 설정이 빠졌습니다: ${absent.join(", ")}`);
     if (!env.TEAM_SITE_SECRETS) fail(`${settings}: TEAM_SITE_SECRETS`);
     const secrets = json(env.TEAM_SITE_SECRETS, "TEAM_SITE_SECRETS");
+    if (
+      secrets.GRAEBOARD_LOGS_TOKEN !== undefined &&
+      (typeof secrets.GRAEBOARD_LOGS_TOKEN !== "string" ||
+        !secrets.GRAEBOARD_LOGS_TOKEN ||
+        secrets.GRAEBOARD_LOGS_TOKEN.length > 4096 ||
+        /[\r\n]/.test(secrets.GRAEBOARD_LOGS_TOKEN))
+    )
+      fail("TEAM_SITE_SECRETS의 GRAEBOARD_LOGS_TOKEN을 확인하세요.");
     for (const name of SITE_TOKENS)
       if (typeof secrets[name] !== "string" || !secrets[name])
         fail(`TEAM_SITE_SECRETS에 ${name}가 없습니다.`);
@@ -96,6 +104,7 @@ export function readDeployConfig(env) {
       edge,
       keys: Object.fromEntries(SITE_KEYS.map((name) => [name, secrets[name]])),
       gitToken: secrets.GIT_TEAM,
+      logsToken: secrets.GRAEBOARD_LOGS_TOKEN,
       tokens: {
         CLOUDFLARE_API_TOKEN: secrets.CLOUDFLARE_API_TOKEN,
         SUPABASE_ACCESS_TOKEN: secrets.SUPABASE_ACCESS_TOKEN,
@@ -138,6 +147,13 @@ export function edgeSecrets(config, resourceOrigin, keepAccessKey = false) {
     RESOURCE_ORIGIN: resourceOrigin,
     ...config.keys,
     GIT_TEAM: config.gitToken,
+    ...(config.logsToken
+      ? {
+          GRAEBOARD_LOGS_TOKEN: config.logsToken,
+          GRAEBOARD_LOG_FUNCTION_ID: config.logsFunctionId,
+          GRAEBOARD_LOG_PROJECT_REF: config.projectRef,
+        }
+      : {}),
   };
   if (keepAccessKey) delete values.GRAEBOARD_ACCESS_TOKEN_KEY;
   return values;
@@ -197,6 +213,29 @@ export function deployTeamSite(env, { run = runCommand, cwd = "." } = {}) {
     ],
     { env: supabase },
   );
+  if (config.logsToken) {
+    const functions = json(
+      run(
+        "supabase",
+        [
+          "functions",
+          "list",
+          "--project-ref",
+          config.projectRef,
+          "--output",
+          "json",
+        ],
+        { capture: true, env: supabase },
+      ),
+      "Supabase 함수 목록",
+    );
+    const fn =
+      Array.isArray(functions) &&
+      functions.find((item) => item.slug === "graeboard");
+    if (!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(fn?.id || ""))
+      fail("동기화 로그 조회를 위한 graeboard 함수 ID를 찾지 못했습니다.");
+    config.logsFunctionId = fn.id;
+  }
   const output = run("npx", ["wrangler", "deploy", "--config", gatewayFile], {
     capture: true,
     env: cloudflare,
@@ -260,7 +299,8 @@ if (
           ...Object.values(config.keys),
           ...Object.values(config.tokens),
           config.gitToken,
-        ])
+          config.logsToken,
+        ].filter(Boolean))
           console.log(`::add-mask::${value}`);
       console.log(
         config.keys
