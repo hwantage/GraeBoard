@@ -327,7 +327,7 @@ Pages Functions에서 Worker를 호출하는 방식은 [Service bindings](https:
    | `GRAEBOARD_LOG_PROJECT_REF` | 해당 프로젝트의 Reference ID |
    | `GRAEBOARD_LOG_FUNCTION_ID` | 해당 프로젝트의 `graeboard` 함수 UUID |
 
-   함수 UUID는 Supabase 함수 상세 또는 `supabase functions list --project-ref <Reference ID> --output json`의 `graeboard` 항목 `id`입니다. 프로젝트 Reference ID나 함수 이름을 UUID 대신 넣지 않습니다. Supabase가 예약한 `SUPABASE_` 접두어 대신 `GRAEBOARD_` 이름을 사용합니다.
+   함수 UUID는 `supabase functions list --project-ref <Reference ID> --output json`의 `graeboard` 항목 `id`입니다. 현재 Dashboard의 Overview·Settings에는 UUID가 직접 표시되지 않으므로 위 명령으로 확인합니다. 프로젝트 Reference ID나 함수 이름을 UUID 대신 넣지 않습니다. Supabase가 예약한 `SUPABASE_` 접두어 대신 `GRAEBOARD_` 이름을 사용합니다.
 3. 저장 후 팀장으로 외부 **동기화 로그**를 열거나 새로 고칩니다. Supabase Secrets 변경에는 함수 재배포가 필요하지 않습니다. 토큰을 `TEAM_SITE_CONFIG`, 브라우저 설정, Cloudflare gateway에 넣지 않습니다.
 
 GitHub는 저장한 Secret의 원문을 다시 보여주지 않습니다. **기존 `TEAM_SITE_SECRETS` JSON 원본을 보관하지 않았다면 일부 키만 넣어 덮어쓰지 말고 위 직접 등록 방법을 사용합니다.** 원본 JSON을 보관하고 자동 배포에서 관리하려는 경우에만 기존 모든 값을 유지한 채 `"GRAEBOARD_LOGS_TOKEN": "발급한 토큰"`을 추가해 전체 JSON을 갱신합니다. 독립된 Actions Secret `GRAEBOARD_LOGS_TOKEN`은 현재 워크플로가 읽지 않습니다. 변경 후 배포 워크플로를 수동 실행하며 같은 커밋이면 **release가 그대로여도 다시 배포**를 선택합니다. 배포 스크립트는 `graeboard` 함수 UUID와 프로젝트 Reference ID를 찾아 위 세 값을 Supabase Edge Secrets에 등록합니다.
