@@ -8,6 +8,8 @@ import {
   type CSSProperties,
 } from "react";
 import { ChevronDown, ChevronUp, FileText, X } from "lucide-react";
+import DocumentFullPageButton from "./DocumentFullPageButton";
+import DocumentFullWidthButton from "./DocumentFullWidthButton";
 import { useDocumentFullPage } from "./useDocumentFullPage";
 import { Button } from "../ui/Button";
 import type { DocumentPanelHandle } from "./DocumentPanel";
@@ -30,13 +32,28 @@ export default forwardRef<
     userId: string;
     readOnly: boolean;
     sheetCloneId?: string;
+    initialDocumentId?: string;
+    onDocumentSelected?: (id: string) => void;
+    browserTitleFallback?: string;
+    onClose?: () => void;
   }
 >(function AnnualMemoPanel(
-  { teamId, year, userId, readOnly, sheetCloneId },
+  {
+    teamId,
+    year,
+    userId,
+    readOnly,
+    sheetCloneId,
+    initialDocumentId,
+    onDocumentSelected,
+    browserTitleFallback,
+    onClose,
+  },
   ref,
 ) {
   const storageKey = `weekly-plan:memo-open:${userId}:${teamId}:${sheetCloneId || year}`;
   const [opened, setOpened] = useState(() => {
+    if (onClose) return true;
     try {
       return localStorage.getItem(storageKey) === "true";
     } catch {
@@ -68,8 +85,24 @@ export default forwardRef<
   const panel = useRef<DocumentPanelHandle>(null);
   const section = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
-  const { fullPage: mobilePage, fullWidth } = useDocumentFullPage();
-  const fullPage = opened && mobilePage;
+  const [expanded, setExpanded] = useState(!!onClose);
+  const [selectedDocument, setSelectedDocument] = useState(
+    initialDocumentId || "",
+  );
+  const {
+    fullPage: preferredPage,
+    fullWidth,
+    mobile,
+  } = useDocumentFullPage(expanded);
+  const fullPage = opened && preferredPage;
+  async function closePage() {
+    if (onClose) {
+      if ((await panel.current?.flush()) !== false) onClose();
+      return;
+    }
+    if (mobile) return toggle();
+    if ((await panel.current?.flush()) !== false) setExpanded(false);
+  }
   useLayoutEffect(() => {
     const element = section.current;
     if (!element) return;
@@ -80,6 +113,8 @@ export default forwardRef<
         // A task/link dialog opened above the desktop memo keeps its place
         // when the viewport narrows. Open the memo after that dialog closes.
         if (
+          !onClose &&
+          !expanded &&
           [...document.querySelectorAll("dialog:modal")].some(
             (other) => !element.contains(other),
           )
@@ -107,7 +142,7 @@ export default forwardRef<
           .querySelector<HTMLButtonElement>(".toggle-memos")
           ?.focus({ preventScroll: true });
     }
-  }, [fullPage]);
+  }, [fullPage, expanded, onClose]);
   const contentId = useId();
   const ToggleIcon = opened ? ChevronUp : ChevronDown;
   useImperativeHandle(ref, () => ({
@@ -175,7 +210,7 @@ export default forwardRef<
       onCancel={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        void toggle();
+        void closePage();
       }}
       data-collapsed={!opened || undefined}
       style={
@@ -258,25 +293,29 @@ export default forwardRef<
       <div
         className="memo-accordion-heading"
         onClick={(event) => {
-          if (event.target === event.currentTarget) void toggle();
+          if (!fullPage && event.target === event.currentTarget) void toggle();
         }}
       >
-        <Button
-          className="toggle-memos"
-          aria-expanded={opened}
-          aria-controls={contentId}
-          disabled={closing}
-          onClick={() => void toggle()}
-        >
-          <FileText size={14} aria-hidden="true" />
-          꼬리 메모
-          <ToggleIcon
-            size={16}
-            strokeWidth={2.5}
-            className="memo-accordion-icon"
-            aria-hidden="true"
-          />
-        </Button>
+        {fullPage ? (
+          <h2 className="memo-page-title">꼬리 메모</h2>
+        ) : (
+          <Button
+            className="toggle-memos"
+            aria-expanded={opened}
+            aria-controls={contentId}
+            disabled={closing}
+            onClick={() => void toggle()}
+          >
+            <FileText size={14} aria-hidden="true" />
+            꼬리 메모
+            <ToggleIcon
+              size={16}
+              strokeWidth={2.5}
+              className="memo-accordion-icon"
+              aria-hidden="true"
+            />
+          </Button>
+        )}
         {opened && (
           <div
             className="memo-scroll-slider"
@@ -340,15 +379,34 @@ export default forwardRef<
           </div>
         )}
         {fullPage && (
-          <Button
-            ref={closeButton}
-            className="memo-panel-close"
-            tooltip="닫기"
-            disabled={closing}
-            onClick={() => void toggle()}
-          >
-            <X size={18} aria-hidden="true" />
-          </Button>
+          <>
+            <DocumentFullPageButton
+              link={
+                selectedDocument
+                  ? sheetCloneId
+                    ? {
+                        kind: "sheet-clone-memo",
+                        sheetCloneId,
+                        id: selectedDocument,
+                      }
+                    : { kind: "memo", teamId, year, id: selectedDocument }
+                  : undefined
+              }
+              onNewTab={() => panel.current?.flush() ?? Promise.resolve(true)}
+              fullPage
+              onToggle={() => void closePage()}
+            />
+            <DocumentFullWidthButton />
+            <Button
+              ref={closeButton}
+              className="memo-panel-close"
+              tooltip="닫기"
+              disabled={closing}
+              onClick={() => void closePage()}
+            >
+              <X size={18} aria-hidden="true" />
+            </Button>
+          </>
         )}
       </div>
       <div id={contentId} className="memo-panel-content" hidden={!opened}>
@@ -356,6 +414,14 @@ export default forwardRef<
           <AnnualMemoDocumentPanel
             ref={panel}
             inline
+            initialDocumentId={initialDocumentId}
+            onDocumentSelected={(id) => {
+              setSelectedDocument(id);
+              onDocumentSelected?.(id);
+            }}
+            browserTitleFallback={browserTitleFallback}
+            inlineFullPage={fullPage}
+            onExpand={() => setExpanded(true)}
             onScrollRatioChange={(ratio, available) => {
               setScrollRatio(ratio);
               setScrollable(available);
