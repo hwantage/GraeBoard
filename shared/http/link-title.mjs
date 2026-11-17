@@ -163,12 +163,14 @@ const cleanLinkTitle = (text, html = true) =>
     .slice(0, 200)
     .join("");
 
-export function extractLinkTitle(html, preferSocialTitle = false) {
-  // Comments and raw script/style text cannot supply metadata.
-  const head = html.replace(
+// Comments and raw script/style text cannot supply metadata.
+const linkTitleMarkup = (html) =>
+  html.replace(
     /<!--[\s\S]*?(?:-->|$)|<(script|style)\b[^>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi,
     "",
   );
+export function extractLinkTitle(html, preferSocialTitle = false) {
+  const head = linkTitleMarkup(html);
   const title = cleanLinkTitle(
     /<title\b[^>]*>([\s\S]*?)<\/title\s*>/i.exec(head)?.[1] || "",
   );
@@ -226,7 +228,24 @@ function metadataKind(url) {
     /^\/api\/published_artifacts\/[\da-f-]{36}$/i.test(url.pathname)
   )
     return "claude";
+  if (
+    url.hostname === "claude.ai" &&
+    /^\/api\/frame\/[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(
+      url.pathname,
+    )
+  )
+    return "claude-frame";
   return null;
+}
+export function linkTitleRequestHeaders(url) {
+  return {
+    Accept: metadataKind(url) ? "application/json" : "text/html",
+    "Accept-Encoding": "identity",
+    "User-Agent": "GraeBoard-LinkTitle/1.0",
+    ...(metadataKind(url) === "claude-frame"
+      ? { "X-Frame-CP": "go", "X-Frame-Platform": "web" }
+      : {}),
+  };
 }
 export function acceptsLinkTitleContent(url, contentType) {
   return metadataKind(url)
@@ -235,20 +254,34 @@ export function acceptsLinkTitleContent(url, contentType) {
 }
 export function extractLinkTitleResponse(url, bytes, contentType) {
   const kind = metadataKind(url);
-  if (!kind)
-    return extractLinkTitle(
-      decodeLinkTitleHtml(bytes, contentType),
-      !!linkTitleMetadataUrl(url),
-    );
+  if (!kind) {
+    const html = decodeLinkTitleHtml(bytes, contentType);
+    const title = extractLinkTitle(html, !!linkTitleMetadataUrl(url));
+    // New Claude share URLs carry their canonical ID on the root element.
+    // Construct one fixed public endpoint; never follow page-supplied URLs.
+    if (
+      url.hostname === "claude.ai" &&
+      /^\/(?:code\/)?artifact\/[\w-]{1,64}\/?$/.test(url.pathname)
+    ) {
+      const root = /<html\b(?:[^>"']|"[^"]*"|'[^']*')*>/i.exec(
+        linkTitleMarkup(html),
+      );
+      const id = root && htmlAttributes(root[0])["data-frame-uuid"];
+      if (/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(id || ""))
+        return { title, metadata: `https://claude.ai/api/frame/${id}` };
+    }
+    return { title };
+  }
   try {
     const data = JSON.parse(new TextDecoder().decode(bytes));
     const title =
       kind === "claude" ? (data.artifact?.title ?? data.title) : data.title;
-    return typeof title === "string"
-      ? cleanLinkTitle(title, false) || null
-      : null;
+    return {
+      title:
+        typeof title === "string" ? cleanLinkTitle(title, false) || null : null,
+    };
   } catch {
-    return null;
+    return { title: null };
   }
 }
 
@@ -269,9 +302,7 @@ export function requestLinkTitle(url, address, signal) {
         maxHeaderSize: 16384,
         headers: {
           Host: url.host,
-          Accept: metadataKind(url) ? "application/json" : "text/html",
-          "Accept-Encoding": "identity",
-          "User-Agent": "GraeBoard-LinkTitle/1.0",
+          ...linkTitleRequestHeaders(url),
         },
       },
       (response) => {
@@ -298,13 +329,13 @@ export function requestLinkTitle(url, address, signal) {
           if (complete) return;
           complete = true;
           const bytes = Buffer.concat(chunks);
-          resolve({
-            title: extractLinkTitleResponse(
+          resolve(
+            extractLinkTitleResponse(
               url,
               bytes,
               response.headers["content-type"],
             ),
-          });
+          );
           response.destroy();
         };
         response.on("data", (chunk) => {
@@ -383,8 +414,7 @@ export function createLinkTitleService({
                 controller.signal,
               );
               controller.signal.throwIfAborted();
-              if (!Object.hasOwn(result, "redirect"))
-                return { title: result.title };
+              if (!Object.hasOwn(result, "redirect")) return result;
               requireThat(
                 result.redirect && redirects < 3,
                 400,
@@ -397,12 +427,21 @@ export function createLinkTitleService({
           if (metadata) {
             try {
               const result = await read(metadata);
-              if (result.title) return result;
+              if (result.title) return { title: result.title };
             } catch {
               controller.signal.throwIfAborted();
             }
           }
-          return read(original);
+          const result = await read(original);
+          if (result.metadata) {
+            try {
+              const metadataResult = await read(linkTitleUrl(result.metadata));
+              if (metadataResult.title) return { title: metadataResult.title };
+            } catch {
+              controller.signal.throwIfAborted();
+            }
+          }
+          return { title: result.title };
         })(),
       ]);
     } finally {

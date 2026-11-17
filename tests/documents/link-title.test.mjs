@@ -76,7 +76,15 @@ const linkTitleEncodingPages = {
 };
 
 const artifactId = "3880f246-db08-4c6e-8294-5cbeb8c618ec";
+// Public page/API observed on 2026-11-18, without account cookies.
+const frameId = "5818ef99-be20-435b-8537-bfc15751ef56";
+const framePage = `<html data-frame-uuid="${frameId}"><head><title>Claude Artifact</title><meta property="og:title" content="Claude Artifact"></head></html>`;
+const frameLinks = [
+  "https://claude.ai/artifact/Bsxkr6atfFSNs6MpuJKoyF",
+  `https://claude.ai/code/artifact/${frameId}/`,
+];
 const metadataPages = {
+  [`/api/frame/${frameId}`]: { title: "실내 공기질 기록" },
   "/oembed": { title: "공개 영상 제목 & 소개" },
   [`/api/published_artifacts/${artifactId}`]: {
     artifact: {
@@ -93,6 +101,7 @@ const metadataLinks = [
     `https://claude.ai/public/artifacts/${artifactId}`,
     "WebKeeper 에디션 로고 배치",
   ],
+  ...frameLinks.map((url) => [url, "실내 공기질 기록"]),
 ];
 
 async function source(t) {
@@ -100,8 +109,16 @@ async function source(t) {
     const metadata =
       metadataPages[new URL(req.url, "https://fixture.test").pathname];
     if (metadata) {
+      if (req.url.startsWith("/api/frame/")) {
+        assert.equal(req.headers["x-frame-cp"], "go");
+        assert.equal(req.headers["x-frame-platform"], "web");
+      }
       res.setHeader("Content-Type", "application/json");
       return res.end(JSON.stringify(metadata));
+    }
+    if (frameLinks.some((url) => new URL(url).pathname === req.url)) {
+      res.setHeader("Content-Type", "text/html");
+      return res.end(framePage);
     }
     if (req.url === "/slow") return;
     if (req.url === "/private") {
@@ -212,7 +229,7 @@ test("로컬 HTTP 응답의 제목, 비HTML, 본문 제한, 리다이렉트와 �
 
 test("제공자 HTML의 공개 제목과 JSON 문자열은 코드 실행 없이 표시한다", () => {
   const video = new URL(metadataLinks[0][0]);
-  assert.equal(
+  assert.deepEqual(
     extractLinkTitleResponse(
       video,
       Buffer.from(
@@ -220,15 +237,15 @@ test("제공자 HTML의 공개 제목과 JSON 문자열은 코드 실행 없이 
       ),
       "text/html",
     ),
-    "실제 영상 & 제목",
+    { title: "실제 영상 & 제목" },
   );
-  assert.equal(
+  assert.deepEqual(
     extractLinkTitleResponse(
       new URL(`https://claude.ai/api/published_artifacts/${artifactId}`),
       Buffer.from(JSON.stringify({ title: "실제 제목 &amp; 원문" })),
       "application/json",
     ),
-    "실제 제목 &amp; 원문",
+    { title: "실제 제목 &amp; 원문" },
   );
 });
 
@@ -237,13 +254,10 @@ test("공개 YouTube와 Claude 제목은 제한된 JSON 메타데이터를 먼�
   const title = createLinkTitleService(f.options);
   for (const [url, expected] of metadataLinks)
     assert.deepEqual(await title("metadata", url), { title: expected });
-  assert.equal(f.calls.length, metadataLinks.length);
+  assert.equal(f.calls.length, metadataLinks.length + frameLinks.length);
   assert.equal(new URL(f.calls[0].url).hostname, "www.youtube.com");
   assert.equal(new URL(f.calls[0].url).pathname, "/oembed");
-  assert.equal(
-    new URL(f.calls.at(-1).url).pathname,
-    `/api/published_artifacts/${artifactId}`,
-  );
+  assert.equal(new URL(f.calls.at(-1).url).pathname, `/api/frame/${frameId}`);
   const fallback = createLinkTitleService({
     ...f.options,
     request: async (url, ...args) => {
@@ -274,6 +288,96 @@ test("Node HTTP는 BOM·헤더·앞 1KiB meta 순서로 한국어 제목을 디�
         path,
       );
   }
+});
+
+test("Claude 새 공유 주소는 루트 UUID만 읽고 고정 공개 제목 경로를 만든다", () => {
+  const page = new URL(frameLinks[0]);
+  const parse = (url, html) =>
+    extractLinkTitleResponse(url, Buffer.from(html), "text/html");
+  assert.deepEqual(parse(page, framePage), {
+    title: "Claude Artifact",
+    metadata: `https://claude.ai/api/frame/${frameId}`,
+  });
+  for (const url of [
+    "https://claude.ai.example/artifact/Bsxkr6atfFSNs6MpuJKoyF",
+    "https://example.com/artifact/Bsxkr6atfFSNs6MpuJKoyF",
+    "https://claude.ai/chat/Bsxkr6atfFSNs6MpuJKoyF",
+  ])
+    assert.deepEqual(parse(new URL(url), framePage), {
+      title: "Claude Artifact",
+    });
+  for (const html of [
+    framePage.replace(frameId, "http://127.0.0.1/"),
+    framePage.replace(frameId, `${frameId}/extra`),
+    `<html><title>Claude Artifact</title><div data-frame-uuid="${frameId}"></div></html>`,
+    `<!--${framePage}--><title>Claude Artifact</title>`,
+    `<script>${framePage}</script><title>Claude Artifact</title>`,
+  ])
+    assert.deepEqual(parse(page, html), { title: "Claude Artifact" });
+});
+
+test("Claude 후속 조회도 DNS·시간 제한을 적용하고 실패 시 HTML 제목을 보존한다", async () => {
+  const page = new URL(frameLinks[0]);
+  const parsed = extractLinkTitleResponse(
+    page,
+    Buffer.from(framePage),
+    "text/html",
+  );
+  for (const outcome of [
+    "blocked",
+    "invalid-json",
+    "missing-title",
+    "private",
+    "nested",
+  ]) {
+    const calls = [];
+    let lookups = 0;
+    const service = createLinkTitleService({
+      resolve: async () => [
+        {
+          address:
+            ++lookups === 2 && outcome === "private" ? "127.0.0.1" : "8.8.8.8",
+        },
+      ],
+      request: async (url) => {
+        calls.push(url.href);
+        if (calls.length === 1) return parsed;
+        if (outcome === "blocked") throw new Error("HTTP 403");
+        if (outcome === "nested")
+          return { title: null, metadata: "https://example.com/unused" };
+        return extractLinkTitleResponse(
+          url,
+          Buffer.from(outcome === "invalid-json" ? "{" : '{"title":null}'),
+          "application/json",
+        );
+      },
+    });
+    assert.deepEqual(await service("frame", page.href), {
+      title: "Claude Artifact",
+    });
+    assert.equal(lookups, 2);
+    assert.equal(calls.length, outcome === "private" ? 1 : 2);
+  }
+  let aborted = false;
+  const service = createLinkTitleService({
+    timeoutMs: 20,
+    resolve: async () => [{ address: "8.8.8.8" }],
+    request: async (url, address, signal) => {
+      if (url.pathname.startsWith("/artifact/")) return parsed;
+      return new Promise((resolve, reject) =>
+        signal.addEventListener(
+          "abort",
+          () => {
+            aborted = true;
+            reject(signal.reason);
+          },
+          { once: true },
+        ),
+      );
+    },
+  });
+  await assert.rejects(service("frame", page.href), { status: 504 });
+  assert.equal(aborted, true);
 });
 
 test("사설·루프백·링크로컬·CGNAT·메타데이터·IPv6 매핑·멀티캐스트를 차단한다", async () => {
@@ -505,6 +609,7 @@ test("Edge 전송은 검사한 IP와 원래 TLS 호스트를 유지하고 HTML·
         calls.push(options);
         return socket;
       },
+      requestText: () => written,
       check: () => {
         assert.equal(closed, true);
         assert.match(written, /Host: public.example\r\n/);
@@ -514,15 +619,28 @@ test("Edge 전송은 검사한 IP와 원래 TLS 호스트를 유지하고 HTML·
   }
   const service = createLinkTitleService({
     resolve: async () => [{ address: "8.8.8.8" }],
-    request: (url, address, signal) =>
-      requestEdgeLinkTitle(
+    request: async (url, address, signal) => {
+      const transport = runtime(
+        metadataPages[url.pathname]
+          ? `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(metadataPages[url.pathname])}`
+          : `HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n${framePage}`,
+      );
+      const result = await requestEdgeLinkTitle(
         url,
         address,
         signal,
-        runtime(
-          `HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(metadataPages[url.pathname])}`,
-        ),
-      ),
+        transport,
+      );
+      if (url.pathname.startsWith("/api/frame/")) {
+        assert.match(
+          transport.requestText(),
+          /X-Frame-CP: go\r\nX-Frame-Platform: web\r\n/,
+        );
+        assert.match(transport.requestText(), /Accept: application\/json\r\n/);
+      } else assert.doesNotMatch(transport.requestText(), /X-Frame-/);
+      assert.doesNotMatch(transport.requestText(), /Cookie:|Authorization:/i);
+      return result;
+    },
   });
   for (const [url, title] of metadataLinks)
     assert.deepEqual(await service("edge", url), { title });

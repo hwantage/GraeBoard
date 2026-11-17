@@ -21,6 +21,7 @@ import { PostgresDatabase } from "../../worker/storage/postgres.mjs";
 import { openDatabase, json } from "../../server/db.mjs";
 import { createApp } from "../../server/app.mjs";
 import { DEFAULT_SETTINGS } from "../../shared/domain.js";
+import { extractLinkTitleResponse } from "../../shared/http/link-title.mjs";
 import { unpack } from "../../shared/formatting/compact.js";
 import { GitCliTransport } from "../../server/sync/node/git-cli.mjs";
 import { createWorker } from "../../worker/entry.mjs";
@@ -442,15 +443,30 @@ test(
     const worker = createWorker({
       linkTitleOptions: {
         resolve: async () => [{ address: "93.184.215.14" }],
-        request: async (url) => ({
-          title:
-            url.pathname === "/oembed"
-              ? "외부 영상 제목"
-              : url.pathname ===
-                  "/api/published_artifacts/3880f246-db08-4c6e-8294-5cbeb8c618ec"
-                ? "외부 아티팩트 제목"
-                : "외부 링크 제목",
-        }),
+        request: async (url) =>
+          url.pathname === "/artifact/Bsxkr6atfFSNs6MpuJKoyF"
+            ? extractLinkTitleResponse(
+                url,
+                Buffer.from(
+                  '<html data-frame-uuid="5818ef99-be20-435b-8537-bfc15751ef56"><title>Claude Artifact</title></html>',
+                ),
+                "text/html",
+              )
+            : url.pathname === "/api/frame/5818ef99-be20-435b-8537-bfc15751ef56"
+              ? extractLinkTitleResponse(
+                  url,
+                  Buffer.from(JSON.stringify({ title: "실내 공기질 기록" })),
+                  "application/json",
+                )
+              : {
+                  title:
+                    url.pathname === "/oembed"
+                      ? "외부 영상 제목"
+                      : url.pathname ===
+                          "/api/published_artifacts/3880f246-db08-4c6e-8294-5cbeb8c618ec"
+                        ? "외부 아티팩트 제목"
+                        : "외부 링크 제목",
+                },
       },
       verify: async (request) => ({
         issuer: env.ACCESS_ISSUER,
@@ -651,6 +667,7 @@ test(
     );
     for (const [url, title] of [
       ["https://youtu.be/dQw4w9WgXcQ", "외부 영상 제목"],
+      ["https://claude.ai/artifact/Bsxkr6atfFSNs6MpuJKoyF", "실내 공기질 기록"],
       [
         "https://claude.ai/public/artifacts/3880f246-db08-4c6e-8294-5cbeb8c618ec",
         "외부 아티팩트 제목",
