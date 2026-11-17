@@ -1,6 +1,113 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { apiErrorMessage } from "../../shared/http/api-error-message.js";
+import { createExternalSyncLog } from "../../worker/sync/sync-log-api.mjs";
+
+test("real log configuration responses retain their cause behind Supabase's Edge error header", async () => {
+  const team = "11111111-1111-4111-8111-111111111111";
+  const path = `/teams/${team}/sync/log`;
+  const read = createExternalSyncLog({
+    fetcher: () => assert.fail("No log query before configuration"),
+  });
+  const response = await read(
+    new Request(`https://board.pages.dev/api${path}`, {
+      headers: { "X-Requested-With": "WeeklyPlan" },
+    }),
+    { SITE_TEAM_ID: team },
+    team,
+    async () => {},
+  );
+  assert.equal(response.status, 503);
+  const message = apiErrorMessage({
+    path,
+    status: response.status,
+    data: await response.json(),
+    external: true,
+    headers: new Headers({
+      "sb-error-code": "EDGE_FUNCTION_ERROR",
+      "sb-request-id": "log-config-request",
+    }),
+  });
+  assert.match(message, /Supabase 로그 연결이 설정되지 않았습니다/);
+  assert.match(message, /토큰.*프로젝트.*함수 ID/);
+  assert.match(message, /HTTP 503.*log-config-request/);
+  assert.doesNotMatch(message, /데이터베이스 연결/);
+});
+
+test("Supabase log errors preserve only approved diagnostics on the exact log route", () => {
+  const headers = new Headers({ "sb-error-code": "EDGE_FUNCTION_ERROR" });
+  for (const [status, error, expected] of [
+    [
+      502,
+      "Supabase 로그 조회 토큰의 만료 또는 analytics_logs_read 권한을 확인하세요.",
+      /analytics_logs_read/,
+    ],
+    [
+      429,
+      "Supabase 로그 조회 한도에 도달했습니다. 잠시 후 새로 고치세요.",
+      /Supabase 로그 조회 한도/,
+    ],
+    [
+      502,
+      "Supabase 로그 조회 요금제와 사용량을 확인하세요.",
+      /요금제와 사용량/,
+    ],
+  ]) {
+    assert.match(
+      apiErrorMessage({
+        path: "/teams/team/sync/log?problems=1",
+        status,
+        data: { error },
+        headers,
+        external: true,
+      }),
+      expected,
+    );
+  }
+  for (const path of [
+    "/tasks",
+    "/teams/team/sync/log/download",
+    "/teams/team/sync/run",
+  ]) {
+    const message = apiErrorMessage({
+      path,
+      status: 502,
+      headers,
+      external: true,
+      data: {
+        error:
+          "Supabase 로그 조회 토큰의 만료 또는 analytics_logs_read 권한을 확인하세요.",
+      },
+    });
+    assert.doesNotMatch(message, /analytics_logs_read/);
+  }
+  const unsafe = apiErrorMessage({
+    path: "/teams/team/sync/log",
+    status: 503,
+    headers,
+    external: true,
+    data: {
+      error:
+        "Supabase 로그 연결이 설정되지 않았습니다. postgres://secret:password@private/db",
+    },
+  });
+  assert.doesNotMatch(unsafe, /secret|password|private/);
+  for (const [status, code, expected] of [
+    [546, "WORKER_LIMIT", /실행 자원 한도/],
+    [503, "BOOT_ERROR", /함수를 시작하지 못했습니다/],
+    [429, "RATE_LIMIT_EXCEEDED", /서버의 요청 제한/],
+  ]) {
+    const message = apiErrorMessage({
+      path: "/api/teams/team/sync/log",
+      status,
+      external: true,
+      headers: new Headers({ "sb-error-code": code }),
+      data: { error: "Supabase 로그 조회 요금제와 사용량을 확인하세요." },
+    });
+    assert.match(message, expected);
+    assert.doesNotMatch(message, /요금제와 사용량/);
+  }
+});
 
 test("provider rate limits explain the failed task, retry window and trace reference", () => {
   const message = apiErrorMessage({
