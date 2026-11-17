@@ -461,24 +461,69 @@ Node.js는 고정 소스의 최소 버전 22.13 이상을 사용하고 실제 �
 
 ## 동기화 프로토콜 5 명시 전환
 
-프로토콜 5는 사본을 사본 정보·서식·행 단위 레코드로 나눕니다([동기화 규약](SYNC_PROTOCOL.md#프로토콜-5-사본-행-단위-레코드)). 셀 하나를 고치면 그 행만 동기화하고, 외부 서버도 사본을 행 단위로 저장합니다. 전환 명령은 프로토콜 5로 전환합니다(프로토콜 4는 읽기만 지원). 프로토콜 3(사본 한 레코드)인 팀만 이 절차의 대상이며, 앱 배포·migration은 프로토콜 3 이력을 자동 전환하지 않습니다. 양쪽에 같은 릴리스를 배포하고 운영 백업·복구 리허설과 전환 대상 팀의 승인을 먼저 완료합니다. 기존 사본 셀과 이력은 그대로 보존합니다.
+프로토콜은 사내·외부가 자료를 주고받는 방식의 번호입니다. **프로토콜 5는 사본의 셀 하나를 고칠 때 사본 전체 대신 해당 행을 공유**합니다. SQLite/PostgreSQL DB 스키마 버전과는 다르며 앱 업데이트나 `npm run migrate`만으로 전환되지 않습니다. 프로토콜 3인 팀을 명시적으로 전환하며, 기존 업무·사본·문서·이미지·충돌 이력·처리 기록은 보존합니다. 프로토콜 4는 과거 이력을 읽는 용도입니다.
 
-1. 양쪽의 사용자 쓰기와 자동 작업을 중지하고 미전송·충돌을 모두 처리합니다. 양쪽을 **일시정지**하고 정리·백업 작업이 완료됐는지 확인합니다.
-2. 각 사이트의 관리자 인증 쿠키를 별도 파일(권한 0600)에 준비합니다. 쿠키 원문은 명령 인자·Git·검증 로그에 넣지 않습니다. 아래 기본 명령은 상태만 조회합니다.
+외부 전환은 **맥북 등 운영자 PC의 Node에서 실행**합니다. Supabase의 `POST /sync/upgrade`는 전체 자료의 변환·검증 때문에 실행 자원 한도를 넘을 수 있습니다. PC에서 같은 서비스 코드를 실행해 운영 PostgreSQL과 Git에 연결하며, 페이지를 로컬에서 띄우는 작업이 아닙니다. 먼저 양쪽에 이 기능을 포함한 같은 릴리스를 배포하고, 승인한 대상의 백업·복구 검증을 마칩니다. 실제 전환은 쓰기 중단과 최종 백업을 포함한 별도 운영 작업입니다.
 
-   ```sh
-   npm run sync:upgrade -- --url https://내부주소 --team 팀UUID --cookie-file /안전경로/internal-cookie
-   npm run sync:upgrade -- --url https://외부주소 --team 팀UUID --cookie-file /안전경로/external-cookie
+1. 양쪽의 사용자 쓰기와 자동 작업을 중지하고 미전송·미해결 충돌을 0으로 맞춥니다. 양쪽 UI에서 동기화를 **일시정지**하고 정리·백업 작업 완료를 확인합니다. **사내 PM2 서버는 켜 둡니다.** 사내 전환 명령은 그 서버의 관리자 API를 호출합니다. 최종 백업에는 `/GraeBoardData/weekly-plan.sqlite`와 기존 이미지·설정, 외부 DB·R2 및 Git 기준 head를 함께 보관합니다([백업](#백업과-복구)).
+2. 맥북에 외부 운영 설정 파일을 권한 0600으로 준비합니다. DB URL은 Supabase 운영 프로젝트의 실제 연결 문자열, `GIT_TEAM`은 공유 데이터 저장소에 쓰기 권한이 있는 기존 토큰입니다. 설치 ID는 새로 만들지 말고 기존 설정과 일치시킵니다. `--upgrade`는 이미지를 변경하지 않아 `RESOURCE_ORIGIN`·`GRAEBOARD_RESOURCE_SECRET`은 필요하지 않습니다. 일반 가져오기·이미지 설치에는 기존 이미지 설정이 필요합니다.
+
+   ```dotenv
+   GRAEBOARD_DATABASE_URL=실제_운영_PostgreSQL_연결문자열
+   SITE_TEAM_ID=15eb7227-b0c4-4489-b989-e587a813d3c4
+   INSTALLATION_ID=2a09e7a4-dafa-47df-8693-f79f39a917e7
+   PEER_INSTALLATION_ID=b5a6da47-7f84-4059-814b-ca2fc7b80d66
+   SYNC_PROFILES='[{"profileId":"ux-team-internal","teamId":"15eb7227-b0c4-4489-b989-e587a813d3c4","repository":"hwantage/GraeBoardData","databaseBinding":"PG_SITE","bucketBinding":"R2_TEAM","githubSecret":"GIT_TEAM"}]'
+   GIT_TEAM=기존_공유저장소_토큰
    ```
 
-3. 양쪽이 `mode:paused`, `pending:0`, `conflicts:0`, `protocol:3`이고 `expectedHead`·`expectedHash`가 같은 것을 확인하여 **이 프로토콜 3 기준값을 기록**합니다. 운영 실행 승인 범위에서 같은 기준값으로 **외부 → 내부** 순서로 실행합니다. 외부에서 먼저 전환을 준비해야 분할한 프로토콜 5 상태의 용량 한도(snapshot·receipt, 지정한 경우 업무·엔티티 상한)를 게시 전에 검사할 수 있습니다. 용량 거절 시 그대로 멈추고 내부에서 먼저 게시하는 방법으로 우회하지 않습니다.
+   이 예시는 graeboard.pages.dev 운영 팀입니다. 값이 현재 운영 설정과 일치하는지 확인하고 다른 팀에 재사용하지 않습니다. 아래 `/안전경로/external-upgrade.env`는 실제 파일 경로로 바꿉니다. 비밀값은 Git·채팅·출력 로그에 남기지 않습니다.
+3. 맥북의 갱신한 코드에서 상태를 조회합니다. `--execute`가 없으면 DB·Git을 변경하지 않고 전체 상태의 확인용 hash를 계산합니다. 변환 성능 리허설을 수행하는 옵션은 아닙니다.
 
    ```sh
-   npm run sync:upgrade -- --url https://외부주소 --team 팀UUID --cookie-file /안전경로/external-cookie --expected-head 기록한40자리head --expected-hash 기록한64자리hash --peers-stopped --execute
-   npm run sync:upgrade -- --url https://내부주소 --team 팀UUID --cookie-file /안전경로/internal-cookie --expected-head 기록한40자리head --expected-hash 기록한64자리hash --peers-stopped --execute
+   cd /Users/hwantage/works/somansa/weekly_plan
+   node --max-old-space-size=8192 scripts/sync/sync-external-import.mjs --settings /안전경로/external-upgrade.env --upgrade
    ```
 
-4. 첫 명령은 프로토콜 3 백업·프로토콜 5 snapshot이 포함된 전환 커밋을 CAS로 게시합니다. 외부 서버는 같은 트랜잭션에서 사본의 화면용 저장 행을 행 단위로 다시 씁니다. 두 번째는 같은 기준의 직계 전환 커밋만 검증해 수신합니다. 일반 커밋·다른 head·추가 미전송·충돌이 있으면 중단합니다. 양쪽은 계속 일시정지 상태입니다.
-5. 양쪽 응답의 `protocol:5`, `head`, `stateHash`가 같고 업무·사본·문서·이미지가 보존됐는지 확인한 뒤 UI에서 재개하고 쓰기·자동 작업을 다시 허용합니다.
+   사내 Linux에서는 관리자 인증 쿠키를 권한 0600 파일에 넣고 조회합니다. `https://사내주소`는 **현재 PM2 3번 서버에 접속하는 실제 origin(필요하면 포트 포함)**으로 바꿉니다. DB 파일 경로를 `--url`에 넣지 않습니다. 쿠키 원문은 명령 인자나 로그에 넣지 않습니다.
 
-프로토콜 3 커밋은 기존 차이 탐색 상한 20,000으로 재생하며 프로토콜 4·5 커밋에만 상한 2,000을 적용합니다. 상한 초과는 원문을 보존한 충돌로 남습니다. 전환 이후에는 구버전 코드만 되돌리지 않습니다. 전환 실패 시 양쪽의 현재 C/P/L·Git head·전환 전 백업을 보존하고 원인을 확인합니다. 전환 뒤 새로 가져오는 외부 사이트와 복구는 그 앞의 표준 checkpoint부터 읽고 전환을 재생합니다. 다만 미전송 명령은 전환을 넘지 못하므로, 복구할 때 게시되지 않은 변경(미전송, 또는 `sync:recover`가 찾은 기록되지 않은 변경)이 있는 전환 전 백업은 전환 커밋 앞에서 `SYNC_TRANSITION_PENDING`으로 멈추고 그 변경을 그대로 보존합니다. 전환 뒤의 복구에는 전환 뒤에 만든 백업을 씁니다. 운영자의 전환 실행과 로컬 이력 정리 실행은 별도 작업입니다.
+   ```sh
+   cd /GraeBoard
+   node scripts/sync/sync-upgrade.mjs --url https://사내주소 --team 15eb7227-b0c4-4489-b989-e587a813d3c4 --cookie-file /안전경로/internal-cookie
+   ```
+
+4. 양쪽이 `mode:paused`, `pending:0`, `conflicts:0`, `protocol:3`이고 `expectedHead`와 `expectedHash`가 같은지 확인합니다. 외부의 `head`도 `expectedHead`와 같고 `installationMatches:true`여야 합니다. **이 전환 전 head·hash를 기록하고 두 명령에 같은 값을 사용합니다.** 외부 전환 후 새 head로 내부 명령을 바꾸지 않습니다.
+
+   맥북에서 먼저 실행합니다.
+
+   ```sh
+   node --max-old-space-size=8192 scripts/sync/sync-external-import.mjs --settings /안전경로/external-upgrade.env --upgrade --expected-head 기록한40자리head --expected-hash 기록한64자리hash --execute
+   ```
+
+   외부가 `protocol:5`로 완료된 뒤 사내 Linux에서 실행합니다.
+
+   ```sh
+   cd /GraeBoard
+   node scripts/sync/sync-upgrade.mjs --url https://사내주소 --team 15eb7227-b0c4-4489-b989-e587a813d3c4 --cookie-file /안전경로/internal-cookie --expected-head 기록한40자리head --expected-hash 기록한64자리hash --peers-stopped --execute
+   ```
+
+   외부 명령은 프로토콜 3 백업·5 snapshot을 포함한 전환 커밋을 Git에 게시하고, PostgreSQL 상태와 화면용 행을 트랜잭션으로 반영합니다. 사내 명령은 그 직계 전환 커밋의 원문·hash·변환 결과를 검증해 SQLite에 반영합니다. 일반 커밋·다른 head·추가 미전송·미해결 충돌은 거절합니다. 양쪽은 계속 일시정지 상태입니다.
+5. 양쪽 응답의 `protocol:5`, `head`, `stateHash`가 일치하고 사본·문서가 보존됐는지 확인합니다. 전환 후 백업을 만든 다음 UI에서 동기화를 재개하고 사용자 쓰기·자동 작업을 허용합니다. 사본 셀 하나를 수정해 반대편에 전달되는지와 미전송·충돌 0을 확인합니다.
+
+### 전환의 메모리와 파일 크기
+
+압축된 Git snapshot 객체는 기존처럼 최대 64MiB입니다. **사내 Node와 운영자 CLI만 압축 해제 후 최대 512MiB**를 처리합니다. 외부 Edge의 압축 해제 한도는 64MiB이며, 큰 초기 가져오기·이어받기도 운영자 CLI를 사용합니다. 파일 형식(canonical JSON/gzip), DB 스키마, Git 프로토콜 전환 봉투는 바꾸지 않습니다. 용량 거절 시 이력을 지우거나 내부에서 먼저 게시해서 우회하지 않습니다.
+
+운영 규모의 전체 변환은 Node heap 8GiB로 검증합니다. 이 옵션은 실제 메모리 확보를 대신하지 않습니다. 다른 프로세스 사용량까지 고려해 여유 메모리를 확보합니다. 사내 API의 계산은 PM2 서버의 Node worker가 하므로 **CLI에만 메모리 옵션을 붙여서는 안 됩니다.** PM2 3번 프로세스의 기존 Node 옵션을 확인하고 `--max-old-space-size=8192`를 추가한 뒤 재시작합니다. 기존 옵션이 없는 경우의 예시는 다음과 같습니다.
+
+```sh
+pm2 restart 3 --node-args="--max-old-space-size=8192"
+```
+
+기존 `DB_PATH=/GraeBoardData/weekly-plan.sqlite`와 이미지·동기화 디렉터리 설정은 유지합니다. 서버의 실제 메모리와 적용된 Node 옵션을 확인한 뒤 전환합니다. 이 예시는 메모리 설정이며 코드 업데이트는 [업데이트](#업데이트)를 먼저 수행합니다. 로컬 복제본의 측정은 [변경·검증 이력](DEVELOPMENT_HISTORY.md)에 기록하며 원격 DB·Git 지연을 포함한 운영 소요 시간 보장은 아닙니다.
+
+### 중단과 재실행
+
+Git 게시 뒤 응답이 끊기거나 DB 반영 전 중단되면, 양쪽 쓰기를 계속 중지하고 **기록한 전환 전 head·hash의 같은 명령을 재실행**합니다. 원격의 정확한 직계 전환만 수신합니다. DB 반영까지 끝난 뒤 응답을 잃은 경우에도 같은 전환·hash임을 확인하고 `upgraded:false`로 완료 상태를 반환하며 새 전환을 만들지 않습니다. 다른 커밋이 진행됐다면 자동으로 덮어쓰지 않고 멈춥니다.
+
+Git 게시 전 실패는 DB와 Git 기준을 그대로 보존합니다. 게시 뒤에는 Git 이력을 지우거나 코드만 이전 릴리스로 되돌리지 않고 같은 명령으로 전환을 완료합니다. 전환 전 백업에 미전송 또는 기록되지 않은 편집이 있으면 복구 시 `SYNC_TRANSITION_PENDING`으로 멈추며 그 편집을 보존합니다. 전환 후 복구에는 전환 후 백업과 현재 릴리스의 `sync:recover`를 사용합니다. 큰 외부 가져오기는 `sync:external-import`, 활성 팀의 큰 커밋 이어받기는 `--catch-up`을 운영자 PC에서 실행합니다. 전환 snapshot은 복구 시작점이 아니며, 가장 최근 표준 checkpoint부터 검증하고 이후 전환·변경을 재생합니다. 프로토콜 전환과 로컬 이력 정리는 별도 작업입니다.

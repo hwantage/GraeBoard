@@ -27,6 +27,32 @@ const settings = {
   GRAEBOARD_RESOURCE_SECRET: "resource-secret",
 };
 
+test("protocol upgrade needs no image gateway credentials, while imports still do", async () => {
+  const withoutImages = {
+    ...settings,
+    RESOURCE_ORIGIN: "",
+    GRAEBOARD_RESOURCE_SECRET: "",
+  };
+  const { env, close } = await externalEnvironment(withoutImages, {
+    withImages: false,
+  });
+  try {
+    assert.ok(env.PG_SITE.pool.connect);
+    assert.equal(env.R2_TEAM, undefined);
+    assert.equal(env.IMAGES, undefined);
+  } finally {
+    await close();
+  }
+  await assert.rejects(externalEnvironment(withoutImages), /RESOURCE_ORIGIN/);
+  await assert.rejects(
+    externalEnvironment(
+      { ...withoutImages, GIT_TEAM: "" },
+      { withImages: false },
+    ),
+    /GIT_TEAM/,
+  );
+});
+
 test("external import CLI builds the Edge-equivalent environment and refuses incomplete settings", async () => {
   for (const key of REQUIRED_SETTINGS)
     await assert.rejects(
@@ -91,4 +117,19 @@ test("external import CLI prints usage without a settings file", async () => {
     console.log = original;
   }
   assert.match(lines.join("\n"), /--settings .* \[--dry-run\]/);
+});
+
+test("upgrade CLI rejects mixed modes and orphaned execution flags before opening settings", async () => {
+  for (const flags of [
+    ["--execute"],
+    ["--expected-head", "a".repeat(40)],
+    ["--upgrade", "--images"],
+    ["--upgrade", "--catch-up"],
+    ["--upgrade", "--execute", "--dry-run"],
+    ["--upgrade", "--publish"],
+  ])
+    await assert.rejects(
+      main(["--settings", "/does-not-exist", ...flags]),
+      /지정|함께/,
+    );
 });
