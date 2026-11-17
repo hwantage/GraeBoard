@@ -194,23 +194,41 @@ test("보이기 선택·검색·소유자·팀 범위와 다른 계정 격리", 
   await create(page, title);
   const requests = observe(page);
   const toggle = () =>
-    page.getByRole("button", { name: "시크릿 일정 숨기기", exact: true });
+    page.getByRole("button", {
+      name: "전체 보기 · 시크릿 숨기기로 전환",
+      exact: true,
+    });
   await expect(toggle()).toHaveAttribute("aria-pressed", "true");
-  await expect(toggle().locator("svg")).toHaveClass(/lucide-lock-keyhole/);
+  await expect(toggle().locator("svg")).toHaveClass(/lucide-eye/);
   await toggle().click();
   await expect(card(page, title)).toHaveCount(0);
   await page.reload();
   await expect(
-    page.getByRole("button", { name: "시크릿 일정 보이기", exact: true }),
+    page.getByRole("button", {
+      name: "시크릿 숨기기 · 시크릿만 보기로 전환",
+      exact: true,
+    }),
   ).toHaveAttribute("aria-pressed", "false");
   await expect(
     page
-      .getByRole("button", { name: "시크릿 일정 보이기", exact: true })
+      .getByRole("button", {
+        name: "시크릿 숨기기 · 시크릿만 보기로 전환",
+        exact: true,
+      })
       .locator("svg"),
   ).toHaveClass(/lucide-eye-off/);
   await expect(card(page, title)).toHaveCount(0);
   await page
-    .getByRole("button", { name: "시크릿 일정 보이기", exact: true })
+    .getByRole("button", {
+      name: "시크릿 숨기기 · 시크릿만 보기로 전환",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "시크릿만 보기 · 전체 보기로 전환",
+      exact: true,
+    })
     .click();
   await page
     .getByRole("searchbox", { name: "일정 제목 검색" })
@@ -292,11 +310,23 @@ test("다른 탭의 생성·수정·삭제·보이기 선택을 반영한다", a
   await closeDetail(second);
   await expect(card(page, changed)).toBeVisible();
   await page
-    .getByRole("button", { name: "시크릿 일정 숨기기", exact: true })
+    .getByRole("button", {
+      name: "전체 보기 · 시크릿 숨기기로 전환",
+      exact: true,
+    })
     .click();
   await expect(card(second, changed)).toHaveCount(0);
   await second
-    .getByRole("button", { name: "시크릿 일정 보이기", exact: true })
+    .getByRole("button", {
+      name: "시크릿 숨기기 · 시크릿만 보기로 전환",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "시크릿만 보기 · 전체 보기로 전환",
+      exact: true,
+    })
     .click();
   await expect(card(page, changed)).toBeVisible();
   await card(second, changed).click({ button: "right" });
@@ -623,6 +653,8 @@ test("라이트·다크와 각 팔레트에서 기존 카드와 구별된다", a
       expect(hiddenColor.background).not.toBe(visibleColor.background);
       expect(hiddenColor.ink).not.toBe(visibleColor.ink);
       await toggle.click();
+      await expect(toggle).toHaveAttribute("data-secret-mode", "only");
+      await toggle.click();
       await expect(toggle).toHaveAttribute("aria-pressed", "true");
     }
   }
@@ -684,8 +716,13 @@ test("1366px에서 시크릿 생성 스위치를 왼쪽 한 줄로 표시한다"
 test("390px에서 시크릿 토글과 생성 스위치가 잘리지 않는다", async ({
   page,
 }, testInfo) => {
+  await create(page, "모바일 배지 확인");
   await page.setViewportSize({ width: 390, height: 844 });
+  // Compact rows change the month at the existing pixel scroll position.
+  // Return to the fixture's month before testing an enabled view toggle.
+  await page.getByRole("button", { name: "오늘", exact: true }).click();
   const toggle = page.locator(".calendar-secret-toggle");
+  await expect(toggle).toBeEnabled();
   await expect(toggle).toBeInViewport({ ratio: 1 });
   await expect
     .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
@@ -1117,11 +1154,23 @@ test("복제·태그·문서·이미지·삭제 복원 전 과정이 로컬에�
   await expect(rich(page).locator("img[src^='data:image/']")).toHaveCount(2);
   await closeDetail(page);
   await page
-    .getByRole("button", { name: "시크릿 일정 숨기기", exact: true })
+    .getByRole("button", {
+      name: "전체 보기 · 시크릿 숨기기로 전환",
+      exact: true,
+    })
     .click();
   await expect(segment()).toHaveCount(0);
   await page
-    .getByRole("button", { name: "시크릿 일정 보이기", exact: true })
+    .getByRole("button", {
+      name: "시크릿 숨기기 · 시크릿만 보기로 전환",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "시크릿만 보기 · 전체 보기로 전환",
+      exact: true,
+    })
     .click();
   await expect(segment()).toBeVisible();
   expectPrivate(requests, title, body, imageBytes, droppedBytes);
@@ -1973,7 +2022,10 @@ test("여러 날의 혼합 카드 사이로 시크릿을 끌고 일반 순서는
   expect(writes[0].postData()).not.toContain("secret:");
   await expectDisplayOrder(page, [a, s1, c, b, s0]);
   await page
-    .getByRole("button", { name: "시크릿 일정 숨기기", exact: true })
+    .getByRole("button", {
+      name: "전체 보기 · 시크릿 숨기기로 전환",
+      exact: true,
+    })
     .click();
   await expectDisplayOrder(page, [s1, s0]);
   expect((await request(page, `/calendar/entries/${s1}`)).lane).toBe(0);
@@ -1981,7 +2033,16 @@ test("여러 날의 혼합 카드 사이로 시크릿을 끌고 일반 순서는
   await page.reload();
   await expectDisplayOrder(page, [s1, s0]);
   await page
-    .getByRole("button", { name: "시크릿 일정 보이기", exact: true })
+    .getByRole("button", {
+      name: "시크릿 숨기기 · 시크릿만 보기로 전환",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "시크릿만 보기 · 전체 보기로 전환",
+      exact: true,
+    })
     .click();
   await expectDisplayOrder(page, [a, s1, c, b, s0]);
   await peer.close();
@@ -2123,4 +2184,249 @@ test("시크릿 토글은 내 개인 월간과 팀 주간의 내 주간 날짜 �
   await mine.screenshot({
     path: testInfo.outputPath("secret-team-week-mobile.png"),
   });
+});
+
+test("시크릿 3단 보기와 범위 배지는 검색·다른 팀·기간을 걸치는 일정에 독립적이다", async ({
+  page,
+  context,
+}) => {
+  const toggle = page.locator(".calendar-secret-toggle");
+  await expect(toggle).toBeDisabled();
+  const normal = await request(page, "/calendar/entries", "POST", {
+    teamId,
+    userId,
+    id: randomUUID(),
+    title: "일반 일정 확인",
+    date: todayKey(),
+    endDate: todayKey(),
+  });
+  await request(page, "/calendar/entries", "POST", {
+    teamId,
+    userId: null,
+    id: randomUUID(),
+    title: "공용 일정 유지",
+    date: todayKey(),
+    endDate: todayKey(),
+  });
+  const start = addDays(todayKey(), -14);
+  await page.evaluate(
+    ({ key, teamId, start, today }) => {
+      const entry = (
+        id: string,
+        team: string,
+        date: string,
+        endDate: string,
+      ) => ({
+        id: `secret:${id}`,
+        teamId: team,
+        title: `비밀 ${id}`,
+        date,
+        endDate,
+        lane: 0,
+        order: 0,
+        tagIds: [],
+        checkedTagIds: [],
+      });
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          version: 2,
+          visible: false,
+          entries: [
+            entry("overlap", teamId, start, today),
+            entry("today", teamId, today, today),
+            entry("other-team", "another-team", today, today),
+            entry("outside", teamId, "2099-01-01", "2099-01-02"),
+          ],
+        }),
+      );
+    },
+    { key: key(), teamId, start, today: todayKey() },
+  );
+  await page.reload();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "hidden");
+  await expect(toggle.locator(".calendar-secret-count")).toHaveText("2");
+  // Title is a more stable assertion than the row layout when only mode hides it.
+  await expect(
+    page
+      .locator(".calendar-entry-card")
+      .filter({ hasText: normal.title })
+      .first(),
+  ).toBeVisible();
+  // Next month appends to the existing scroll range. The badge must follow
+  // the month in the period picker, not count the older months still loaded.
+  for (let index = 0; index < 2; index++) {
+    const month = await page
+      .getByRole("combobox", { name: "표시 월" })
+      .inputValue();
+    await page.getByRole("button", { name: "다음 달", exact: true }).click();
+    await expect(
+      page.getByRole("combobox", { name: "표시 월" }),
+    ).not.toHaveValue(month);
+  }
+  await expect(toggle).toBeDisabled();
+  await expect(toggle.locator(".calendar-secret-count")).toHaveCount(0);
+  await page.getByRole("button", { name: "오늘", exact: true }).click();
+  await expect(toggle.locator(".calendar-secret-count")).toHaveText("2");
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "only");
+  await expect(card(page, "비밀 today")).toBeVisible();
+  await expect(
+    page.locator(".calendar-entry-card").filter({ hasText: normal.title }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "팀 월간 보기", exact: true }).click();
+  await expect(toggle).toHaveCount(0);
+  await expect(
+    page
+      .locator(".calendar-entry-card")
+      .filter({ hasText: "공용 일정 유지" })
+      .first(),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "개인 월간 보기", exact: true })
+    .click();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "only");
+  const peer = await context.newPage();
+  await enter(peer);
+  await expect(peer.locator(".calendar-secret-toggle")).toHaveAttribute(
+    "data-secret-mode",
+    "only",
+  );
+  await page
+    .getByRole("searchbox", { name: "일정 제목 검색" })
+    .fill("없는 검색어");
+  await expect(toggle).toBeEnabled();
+  await expect(toggle.locator(".calendar-secret-count")).toHaveText("2");
+  await toggle.click();
+  await expect(peer.locator(".calendar-secret-toggle")).toHaveAttribute(
+    "data-secret-mode",
+    "all",
+  );
+  await page.getByRole("searchbox", { name: "일정 제목 검색" }).fill("");
+  await expect(
+    page
+      .locator(".calendar-entry-card")
+      .filter({ hasText: normal.title })
+      .first(),
+  ).toBeVisible();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "hidden");
+  await page
+    .getByRole("button", { name: "팀 주간 일정 보기", exact: true })
+    .click();
+  await expect(toggle.locator(".calendar-secret-count")).toHaveText("2");
+  await page
+    .locator(`.calendar-team-section[data-member-id="${userId}"]`)
+    .getByRole("button", { name: /다음 주$/ })
+    .click();
+  await expect(toggle).toBeDisabled();
+  await expect(toggle.locator(".calendar-secret-count")).toHaveCount(0);
+  await peer.close();
+});
+
+test("시크릿만 선호는 빈 주·월·팀과 마지막 삭제에서 일반 일정으로 복귀하고 다시 적용된다", async ({
+  page,
+  context,
+}) => {
+  const today = todayKey();
+  const future = addDays(today, 63);
+  const emptyTeam = (
+    await request(page, "/admin/teams", "POST", {
+      name: `빈 시크릿 팀 ${randomUUID().slice(0, 6)}`,
+      members: [{ userId, role: "lead" }],
+    })
+  ).id;
+  for (const [ownerTeam, date, title] of [
+    [teamId, today, "현재 일반 일정"],
+    [teamId, addDays(today, 7), "다음 주 일반 일정"],
+    [teamId, future, "다른 달 일반 일정"],
+    [emptyTeam, today, "다른 팀 일반 일정"],
+  ])
+    await request(page, "/calendar/entries", "POST", {
+      teamId: ownerTeam,
+      userId,
+      id: randomUUID(),
+      title,
+      date,
+      endDate: date,
+    });
+  await page.reload();
+  await create(page, "마지막 시크릿");
+  const toggle = page.locator(".calendar-secret-toggle");
+  const normal = (target: Page, title: string) =>
+    target.locator(".calendar-entry-card").filter({ hasText: title }).first();
+  await toggle.click();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "only");
+  await expect(normal(page, "현재 일반 일정")).toHaveCount(0);
+  const peer = await context.newPage();
+  await enter(peer);
+  const peerToggle = peer.locator(".calendar-secret-toggle");
+  await expect(peerToggle).toHaveAttribute("data-secret-mode", "only");
+  await page
+    .getByRole("button", { name: "팀 주간 일정 보기", exact: true })
+    .click();
+  const mine = page.locator(
+    `.calendar-team-section[data-member-id="${userId}"]`,
+  );
+  await mine.getByRole("button", { name: /다음 주$/ }).click();
+  await expect(toggle).toBeDisabled();
+  await expect(normal(page, "다음 주 일반 일정")).toBeVisible();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "all");
+  await expect(toggle).toHaveAttribute(
+    "aria-label",
+    "전체 보기 · 시크릿 숨기기로 전환",
+  );
+  await mine.getByRole("button", { name: /이전 주$/ }).click();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "only");
+  await expect(normal(page, "현재 일반 일정")).toHaveCount(0);
+  await page
+    .getByRole("button", { name: "개인 월간 보기", exact: true })
+    .click();
+  await page
+    .getByRole("combobox", { name: "캘린더 연도" })
+    .selectOption(future.slice(0, 4));
+  await page
+    .getByRole("combobox", { name: "표시 월" })
+    .selectOption(String(Number(future.slice(5, 7))));
+  await expect(toggle).toBeDisabled();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "all");
+  await expect(normal(page, "다른 달 일반 일정")).toBeVisible();
+  await page.getByRole("button", { name: "오늘", exact: true }).click();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "only");
+  await page.getByLabel("팀 선택", { exact: true }).selectOption(emptyTeam);
+  await expect(toggle).toBeDisabled();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "all");
+  await expect(normal(page, "다른 팀 일반 일정")).toBeVisible();
+  await page.getByLabel("팀 선택", { exact: true }).selectOption(teamId);
+  await expect(toggle).toHaveAttribute("data-secret-mode", "only");
+  await card(page, "마지막 시크릿").click();
+  await detail(page)
+    .getByRole("button", { name: "일정 삭제", exact: true })
+    .click();
+  for (const target of [page, peer]) {
+    await expect(target.locator(".calendar-secret-toggle")).toBeDisabled();
+    await expect(target.locator(".calendar-secret-toggle")).toHaveAttribute(
+      "data-secret-mode",
+      "all",
+    );
+    await expect(normal(target, "현재 일반 일정")).toBeVisible();
+  }
+  await peer.reload();
+  await expect(peerToggle).toBeDisabled();
+  await expect(peerToggle).toHaveAttribute("data-secret-mode", "all");
+  await expect(normal(peer, "현재 일반 일정")).toBeVisible();
+  expect(
+    await page.evaluate(
+      (id) => localStorage.getItem(`weekly-plan:secret-calendar-mode:${id}`),
+      userId,
+    ),
+  ).toBe("only");
+  await page.getByRole("button", { name: "실행취소", exact: true }).click();
+  await expect(toggle).toHaveAttribute("data-secret-mode", "only");
+  await expect(peerToggle).toHaveAttribute("data-secret-mode", "only");
+  await expect(normal(page, "현재 일반 일정")).toHaveCount(0);
+  await peer.reload();
+  await expect(peerToggle).toHaveAttribute("data-secret-mode", "only");
+  await peer.close();
 });
