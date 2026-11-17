@@ -120,6 +120,13 @@ for (const target of [4, 5])
     );
     const published = await service.upgrade({ ...options, target });
     assert.equal(published.protocol, target);
+    const repeated = await service.upgrade({ ...options, target });
+    assert.equal(repeated.upgraded, false);
+    assert.equal(repeated.head, published.head);
+    await assert.rejects(
+      service.upgrade({ ...options, target, expectedHash: "0".repeat(64) }),
+      (error) => error.code === "SYNC_UPGRADE_HEAD",
+    );
     assert.notEqual(published.head, head);
     assert.equal(a.link.mode, "paused");
     await assert.rejects(old.receive(legacy.link, published.head), /protocol/i);
@@ -141,11 +148,11 @@ for (const target of [4, 5])
       }),
     );
     const held = canonical(b.pending);
-    await assert.rejects(peer.upgrade(options), /pending\/held/);
+    await assert.rejects(peer.upgrade({ ...options, target }), /pending\/held/);
     assert.equal(canonical(b.pending), held);
     assert.equal(b.link.canonical_head, head);
     b.pending = [];
-    const received = await peer.upgrade(options);
+    const received = await peer.upgrade({ ...options, target });
     assert.equal(received.received, true);
     assert.equal(received.head, published.head);
     assert.equal(stateHash(a.state), stateHash(b.state));

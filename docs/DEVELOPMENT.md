@@ -535,7 +535,7 @@ PG 테스트는 임시 서버를 직접 실행합니다. 일반 `npm test`에서
 
 같은 PG 행·outbox·Git 부모를 복원하는 전후 비교는 기준 커밋을 별도 임시 디렉토리에 `git archive`로 풀고 그 디렉토리에 기존 `node_modules`를 연결한 뒤 `TEST_PG_BIN=/테스트/PG/bin node scripts/performance/sync-sheet-clone-performance.mjs --baseline /임시/기준소스 --output docs/validation/sheet-clone-sync-performance.json`으로 실행합니다. `--backlog 0`은 원격 이력이 없는 발행 비교입니다. `--hotpath-output /tmp/clone-hotpath.json`을 더하면 같은 합성 명령을 Deno 보조 검사에 사용할 수 있습니다: `deno run --allow-read --node-modules-dir=manual --no-config --no-lock tests/support/worker-sheet-clone-sync-deno.mjs /비교할/소스 /tmp/clone-hotpath.json`. Deno 보조 검사는 반복 투영·검증·직렬화의 첫 실행/워밍 후 시간을 측정하며 PG·Git·Supabase의 실행 한도 검증을 대신하지 않습니다.
 
-공유 상태 전체에는 기본 상한이 없고 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`를 지정한 경우에만 검사합니다(`shared/sync/sync-capacity.mjs`의 `capacityLimits`). snapshot은 64MiB, 이벤트 파일은 32MiB(사본 복사처럼 나눌 수 없는 명령 하나가 들어가도록 정한 값), receipt는 별도 16MiB로 검사합니다. `tests/sync/protocol/sync-state-capacity.test.mjs`는 27.88MiB·30,714개 합성 자료(2026-11-02 이전 28.76MiB·33,021개, 본문 없는 일정 문서 2,307개 제외)의 SQLite 최초 게시, 외부 `serviceFor`의 PG 가져오기, 기존 4MiB 환경값에서의 원자적 거절, HTTP 후속 저장·역방향 수신을 검증합니다. 상태·파일 예산을 결합해 이벤트 제한까지 풀리는 회귀, 미전송 변경의 임의 삭제, DB 계수와 메모리 계수의 불일치를 확인합니다. Node 테스트의 성공은 Supabase/Deno 자원 한도 내 실행 보장이 아닙니다. 형식과 스키마를 유지한 한도 상향에는 DB 버전 증가를 하지 않으며 양쪽 런타임 배포와 기존 낮은 환경값 확인이 필요합니다.
+공유 상태 전체에는 기본 상한이 없고 `SYNC_MAX_STATE_BYTES`·`SYNC_MAX_ENTITIES`를 지정한 경우에만 검사합니다(`shared/sync/sync-capacity.mjs`의 `capacityLimits`). snapshot 압축 객체는 64MiB(해제: Edge 64MiB, Node·운영자 CLI 512MiB), 이벤트 파일은 32MiB(사본 복사처럼 나눌 수 없는 명령 하나가 들어가도록 정한 값), receipt는 별도 16MiB로 검사합니다. `tests/sync/protocol/sync-state-capacity.test.mjs`는 27.88MiB·30,714개 합성 자료(2026-11-02 이전 28.76MiB·33,021개, 본문 없는 일정 문서 2,307개 제외)의 SQLite 최초 게시, 외부 `serviceFor`의 PG 가져오기, 기존 4MiB 환경값에서의 원자적 거절, HTTP 후속 저장·역방향 수신을 검증합니다. 상태·파일 예산을 결합해 이벤트 제한까지 풀리는 회귀, 미전송 변경의 임의 삭제, DB 계수와 메모리 계수의 불일치를 확인합니다. Node 테스트의 성공은 Supabase/Deno 자원 한도 내 실행 보장이 아닙니다. 형식과 스키마를 유지한 한도 상향에는 DB 버전 증가를 하지 않으며 양쪽 런타임 배포와 기존 낮은 환경값 확인이 필요합니다.
 
 `performance:stress -- 10000:30`은 이전 릴리스 비교용 기존 시나리오이고 `performance:sync`는 같은 팀/자료에서 미연결·연결·외부 장애·초기 게시·백업 중 저장 및 commit→30개 SSE 도착을 비교합니다. 결과는 Git 제외 `docs/validation/`에 저장합니다. 측정 당시의 실제 결과와 목표 미달은 릴리스 보고서에 기록하며 통과 수치를 고정 보장으로 설명하지 않습니다.
 
@@ -621,3 +621,11 @@ Pages 접속은 `functions/[[path]].js` → `GRAEBOARD_BACKEND` → gateway Work
 외부 `CanonicalSlice`는 DB의 canonical JSON 원문을 읽을 때 깊게 동결한 객체와 원문 바이트를 실행 범위 안에서 함께 보관합니다. 기존 PostgreSQL 상태 합계와 같이 저장된 canonical 바이트를 전제로 하며, 수신 JSON에는 이 경로를 적용하지 않습니다. 해결 표시만 바뀐 충돌은 나머지 원문 바이트를 보존해 상태 합계·용량 검사·DB 패치에 재사용합니다. 파싱된 명령 캐시는 16MiB·128개, 저장 JSON은 16MiB, canonical 문자열 전체는 48MiB로 제한하며 실행 종료 시 해제합니다. 사내 저장 형식이나 공유 프로토콜은 바뀌지 않습니다.
 
 로컬에서 저장한 충돌 해결의 선두 묶음이 공유 완료되거나 자기 공유본을 다시 받을 때, 명령 순서와 canonical receipt의 payload hash가 대기열과 모두 같으면 이미 저장한 C+P 화면 투영을 유지합니다. 수신 직전에는 작은 ID·해시 메타데이터로 확인하고 커밋 트랜잭션에서 다시 확인합니다. 일치할 때는 남은 대기 원문을 읽거나 이미지/화면 투영을 재실행하지 않고 원문·receipt·head·상태 합계·대기 승인을 갱신합니다. 대기 용량 제한은 SQL 바이트 합계로 계속 검사합니다. 순서 변경·해시 누락은 기존 투영 경로, 해시 불일치는 불변 명령 오류·롤백을 유지합니다. 다른 사이트 변경과 일반 명령에는 이 지름길을 적용하지 않습니다.
+
+### 운영자 프로토콜 전환과 큰 snapshot
+
+외부 전환은 `scripts/sync/sync-external-import.mjs --upgrade` → `upgradeTeam` → `serviceFor` → `SyncService.upgrade` 경로입니다. 기본 실행은 조회만 하고 `--execute`에 정확한 head/hash를 요구합니다. 실행 시 설치 ID·paused·정리 작업을 확인하고, 리스 안에서 C/P·충돌·head/hash를 재검증합니다. 전환에는 이미지 접근이 필요하지 않습니다. 운영자 Git 요청만 제한 시간을 120초로 잡아 약 50MB snapshot의 업로드·다운로드를 허용하고 Edge 기본 20초는 유지합니다. 사내 API는 기존 `node-routes` → `createNodeSync` → background worker 경로로 동일한 전환을 받습니다.
+
+`maxSnapshotDecodedBytes`는 Node worker와 운영자 전환·가져오기·이어받기에서만 512MiB로 전달합니다. `SyncService`의 인코더, 기존 디코더, checkpoint 생성, Node bootstrap 재시작 자료에 같은 범위를 사용합니다. Edge 기본 해제 한도와 모든 Git 객체의 압축 한도는 64MiB입니다. 기존 canonical JSON/gzip·전환 봉투·스키마는 유지합니다. 게시 후 응답 유실은 기존 확인값으로 재실행하며, 이미 반영한 경우에도 paused·직계 전환·이전 hash·현재 결과 hash가 정확히 같은 경우에만 완료로 인정합니다.
+
+회귀는 운영자 PostgreSQL 전환→실제 내부 API/SQLite 수신→사본 편집의 양방향 전달, 원래 확인값 재실행, 잘못된 hash 거절, 압축 해제 경계와 Edge 제한 유지를 검사합니다. 큰 운영 자료 복제본 검증은 기존 자료를 보존한 별도 DB·Git에서 수행하며 일반 테스트에 운영 원문을 넣지 않습니다.

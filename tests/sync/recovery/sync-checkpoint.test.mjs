@@ -244,6 +244,53 @@ async function fixture(count = 5) {
   }
   return { repo, state, genesis, states };
 }
+test("operator checkpoint import defers images; ordinary recovery still verifies them before committing", async () => {
+  const { repo, state, genesis } = await fixture(2);
+  await new SyncService({
+    transport: repo,
+    store: store(state, repo.head),
+    identity,
+  }).checkpoint();
+  for (const [mode, head] of [
+    ["importing", null],
+    ["recovery", genesis],
+  ]) {
+    for (const deferred of [false, true]) {
+      const local = store(markedState(), head, mode);
+      let imageCalls = 0;
+      const service = new SyncService({
+        transport: repo,
+        store: local,
+        identity,
+        deferImages: deferred,
+        images: {
+          receive() {
+            imageCalls++;
+            throw new Error("image gateway unreachable");
+          },
+        },
+      });
+      const run = () =>
+        service.run({
+          receiveOnly: true,
+          updateStatus: false,
+          loadCheckpoint: true,
+        });
+      if (deferred) {
+        await run();
+        assert.equal(imageCalls, 0);
+        assert.equal(local.link.canonical_head, repo.head);
+        assert.equal(stateHash(local.state), stateHash(state));
+      } else {
+        await assert.rejects(run(), /image gateway unreachable/);
+        assert.equal(imageCalls, 1);
+        assert.equal(local.link.canonical_head, head);
+        assert.deepEqual(local.commits, []);
+      }
+    }
+  }
+});
+
 test("checkpoint CAS rejection returns 409, keeps C/P intact and releases the lease for a successful retry", async () => {
   const { repo, state } = await fixture(2),
     head = repo.head;
