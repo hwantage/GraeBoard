@@ -1,4 +1,8 @@
-import { isSyncRequest, syncErrorMessage } from "../sync/sync-error-message.js";
+import {
+  isSyncRequest,
+  syncErrorMessage,
+  syncLogErrorMessage,
+} from "../sync/sync-error-message.js";
 
 const identifier = (value) =>
   typeof value === "string" && /^[a-zA-Z0-9_.:-]{1,128}$/.test(value)
@@ -57,8 +61,19 @@ export function apiErrorMessage({
   // Provider diagnostics remain classified for external requests.
   if (knownMessage && !external && status >= 500 && !code) return knownMessage;
 
+  // Supabase adds EDGE_FUNCTION_ERROR to handled failures too. Keep our exact
+  // log diagnostics and trace details without overriding platform limit errors.
+  const logMessage =
+    external &&
+    method.toUpperCase() === "GET" &&
+    /^\/(?:api\/)?teams\/[^/?]+\/sync\/log(?:\?|$)/.test(path) &&
+    [429, 502, 503].includes(status) &&
+    (!code || code === "EDGE_FUNCTION_ERROR") &&
+    syncLogErrorMessage(knownMessage);
   let reason;
-  if (status === 429 || code === "RATE_LIMIT_EXCEEDED") {
+  if (logMessage) {
+    reason = logMessage;
+  } else if (status === 429 || code === "RATE_LIMIT_EXCEEDED") {
     const seconds = Math.ceil(retryAfterMs(headers) / 1000);
     const wait =
       Number.isFinite(seconds) && seconds > 0

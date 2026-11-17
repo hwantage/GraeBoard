@@ -489,24 +489,49 @@ test("외부 동기화 로그는 CPU 오류의 원인·조치·실행 ID를 보�
   ).toBe(true);
 });
 
-test("외부 로그 연동 오류는 빈 기록으로 처리하지 않고 다시 조회할 수 있다", async ({
-  page,
-}) => {
-  await open(page, { site: "external" });
-  await page.route("**/api/teams/*/sync/log?*", (route) =>
-    route.fulfill({
-      status: 502,
-      json: {
-        error:
-          "Supabase 로그 조회 토큰의 만료 또는 analytics_logs_read 권한을 확인하세요.",
-      },
-    }),
-  );
-  await page.getByRole("button", { name: "동기화 로그", exact: true }).click();
-  const box = dialog(page);
-  await expect(box).toContainText("analytics_logs_read");
-  await expect(box).not.toContainText("조회 범위에 해당하는 로그가 없습니다");
-  await expect(
-    box.getByRole("button", { name: "새로 고침", exact: true }),
-  ).toBeEnabled();
-});
+for (const { status, error, expected } of [
+  {
+    status: 503,
+    error:
+      "Supabase 로그 연결이 설정되지 않았습니다. 운영자가 로그 조회 토큰·프로젝트·graeboard 함수 ID를 Edge Function에 등록해야 합니다.",
+    expected: "Supabase 로그 연결이 설정되지 않았습니다",
+  },
+  {
+    status: 502,
+    error:
+      "Supabase 로그 조회 토큰의 만료 또는 analytics_logs_read 권한을 확인하세요.",
+    expected: "analytics_logs_read",
+  },
+  {
+    status: 429,
+    error: "Supabase 로그 조회 한도에 도달했습니다. 잠시 후 새로 고치세요.",
+    expected: "Supabase 로그 조회 한도",
+  },
+])
+  test(`외부 로그 ${status} 오류는 Supabase 헤더와 함께 원인·요청 ID를 표시한다`, async ({
+    page,
+  }) => {
+    await open(page, { site: "external" });
+    await page.route("**/api/teams/*/sync/log?*", (route) =>
+      route.fulfill({
+        status,
+        headers: {
+          "sb-error-code": "EDGE_FUNCTION_ERROR",
+          "sb-request-id": "log-request",
+        },
+        json: { error },
+      }),
+    );
+    await page
+      .getByRole("button", { name: "동기화 로그", exact: true })
+      .click();
+    const box = dialog(page);
+    await expect(box).toContainText(expected);
+    await expect(box).toContainText(`HTTP ${status}`);
+    await expect(box).toContainText("요청 ID log-request");
+    await expect(box).not.toContainText("데이터베이스 연결");
+    await expect(box).not.toContainText("조회 범위에 해당하는 로그가 없습니다");
+    await expect(
+      box.getByRole("button", { name: "새로 고침", exact: true }),
+    ).toBeEnabled();
+  });

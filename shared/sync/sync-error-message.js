@@ -74,6 +74,26 @@ export function syncErrorMessage(error) {
   return "";
 }
 
+// Only our bounded log handler's fixed diagnostics may pass through provider
+// error headers. Exact matches prevent upstream text or credentials leaking.
+const logMessages = new Set([
+  "외부 동기화 로그의 Supabase 함수 설정을 확인하세요.",
+  "Supabase 로그 응답 형식을 확인하지 못했습니다.",
+  "Supabase 로그 응답이 조회 용량 한도를 넘었습니다.",
+  "Supabase 로그 응답이 비어 있습니다.",
+  "Supabase 로그 연결이 설정되지 않았습니다. 운영자가 로그 조회 토큰·프로젝트·graeboard 함수 ID를 Edge Function에 등록해야 합니다.",
+  "로그 조회가 진행 중이거나 잠시 대기 중입니다. 잠시 후 새로 고치세요.",
+  "Supabase 로그 조회 한도에 도달했습니다. 잠시 후 새로 고치세요.",
+  "Supabase 로그 조회 토큰의 만료 또는 analytics_logs_read 권한을 확인하세요.",
+  "Supabase 로그 조회 요금제와 사용량을 확인하세요.",
+  "Supabase 로그 서버에 연결하지 못했습니다. 잠시 후 새로 고치세요.",
+  "Supabase에서 로그를 조회하지 못했습니다. 운영자가 로그 API 설정을 확인해야 합니다.",
+  "Supabase 로그 응답을 받지 못했습니다. 잠시 후 새로 고치세요.",
+]);
+
+export const syncLogErrorMessage = (message) =>
+  logMessages.has(message) ? message : "";
+
 export const isSyncRequest = (path) =>
   /^\/(?:api\/)?(?:admin\/)?teams\/[^/]+\/(?:sync|connection)(?:\/|$)/.test(
     path,
