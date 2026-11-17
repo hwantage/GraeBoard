@@ -277,6 +277,8 @@ export async function bridgeFixture(t, { port }) {
   await drain();
   return {
     teamId,
+    env,
+    profile: profileFor(env, "outside", teamId),
     db,
     app,
     // What a recovery of the internal site needs (scripts/sync/sync-recover.mjs).

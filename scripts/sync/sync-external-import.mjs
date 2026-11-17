@@ -9,17 +9,32 @@ import pg from "pg";
 import { resourceBindings } from "../../edge/resources.mjs";
 import { databaseFor, controlTransaction } from "../../worker/storage/data.mjs";
 import { GitHubApiTransport } from "../../worker/sync/git.mjs";
-import { importTeam, imageSync, runTeam } from "../../worker/sync/sync.mjs";
+import {
+  importTeam,
+  imageSync,
+  runTeam,
+  serviceFor,
+} from "../../worker/sync/sync.mjs";
+import {
+  protocolVersion,
+  stateHash,
+} from "../../server/sync/core/protocol.mjs";
 import { materialize } from "../../worker/sync/materialize.mjs";
 import { R2ImageStore } from "../../worker/documents/images.mjs";
 import { profileFor, siteTeamId } from "../../shared/sync/sync-profiles.js";
-import { SYNC_SNAPSHOT_MAX_BYTES } from "../../shared/sync/sync-limits.js";
+import {
+  SYNC_SNAPSHOT_MAX_BYTES,
+  SYNC_NODE_SNAPSHOT_MAX_DECODED_BYTES,
+} from "../../shared/sync/sync-limits.js";
 
 // A first import reads every object of the genesis commit (one GitHub request
 // per image), which exceeds the per-invocation budget of a hosted runtime. The
 // operator run has no such limit, so it spends a budget sized for the whole
 // repository within GitHub's hourly allowance.
 export const OPERATOR_REQUEST_BUDGET = 4500;
+// A transition snapshot can approach the 64 MiB Git-object limit. Uploading its
+// base64 body over the operator network can take longer than an Edge request.
+const OPERATOR_REQUEST_TIMEOUT_MS = 120000;
 
 // Hosted Edge runtimes cap CPU and memory per request, which a first import of a
 // large team can exceed. This runs the same external import path from an
@@ -149,12 +164,17 @@ export async function retrying(
 // once up front (DNS failed mid-run on this path) and a few connect retries.
 export async function externalEnvironment(
   settings,
-  { log = () => {}, r2Bucket = "" } = {},
+  { log = () => {}, r2Bucket = "", withImages = true } = {},
 ) {
   // With the bucket reached through Wrangler nothing goes to the gateway.
-  if (r2Bucket && !settings.GRAEBOARD_RESOURCE_SECRET)
+  if (withImages && r2Bucket && !settings.GRAEBOARD_RESOURCE_SECRET)
     settings = { ...settings, GRAEBOARD_RESOURCE_SECRET: "wrangler" };
-  const missing = REQUIRED_SETTINGS.filter((key) => !settings[key]);
+  const missing = REQUIRED_SETTINGS.filter(
+    (key) =>
+      (withImages ||
+        !["RESOURCE_ORIGIN", "GRAEBOARD_RESOURCE_SECRET"].includes(key)) &&
+      !settings[key],
+  );
   if (missing.length)
     throw new Error(`설정 파일에 ${missing.join(", ")} 값이 필요합니다.`);
   const url = new URL(settings.GRAEBOARD_DATABASE_URL);
@@ -194,7 +214,7 @@ export async function externalEnvironment(
     }
     throw last;
   };
-  const resources = resourceBindings(settings);
+  const resources = withImages ? resourceBindings(settings) : null;
   return {
     env: {
       ...settings,
@@ -203,8 +223,9 @@ export async function externalEnvironment(
         connectionString: url.href,
         pool: { connect, end: () => pool.end() },
       },
-      R2_TEAM: r2Bucket ? wranglerBucket(r2Bucket) : resources.bucket,
-      IMAGES: resources.images,
+      R2_TEAM:
+        withImages && r2Bucket ? wranglerBucket(r2Bucket) : resources?.bucket,
+      IMAGES: resources?.images,
     },
     close: () => pool.end(),
   };
@@ -273,6 +294,7 @@ export async function importExternalTeam(
           admin() {},
           deferImages,
           maxCommits: 64,
+          maxSnapshotDecodedBytes: SYNC_NODE_SNAPSHOT_MAX_DECODED_BYTES,
           leaseMs: 6 * 60 * 60 * 1000,
           incrementalMaterialize: true,
           // Without a CPU limit, reading C once per cycle and replaying 64
@@ -283,6 +305,7 @@ export async function importExternalTeam(
             token: env[profile.githubSecret],
             maxBlobBytes: SYNC_SNAPSHOT_MAX_BYTES,
             maxRequests: OPERATOR_REQUEST_BUDGET,
+            requestTimeoutMs: OPERATOR_REQUEST_TIMEOUT_MS,
           }),
         },
         { profileId: profile.profileId, teamId },
@@ -361,6 +384,7 @@ export async function catchUpTeam(
       token: env[profile.githubSecret],
       maxBlobBytes: SYNC_SNAPSHOT_MAX_BYTES,
       maxRequests: OPERATOR_REQUEST_BUDGET,
+      requestTimeoutMs: OPERATOR_REQUEST_TIMEOUT_MS,
     });
   const probe = transportFor();
   await probe.check();
@@ -401,6 +425,7 @@ export async function catchUpTeam(
       // Every commit behind the head in one leased run: releasing the lease
       // between commits would hand the next large one back to a hosted run.
       maxCommits: 64,
+      maxSnapshotDecodedBytes: SYNC_NODE_SNAPSHOT_MAX_DECODED_BYTES,
       leaseMs: 30 * 60 * 1000,
     });
     if (result.busy) {
@@ -432,6 +457,107 @@ export async function catchUpTeam(
   };
   log(JSON.stringify(final));
   return final;
+}
+
+// The explicit protocol transition of the external site, from the operator
+// machine. The transition validates, converts and hashes the team's whole
+// state several times, which exceeds the hosted runtime's CPU limit for any
+// team of real size (HTTP 546 from POST /sync/upgrade). This runs the same
+// SyncService.upgrade against the team's PostgreSQL without that limit.
+// Without `execute` it only reports the state, including the state hash the
+// hosted status cannot afford to compute.
+export async function upgradeExternalTeam(settings, options = {}) {
+  const log = options.log || console.log;
+  const { env, close } = await externalEnvironment(settings, {
+    log,
+    withImages: false,
+  });
+  try {
+    const teamId = siteTeamId(env);
+    const profile = profileFor(
+      env,
+      options.profileId || JSON.parse(env.SYNC_PROFILES)[0]?.profileId,
+      teamId,
+    );
+    return await upgradeTeam(env, profile, options);
+  } finally {
+    await close();
+  }
+}
+export async function upgradeTeam(
+  env,
+  profile,
+  { execute = false, expectedHead, expectedHash, log = console.log } = {},
+) {
+  const teamId = profile.teamId,
+    db = databaseFor(env, profile);
+  await db.health();
+  const transport = new GitHubApiTransport({
+    repository: profile.repository,
+    token: env[profile.githubSecret],
+    maxBlobBytes: SYNC_SNAPSHOT_MAX_BYTES,
+    maxRequests: OPERATOR_REQUEST_BUDGET,
+    requestTimeoutMs: OPERATOR_REQUEST_TIMEOUT_MS,
+  });
+  await transport.check();
+  const link = await db.readLink(teamId);
+  let state = await db.readState(teamId);
+  const status = {
+    teamId,
+    profileId: profile.profileId,
+    repository: profile.repository,
+    head: await transport.readHead(),
+    mode: link?.mode || "none",
+    protocol: protocolVersion(state),
+    expectedHead: link?.canonical_head || null,
+    expectedHash: stateHash(state),
+    installationMatches: link?.installation_id === env.INSTALLATION_ID,
+    pending: (await db.readPending(teamId)).length,
+    conflicts: Object.values(state.conflicts).filter(
+      (conflict) => !conflict.resolution,
+    ).length,
+    execute,
+  };
+  log(JSON.stringify(status));
+  state = null; // Release the preview before the leased service loads the full state.
+  if (!execute) return status;
+  // The same preconditions the hosted route and the service enforce, checked
+  // here first so a wrong settings file or a running site changes nothing.
+  if (link?.mode !== "paused")
+    throw new Error("일시정지(paused)한 팀만 전환할 수 있습니다.");
+  if (link.installation_id !== env.INSTALLATION_ID)
+    throw new Error("INSTALLATION_ID가 이 팀의 연결과 다릅니다.");
+  if (
+    !/^[a-f0-9]{40}$/.test(expectedHead || "") ||
+    !/^[a-f0-9]{64}$/.test(expectedHash || "")
+  )
+    throw new Error(
+      "실행에는 --expected-head(40hex)와 --expected-hash(64hex)가 필요합니다.",
+    );
+  const jobs = await db.withTeamTransaction(
+    teamId,
+    (tx) =>
+      tx.query(
+        "SELECT 1 FROM site_maintenance_jobs WHERE team_id=$1 AND phase NOT IN ('complete','cancelled')",
+        [teamId],
+      ),
+    { readOnly: true },
+  );
+  if (jobs.rows.length) throw new Error("정리·백업 작업을 먼저 완료하세요.");
+  // A transition changes no image, so the image store is not consulted: the
+  // operator machine needs no image gateway credentials for this command.
+  const result = await serviceFor(env, profile, link, {
+    transport,
+    deferImages: true,
+    leaseMs: 30 * 60 * 1000,
+    maxSnapshotDecodedBytes: SYNC_NODE_SNAPSHOT_MAX_DECODED_BYTES,
+  }).upgrade({
+    expectedHead,
+    expectedHash,
+    peersStopped: true,
+  });
+  log(JSON.stringify(result));
+  return result;
 }
 
 // Install every image the current state references and R2 does not hold yet.
@@ -467,6 +593,7 @@ export async function installExternalImages(
       token: env[profile.githubSecret],
       maxBlobBytes: SYNC_SNAPSHOT_MAX_BYTES,
       maxRequests: OPERATOR_REQUEST_BUDGET,
+      requestTimeoutMs: OPERATOR_REQUEST_TIMEOUT_MS,
     });
     // Already installed objects are skipped, so a pass interrupted by the
     // network simply continues where it stopped.
@@ -498,6 +625,10 @@ export async function main(args = process.argv.slice(2)) {
       images: { type: "boolean" },
       "with-images": { type: "boolean" },
       "catch-up": { type: "boolean" },
+      upgrade: { type: "boolean" },
+      execute: { type: "boolean" },
+      "expected-head": { type: "string" },
+      "expected-hash": { type: "string" },
       publish: { type: "boolean" },
       "defer-images": { type: "boolean" },
       "r2-bucket": { type: "string" },
@@ -508,11 +639,32 @@ export async function main(args = process.argv.slice(2)) {
     console.log(
       "npm run sync:external-import -- --settings /private/external-import.env [--profile-id ID] [--dry-run] [--with-images]\n" +
         "npm run sync:external-import -- --settings /private/external-import.env --images\n" +
-        "npm run sync:external-import -- --settings /private/external-import.env --catch-up [--dry-run] [--publish] [--defer-images] [--r2-bucket NAME]",
+        "npm run sync:external-import -- --settings /private/external-import.env --catch-up [--dry-run] [--publish] [--defer-images] [--r2-bucket NAME]\n" +
+        "npm run sync:external-import -- --settings /private/external-import.env --upgrade [--expected-head HEAD --expected-hash HASH --execute]",
     );
     if (!values.help) process.exitCode = 1;
     return;
   }
+  if (
+    [values.images, values["catch-up"], values.upgrade].filter(Boolean).length >
+    1
+  )
+    throw new Error("--images, --catch-up, --upgrade 중 하나만 지정하세요.");
+  if (
+    !values.upgrade &&
+    (values.execute || values["expected-head"] || values["expected-hash"])
+  )
+    throw new Error("전환 확인 옵션은 --upgrade와 함께 지정하세요.");
+  if (
+    values.upgrade &&
+    (values.publish ||
+      values["with-images"] ||
+      values["defer-images"] ||
+      (values.execute && values["dry-run"]))
+  )
+    throw new Error(
+      "--upgrade와 가져오기·게시 옵션 또는 --execute와 --dry-run을 함께 사용할 수 없습니다.",
+    );
   // Secrets may come from the operator's environment instead of the file, e.g.
   // GIT_TEAM=$(gh auth token), so they never need to be written to disk.
   const settings = parseEnv(readFileSync(values.settings, "utf8"));
@@ -521,6 +673,16 @@ export async function main(args = process.argv.slice(2)) {
   if (values.images) {
     await installExternalImages(settings, {
       profileId: values["profile-id"],
+      r2Bucket: values["r2-bucket"],
+    });
+    return;
+  }
+  if (values.upgrade) {
+    await upgradeExternalTeam(settings, {
+      profileId: values["profile-id"],
+      execute: !!values.execute,
+      expectedHead: values["expected-head"],
+      expectedHash: values["expected-hash"],
       r2Bucket: values["r2-bucket"],
     });
     return;

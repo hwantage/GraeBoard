@@ -169,7 +169,9 @@ export function serviceFor(env, profile, link, options = {}) {
     adapter = imageSync(database, profile, images);
   const service = new SyncService({
     stateLimits: limits,
-    snapshotDecoder: (bytes) => decodeBoundedSnapshot(bytes, limits),
+    maxSnapshotDecodedBytes: options.maxSnapshotDecodedBytes,
+    snapshotDecoder: (bytes) =>
+      decodeBoundedSnapshot(bytes, limits, options.maxSnapshotDecodedBytes),
     transport,
     store: boundStore(database, profile.teamId, { ...options, limits }),
     identity: {
@@ -288,6 +290,7 @@ export async function runTeam(
     deferImages = false,
     maxCommits = 0,
     leaseMs = 0,
+    maxSnapshotDecodedBytes,
     // A hosted invocation cannot afford a whole-team re-compare per commit.
     incrementalMaterialize = true,
     // Nor loading and hashing the whole team (see boundStore reduceSlice).
@@ -322,6 +325,7 @@ export async function runTeam(
       ...(transport ? { transport } : {}),
       ...(maxCommits ? { maxCommits } : {}),
       ...(leaseMs ? { leaseMs } : {}),
+      maxSnapshotDecodedBytes,
       incrementalMaterialize,
       slices,
       deferImages,
@@ -484,6 +488,7 @@ export async function importTeam(ctx, body) {
     deferImages: !!ctx.deferImages,
     maxCommits: ctx.maxCommits || 0,
     leaseMs: ctx.leaseMs || 0,
+    maxSnapshotDecodedBytes: ctx.maxSnapshotDecodedBytes,
     incrementalMaterialize: !!ctx.incrementalMaterialize,
     slices: ctx.slices !== false,
   });

@@ -163,7 +163,11 @@ export async function exclusiveSync(work) {
   }
 }
 
-export function decodeBoundedSnapshot(bytes, limits = capacityLimits()) {
+export function decodeBoundedSnapshot(
+  bytes,
+  limits = capacityLimits(),
+  maxDecodedBytes = SYNC_SNAPSHOT_MAX_BYTES,
+) {
   if (!bytes || bytes.byteLength > SYNC_SNAPSHOT_MAX_BYTES)
     throw new CapacityError(
       "External snapshot exceeds compressed byte capacity; canonical cursor is unchanged",
@@ -171,7 +175,7 @@ export function decodeBoundedSnapshot(bytes, limits = capacityLimits()) {
   let source = bytes;
   try {
     if (bytes[0] === 0x1f && bytes[1] === 0x8b)
-      source = gunzipSync(bytes, { maxOutputLength: SYNC_SNAPSHOT_MAX_BYTES });
+      source = gunzipSync(bytes, { maxOutputLength: maxDecodedBytes });
   } catch (error) {
     if (
       error.code === "ERR_BUFFER_TOO_LARGE" ||
@@ -182,7 +186,7 @@ export function decodeBoundedSnapshot(bytes, limits = capacityLimits()) {
       );
     throw error;
   }
-  if (source.byteLength > SYNC_SNAPSHOT_MAX_BYTES)
+  if (source.byteLength > maxDecodedBytes)
     throw new CapacityError(
       "External snapshot exceeds decoded byte capacity; canonical cursor is unchanged",
     );

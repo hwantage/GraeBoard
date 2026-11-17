@@ -16,6 +16,7 @@ import {
   isSyncInterruption,
 } from "./errors.mjs";
 import { encodeSnapshot, decodeSnapshot } from "./snapshot.mjs";
+import { SYNC_SNAPSHOT_MAX_BYTES } from "../../../shared/sync/sync-limits.js";
 import { randomUUID } from "node:crypto";
 import {
   canonical,
@@ -132,7 +133,9 @@ export class SyncService {
     maxOperations = 50,
     maxProtocol = ROW_PROTOCOL,
     stateLimits = { maxBytes: Infinity, maxEntities: Infinity },
-    snapshotDecoder = decodeSnapshot,
+    maxSnapshotDecodedBytes = SYNC_SNAPSHOT_MAX_BYTES,
+    snapshotDecoder = (bytes) =>
+      decodeSnapshot(bytes, { maxDecodedBytes: maxSnapshotDecodedBytes }),
     // An operator-side first import may commit the state first and install the
     // content-addressed images afterwards; each install still verifies the hash.
     deferImages = false,
@@ -155,6 +158,10 @@ export class SyncService {
       deferImages,
       trace,
     });
+    this.snapshotEncoder = (value) =>
+      encodeSnapshot(value, {
+        maxDecodedBytes: maxSnapshotDecodedBytes,
+      });
     this.running = null;
     this.sizes = new WeakMap();
     this.mark = () => {};
@@ -698,7 +705,7 @@ export class SyncService {
         "SYNC_INTEGRITY",
         "Bootstrap state checksum mismatch",
       );
-    const bytes = encodeSnapshot(bundle);
+    const bytes = this.snapshotEncoder(bundle);
     const manifest = {
       protocol: 1,
       reducer: 1,
@@ -1014,16 +1021,16 @@ export class SyncService {
     if (!(await this.store.acquire(owner))) return { busy: true };
     try {
       const link = await this.store.readLink();
-      if (link?.mode !== "paused" || link.canonical_head !== expectedHead)
+      if (link?.mode !== "paused")
         throw Object.assign(
           new Error(
             "Pause both writers at the verified canonical head before upgrading",
           ),
           { status: 409, code: "SYNC_UPGRADE_HEAD" },
         );
-      const state = await this.store.readState();
+      const state = await this.store.readState(),
+        hash = stateHash(state);
       if (
-        stateHash(state) !== expectedHash ||
         (await this.store.readPending()).length ||
         Object.values(state.conflicts).some((conflict) => !conflict.resolution)
       )
@@ -1034,31 +1041,72 @@ export class SyncService {
           { status: 409, code: "SYNC_TRANSITION_PENDING" },
         );
       const remoteHead = await this.transport.readHead();
-      if (remoteHead !== expectedHead) {
+      const publishedTransition = async () => {
         const remote =
           remoteHead && (await this.transport.readCommit(remoteHead));
-        if (
-          !remote ||
-          remote.parents.length !== 1 ||
-          remote.parents[0] !== expectedHead
-        )
-          throw Object.assign(
+        const invalid = () =>
+          Object.assign(
             new Error(
               "Remote head is not the single expected protocol transition",
             ),
             { status: 409, code: "SYNC_UPGRADE_HEAD" },
           );
+        if (
+          !remote ||
+          remote.parents.length !== 1 ||
+          remote.parents[0] !== expectedHead
+        )
+          throw invalid();
         const added = await this.verifyFiles(remote, expectedHead),
           events = added.filter((file) => file.path.startsWith("events/"));
+        if (events.length !== 1) throw invalid();
+        const event = decode(
+          await this.transport.readFile(remoteHead, events[0].path),
+        );
         if (
-          events.length !== 1 ||
-          decode(await this.transport.readFile(remoteHead, events[0].path))
-            .kind !== "transition"
+          event.kind !== "transition" ||
+          event.protocol !== target ||
+          event.reducer !== target ||
+          event.fromProtocol !== PROTOCOL ||
+          event.parent !== expectedHead ||
+          event.previousHash !== expectedHash
+        )
+          throw invalid();
+        return event;
+      };
+      // The response can be lost after the local transaction commits. Repeating
+      // the original command is safe only for this exact, still-paused transition.
+      if (link.canonical_head !== expectedHead) {
+        if (
+          remoteHead !== link.canonical_head ||
+          protocolVersion(state) !== target
         )
           throw Object.assign(
-            new Error("Remote head is not a protocol transition"),
+            new Error("Canonical head changed since upgrade confirmation"),
             { status: 409, code: "SYNC_UPGRADE_HEAD" },
           );
+        const event = await publishedTransition();
+        if (event.resultHash !== hash)
+          throw Object.assign(
+            new Error("Transition state differs from its published result"),
+            { status: 409, code: "SYNC_UPGRADE_HEAD" },
+          );
+        return {
+          head: remoteHead,
+          stateHash: hash,
+          protocol: target,
+          reducer: target,
+          upgraded: false,
+          received: true,
+        };
+      }
+      if (hash !== expectedHash)
+        throw Object.assign(
+          new Error("Canonical state changed since upgrade confirmation"),
+          { status: 409, code: "SYNC_TRANSITION_PENDING" },
+        );
+      if (remoteHead !== expectedHead) {
+        await publishedTransition();
         const received = await this.receive(link, remoteHead),
           receivedState = await this.store.readState();
         return {
@@ -1085,8 +1133,8 @@ export class SyncService {
       this.assertCapacity(next);
       const path = "snapshots/" + randomUUID() + ".json.gz",
         previousPath = "snapshots/" + randomUUID() + ".json.gz",
-        bytes = encodeSnapshot({ atCommit: expectedHead, state: next }),
-        previousBytes = encodeSnapshot({ atCommit: expectedHead, state }),
+        bytes = this.snapshotEncoder({ atCommit: expectedHead, state: next }),
+        previousBytes = this.snapshotEncoder({ atCommit: expectedHead, state }),
         envelope = {
           protocol: target,
           reducer: target,
@@ -1138,6 +1186,7 @@ export class SyncService {
         bootstrapId: link.bootstrap_id,
         identity: this.identity,
         state,
+        snapshotEncoder: this.snapshotEncoder,
       });
       const oid = await this.transport.createCandidate(
         link.canonical_head,

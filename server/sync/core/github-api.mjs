@@ -33,6 +33,7 @@ export class GitHubApiTransport {
     maxRequests = 600,
     maxBlobBytes = 64 * 1024 * 1024,
     maxRetries = 2,
+    requestTimeoutMs = 20000,
     now = () => Date.now(),
     wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   }) {
@@ -42,6 +43,7 @@ export class GitHubApiTransport {
       "GitHub 저장소 주소를 확인하세요.",
     );
     this.maxBlobBytes = maxBlobBytes;
+    this.requestTimeoutMs = requestTimeoutMs;
     this.repository = repository;
     this.token = token;
     this.fetch = (...args) => fetcher.call(globalThis, ...args);
@@ -105,7 +107,7 @@ export class GitHubApiTransport {
               ...(known ? { "If-None-Match": known.etag } : {}),
             },
             ...(body ? { body: JSON.stringify(body) } : {}),
-            signal: AbortSignal.timeout(20000),
+            signal: AbortSignal.timeout(this.requestTimeoutMs),
           },
         );
       } catch (error) {

@@ -4,6 +4,7 @@ import {
   encodeStoredSnapshot,
   decodeStoredSnapshot,
 } from "../core/snapshot.mjs";
+import { SYNC_NODE_SNAPSHOT_MAX_DECODED_BYTES } from "../../../shared/sync/sync-limits.js";
 import { parentPort, workerData } from "node:worker_threads";
 import { DatabaseSync } from "node:sqlite";
 import {
@@ -54,6 +55,10 @@ import {
   installImageReferences,
   isExcluded,
 } from "../core/retention.mjs";
+
+const snapshotOptions = {
+  maxDecodedBytes: SYNC_NODE_SNAPSHOT_MAX_DECODED_BYTES,
+};
 
 const db = new DatabaseSync(workerData.databasePath, { readOnly: true });
 db.exec(
@@ -333,7 +338,7 @@ function compute(request) {
     return snapshot(request.teamId, ({ store, guard, link }) => {
       const bootstrap = store.readBootstrap();
       if (bootstrap) {
-        const saved = decodeStoredSnapshot(bootstrap);
+        const saved = decodeStoredSnapshot(bootstrap, snapshotOptions);
         if (saved.state) {
           validateSnapshot(saved.state, {
             teamId: link.team_id,
@@ -397,7 +402,7 @@ function compute(request) {
       const bundle = { state, hash: stateHash(state), cutoff };
       return {
         bundle,
-        bundleJson: encodeStoredSnapshot(bundle),
+        bundleJson: encodeStoredSnapshot(bundle, snapshotOptions),
         cutoff,
         guard,
       };
@@ -671,7 +676,7 @@ function serviceFor(config) {
         bootstrapId: prepared.guard.bootstrapId,
         guard: prepared.guard,
       });
-      const saved = decodeStoredSnapshot(raw.readBootstrap());
+      const saved = decodeStoredSnapshot(raw.readBootstrap(), snapshotOptions);
       return {
         state: saved.state,
         hash: saved.hash,
@@ -679,9 +684,12 @@ function serviceFor(config) {
       };
     },
     async saveBootstrap(data) {
-      const saved = decodeStoredSnapshot(raw.readBootstrap());
+      const saved = decodeStoredSnapshot(raw.readBootstrap(), snapshotOptions);
       await mutate("bootstrap-candidate", teamId, owner, {
-        bundleJson: encodeStoredSnapshot({ ...saved, publication: data }),
+        bundleJson: encodeStoredSnapshot(
+          { ...saved, publication: data },
+          snapshotOptions,
+        ),
       });
     },
     async commitCanonical(
@@ -827,6 +835,7 @@ function serviceFor(config) {
     },
   };
   const service = new SyncService({
+    maxSnapshotDecodedBytes: SYNC_NODE_SNAPSHOT_MAX_DECODED_BYTES,
     transport,
     store,
     identity: config.identity,

@@ -15,3 +15,6 @@ export const SYNC_RECEIPT_MAX_BYTES = 16 * 1024 * 1024;
 export const SYNC_RECEIPT_WARNING_BYTES = 12 * 1024 * 1024;
 // Include the state, its separate 16 MiB receipt budget and bundle metadata.
 export const SYNC_SNAPSHOT_MAX_BYTES = 64 * 1024 * 1024;
+// Only Node and the operator CLI opt into the larger decoded-state budget.
+// Git objects and hosted invocations retain their 64 MiB limit.
+export const SYNC_NODE_SNAPSHOT_MAX_DECODED_BYTES = 512 * 1024 * 1024;

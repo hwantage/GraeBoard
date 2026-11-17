@@ -19,9 +19,15 @@ export const snapshotCounts = (state) => ({
 });
 // The two files of a standard checkpoint of C at head: its snapshot and its
 // event, as loadCheckpoint and receive verify them.
-export function checkpointFiles({ head, bootstrapId, identity, state }) {
+export function checkpointFiles({
+  head,
+  bootstrapId,
+  identity,
+  state,
+  snapshotEncoder = encodeSnapshot,
+}) {
   const path = "snapshots/" + randomUUID() + ".json.gz",
-    bytes = encodeSnapshot({ atCommit: head, state });
+    bytes = snapshotEncoder({ atCommit: head, state });
   const envelope = {
     protocol: protocolVersion(state),
     reducer: protocolVersion(state),
@@ -215,9 +221,10 @@ export async function loadCheckpoint(service, link, pinnedHead) {
       "SYNC_IDENTITY",
       "Checkpoint manifest changed at canonical head",
     );
-  await service.images?.receive?.(state, oid, transport, {
-    added: commit.files,
-  });
+  if (!service.deferImages)
+    await service.images?.receive?.(state, oid, transport, {
+      added: commit.files,
+    });
   const currentHead = await transport.readHead();
   if (!(await transport.verifyReachable(pinnedHead, currentHead)))
     throw new ProtocolError(
