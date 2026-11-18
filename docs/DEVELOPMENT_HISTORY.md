@@ -18,6 +18,14 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-18 — 상대가 주기 도중 올린 커밋으로 사내 동기화가 실패하던 문제
+
+- 사용자 보고(2026-11-18, 사내 서버): `동기화 오류: Git operation failed (128, merge-base)`가 자주 표시되고 기다리면 사라집니다. 로그의 실패 주기는 137초가 걸렸고 `git merge-base --is-ancestor 60925e7… 5be8593…`이 `fatal: Not a valid commit name 5be8593…`로 끝났습니다. 원인은 2026-11-13 기록과 같습니다. 사내가 `sync-v1`을 받은 뒤 외부가 새 커밋을 올리고 상태에 알리면, 주기 마지막 상태 확인이 사내 clone에 없는 커밋으로 조상 관계를 묻습니다. 주기가 길수록 잦아집니다.
+- 결정(사용자 요청): 문구 대신 동작을 고칩니다. 상태 확인 단계만 바꾸고 받기·올리기·충돌 처리와 DB·저장 형식은 바꾸지 않습니다.
+- 수정: `GitCliTransport.hasCommit`(`git rev-parse --verify --quiet <oid>^{commit}`, 40자 소문자 ID만 허용)을 추가했습니다. `SyncService.peerReachable`은 상대 head가 없으면 `readHead()`로 `sync-v1`을 한 번 받고 다시 확인합니다. 그래도 없거나 받기가 실패하면 `verified: false`로 저장하고 주기는 성공으로 끝냅니다. 중단 오류는 그대로 전달합니다. `hasCommit`이 없는 전송(외부 GitHub API·테스트 대역)은 이전과 같이 바로 `verifyReachable`을 호출합니다. 외부는 사내가 올린 뒤에 상태를 알리므로 GitHub에 항상 그 커밋이 있어 해당하지 않습니다.
+- 기존 동작에 대한 영향: 경합이 없으면 Git 명령이 `rev-parse` 한 번 늘어날 뿐 판단은 같습니다. 경합이면 받기(`ls-remote`·`fetch`) 한 번이 더해집니다. 받은 커밋은 `refs/remotes/origin/sync-v1`만 옮기며 연결의 `canonical_head`는 다음 주기의 수신이 바꿉니다. 화면의 외부망 반영은 상대 head가 사내 head와 같아야 "완료"이므로 이 경우 "대기"로 보입니다. 무관한 이력의 head는 계속 미확인이고, 이력 재작성은 수신 단계가 계속 오류로 알립니다. 다른 `verifyReachable` 호출(수신·체크포인트·보관·디렉토리·설정 키)은 바꾸지 않았습니다.
+- 검증: `tests/sync/transport/sync-log.test.mjs`에 실제 Git 저장소 두 개로 경합을 재현하는 검사와 `hasCommit` 입력 검사를 추가했습니다. 수정 전 코드에서는 운영과 같은 `Git operation failed (128, merge-base)`로 실패하고 수정 후 통과합니다. 받은 뒤 확인·원격에 없는 커밋·받기 실패·중단 전달·무관한 이력과 실패 Git 명령 기록이 없는지 확인합니다.
+
 ## 2026-11-18 — 새 Claude 아티팩트 공유 주소의 실제 제목 조회
 
 - `/artifact/Bsxkr6atfFSNs6MpuJKoyF`를 붙여넣으면 실제 이름 대신 HTML의 `Claude Artifact`가 표시됐습니다. 기존 코드는 `/public/artifacts/:uuid`만 처리했습니다. 공개 페이지의 루트 `data-frame-uuid`와 실제 `/api/frame/:uuid` 응답을 확인해 새 `/artifact/:id`·`/code/artifact/:id` 주소를 지원합니다.
