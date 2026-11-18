@@ -2443,7 +2443,8 @@ body.document-block-moving * {
   background: #fff;
   z-index: 2;
 }
-.modal > header h2 {
+.modal > header h2,
+.memo-page-title {
   font-size: 17px;
   font-weight: 600;
   /* Align titles with icons using font metrics, without line-box leading. */
@@ -2475,7 +2476,9 @@ body.document-block-moving * {
   background: var(--accent-soft);
   color: var(--accent);
 }
-.modal > header .button {
+/* The memo full page's heading (AnnualMemoPanel) uses the same buttons. */
+.modal > header .button,
+.memo-page-header .button {
   border: 0;
   padding: 5px;
   min-height: 27px;
@@ -2573,7 +2576,14 @@ body.document-block-moving * {
 .task-detail-modal > header .document-expand,
 .task-detail-modal > header .document-link-copy,
 .task-detail-modal > header .document-full-width,
-.task-detail-modal > header .emoji-copy {
+.task-detail-modal > header .emoji-copy,
+.memo-page-header
+  :is(
+    .document-expand,
+    .document-link-copy,
+    .document-full-width,
+    .emoji-copy
+  ) {
   color: var(--ink);
 }
 .task-detail-modal .modal-body {
