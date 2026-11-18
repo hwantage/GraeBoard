@@ -438,6 +438,26 @@ test("a peer head announced after this clone received is fetched or left unverif
   local.readHead = readHead;
   await service.status(link);
   assert.equal(saved.verified, true);
+  // A status that expires while the fetch runs is stored unverified.
+  const fourth = await peer.createCandidate(third, { "manifest.json": "5" });
+  assert.equal(await peer.publish(fourth, third), true);
+  await announce(fourth);
+  const now = Date.now;
+  local.readHead = async (branch) => {
+    const head = await readHead(branch);
+    if (branch === undefined) Date.now = () => now() + 181000;
+    return head;
+  };
+  try {
+    await service.status(link);
+  } finally {
+    Date.now = now;
+    local.readHead = readHead;
+  }
+  assert.equal(await local.hasCommit(fourth), true);
+  assert.equal(saved.verified, false);
+  await service.status(link);
+  assert.equal(saved.verified, true);
   // A head this clone holds on unrelated history is still unreachable.
   const apart = await local.createCandidate(null, { "manifest.json": "x" });
   await announce(apart);

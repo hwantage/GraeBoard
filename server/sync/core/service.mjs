@@ -979,19 +979,24 @@ export class SyncService {
           await this.transport.readFile(peer, "status.json"),
           64 * 1024,
         );
+        const fresh = () =>
+          Date.now() - Date.parse(remote.observedAt) >= 0 &&
+          Date.now() - Date.parse(remote.observedAt) < 180000;
+        // peerReachable can fetch, so the status may expire meanwhile; check
+        // freshness again before storing the flag.
         remote.verified =
           remote.teamId === this.identity.teamId &&
           remote.repoId === this.identity.repoId &&
           remote.mode === "active" &&
-          Date.now() - Date.parse(remote.observedAt) >= 0 &&
-          Date.now() - Date.parse(remote.observedAt) < 180000 &&
+          fresh() &&
           remote.installationId === this.identity.peerInstallationId &&
           typeof remote.appliedCanonicalHead === "string" &&
           /^[a-f0-9]{40}$/.test(remote.appliedCanonicalHead) &&
           (await this.peerReachable(
             link.canonical_head,
             remote.appliedCanonicalHead,
-          ));
+          )) &&
+          fresh();
         remote.verifiedAgainstHead = link.canonical_head;
         await this.store.saveRemoteStatus?.(remote);
       }
