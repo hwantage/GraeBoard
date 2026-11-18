@@ -386,6 +386,10 @@ test("꼬리 메모 전체 페이지도 업무 상세와 같은 머리 배치·�
     const button = (name: string) =>
       heading.getByRole("button", { name, exact: true });
     const title = await box(heading.getByRole("heading"));
+    // A task added in the last 12 hours shows "new" after its title; the
+    // link follows that mark with the gap it otherwise keeps from the title.
+    const mark = heading.locator(".task-new-mark");
+    const beforeLink = (await mark.count()) ? await box(mark) : title;
     const link = await box(button("링크 복사"));
     const expand = await box(button("전체 페이지 닫기"));
     const icons = await Promise.all(
@@ -409,7 +413,10 @@ test("꼬리 메모 전체 페이지도 업무 상세와 같은 머리 배치·�
           .evaluate((element) => getComputedStyle(element).fontSize),
       },
       // The link and full-page toggle follow the title.
-      leftGap: [link.x - title.x - title.width, expand.x - link.x - link.width],
+      leftGap: [
+        link.x - beforeLink.x - beforeLink.width,
+        expand.x - link.x - link.width,
+      ],
       right: icons.map((icon) => Math.round(icon.x)),
       middle: icons.map((icon) => Math.round(icon.y + icon.height / 2)),
       style,
@@ -495,6 +502,10 @@ test("꼬리 메모 전체 페이지도 업무 상세와 같은 머리 배치·�
     await expect(button("전체 페이지 닫기")).toBeHidden();
     await expect(button("기본 너비로 보기")).toBeHidden();
     const title = await box(heading.getByRole("heading"));
+    // A task added in the last 12 hours shows "new" after its title; the
+    // link follows that mark with the gap it otherwise keeps from the title.
+    const mark = heading.locator(".task-new-mark");
+    const beforeLink = (await mark.count()) ? await box(mark) : title;
     const link = await box(button("링크 복사"));
     const icons = await Promise.all(
       ["이모지 복사", "닫기"].map((name) => box(button(name))),
@@ -504,7 +515,7 @@ test("꼬리 메모 전체 페이지도 업무 상세와 같은 머리 배치·�
         (element) => getComputedStyle(element).padding,
       ),
       title: Math.round(title.x),
-      link: Math.round(link.x - title.x - title.width),
+      link: Math.round(link.x - beforeLink.x - beforeLink.width),
       right: icons.map((icon) => Math.round(icon.x)),
     };
   };

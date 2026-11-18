@@ -56,8 +56,10 @@ test("새 업무는 12시간 동안 제목 끝·상세·주간 할 일에 new를
   // time moved by the same amount, as a real server's would.
   await page.clock.install();
   let shift = 0;
+  // The shift is read when the response returns, so a request sent before a
+  // jump cannot report the old server time after it.
   await page.route("**/api/**", async (route) => {
-    if (!shift || new URL(route.request().url()).pathname.endsWith("/events"))
+    if (new URL(route.request().url()).pathname.endsWith("/events"))
       return route.fallback();
     // A 304 cannot be fulfilled; ask for the full response instead.
     const sent = { ...route.request().headers() };
