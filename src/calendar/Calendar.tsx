@@ -4,6 +4,7 @@ import useCalendarCommands from "./useCalendarCommands";
 import useResourceSync from "../platform/useResourceSync";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -38,6 +39,10 @@ import LoadingState from "../ui/LoadingState";
 import GridHeaderMenu from "../ui/GridHeaderMenu";
 
 import { StandaloneRowPanel } from "../Panels";
+import NewTaskMark, {
+  NEW_TASK_LABEL,
+  NewTaskState,
+} from "../sheet/NewTaskMark";
 import { UndoToast } from "../ui/Toast";
 import CalendarEntryPanel from "./CalendarEntryPanel";
 import SecretCalendarEntryPanel from "./SecretCalendarEntryPanel";
@@ -380,6 +385,16 @@ export default function Calendar({
     setEntryMenu(null);
     setTagEntry(null);
   }, [scope]);
+  // The monthly views and the team week share one scrolled grid. The team
+  // week opens at its top, the viewer's own week, not where a monthly view
+  // left the grid, and with the scroll anchoring a monthly jump turned off
+  // back on.
+  useLayoutEffect(() => {
+    const root = scroll.current;
+    if (view !== "team" || !root) return;
+    root.style.removeProperty("overflow-anchor");
+    root.scrollTo({ top: 0 });
+  }, [view]);
   useEffect(() => {
     if (!rangeChange) return;
     const unload = (event: BeforeUnloadEvent) => {
@@ -741,44 +756,61 @@ export default function Calendar({
             }
             renderItem={(item, handle) => (
               <>
-                <button
-                  className={`calendar-week-task-open${item.unavailable ? " is-unavailable" : ""}`}
-                  aria-keyshortcuts={
-                    editable ? "Alt+ArrowUp Alt+ArrowDown" : undefined
-                  }
-                  onPointerDown={(event) => {
-                    if (event.pointerType !== "touch")
-                      handle.onPointerDown(event);
-                  }}
-                  onKeyDown={handle.onKeyDown}
-                  onClickCapture={handle.onClickCapture}
-                  aria-description={
-                    item.hasDocument
-                      ? item.documentCount > 1
-                        ? `문서 ${item.documentCount}개`
-                        : "문서 있음"
-                      : undefined
-                  }
-                  {...busyProps(locked)}
-                  onClick={() => void openTask(item.taskId)}
+                {/* An unavailable item has no creation time, so it is never new. */}
+                <NewTaskState
+                  task={{ id: item.taskId, createdAt: item.taskCreatedAt }}
                 >
-                  <span>
-                    {item.title || "제목 없는 업무"}
-                    {item.unavailable && <span> · 조회할 수 없는 업무</span>}
-                  </span>
-                  {/* Like the annual board, a single document shows the
-                      icon only and several show their count. */}
-                  {item.hasDocument && (
-                    <span className="calendar-week-document" aria-hidden="true">
-                      {item.documentCount > 1 && (
-                        <span className="task-document-count">
-                          {item.documentCount}
+                  {(isNew) => (
+                    <button
+                      className={`calendar-week-task-open${item.unavailable ? " is-unavailable" : ""}`}
+                      aria-keyshortcuts={
+                        editable ? "Alt+ArrowUp Alt+ArrowDown" : undefined
+                      }
+                      onPointerDown={(event) => {
+                        if (event.pointerType !== "touch")
+                          handle.onPointerDown(event);
+                      }}
+                      onKeyDown={handle.onKeyDown}
+                      onClickCapture={handle.onClickCapture}
+                      aria-description={
+                        [
+                          item.hasDocument &&
+                            (item.documentCount > 1
+                              ? `문서 ${item.documentCount}개`
+                              : "문서 있음"),
+                          isNew && NEW_TASK_LABEL,
+                        ]
+                          .filter(Boolean)
+                          .join(", ") || undefined
+                      }
+                      {...busyProps(locked)}
+                      onClick={() => void openTask(item.taskId)}
+                    >
+                      <span>
+                        {item.title || "제목 없는 업무"}
+                        {item.unavailable && (
+                          <span> · 조회할 수 없는 업무</span>
+                        )}
+                        {isNew && <NewTaskMark />}
+                      </span>
+                      {/* Like the annual board, a single document shows the
+                          icon only and several show their count. */}
+                      {item.hasDocument && (
+                        <span
+                          className="calendar-week-document"
+                          aria-hidden="true"
+                        >
+                          {item.documentCount > 1 && (
+                            <span className="task-document-count">
+                              {item.documentCount}
+                            </span>
+                          )}
+                          <FileText size={11} />
                         </span>
                       )}
-                      <FileText size={11} />
-                    </span>
+                    </button>
                   )}
-                </button>
+                </NewTaskState>
                 {editable && (
                   <button
                     type="button"

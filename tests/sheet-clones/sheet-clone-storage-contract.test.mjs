@@ -713,3 +713,81 @@ test("PG copy creation goes on when the image store lacks an image", async (t) =
   ).rows[0];
   assert.equal(JSON.parse(copied.payload).markdown, markdown);
 });
+
+test("PG copy creation lists a row's documents in tab order and numbers them by that list", async (t) => {
+  const f = sqliteBusinessFixture(t),
+    pg = await postgresBusinessFixture(t, f);
+  if (!pg) return;
+  // Document IDs sort a, b, c, while the tab order (position) is c, a, b with
+  // gaps that deletes and moves leave. The copy used to list them by ID and
+  // keep the source's positions, so its list and positions disagreed.
+  const tabs = [
+    ["c0000000-0000-4000-8000-000000000000", "셋째로 만든 문서", 1],
+    ["a0000000-0000-4000-8000-000000000000", "첫째로 만든 문서", 4],
+    ["b0000000-0000-4000-8000-000000000000", "둘째로 만든 문서", 9],
+  ];
+  for (const [documentId, title, position] of tabs) {
+    const key = JSON.stringify(["task", f.taskId, documentId]);
+    await pg.pool.query(
+      "INSERT INTO graeboard.site_entities VALUES($1,'document',$2,$3,1,0)",
+      [f.teamId, key, JSON.stringify({ title, position, markdown: title })],
+    );
+    await pg.pool.query(
+      "INSERT INTO graeboard.site_entity_revisions VALUES($1,'document',$2,1)",
+      [f.teamId, key],
+    );
+  }
+  const source = (
+    await pg.pool.query(
+      "SELECT entity_key,payload FROM graeboard.site_entities WHERE team_id=$1 AND entity='document' AND deleted=0 AND entity_key LIKE $2",
+      [f.teamId, JSON.stringify(["task", f.taskId]).slice(0, -1) + ",%"],
+    )
+  ).rows
+    .map((row) => ({
+      id: JSON.parse(row.entity_key).at(-1),
+      position: JSON.parse(row.payload).position,
+    }))
+    .sort((a, b) => a.position - b.position || a.id.localeCompare(b.id))
+    .map((document) => document.id);
+  assert.deepEqual(
+    source.filter((id) => tabs.some(([tab]) => tab === id)),
+    tabs.map(([id]) => id),
+  );
+  const service = new SheetCloneBusinessService(
+      new PostgresSheetCloneRepository({ context: pg.createContext() }),
+      f.user,
+    ),
+    id = randomUUID();
+  await service.create({
+    id,
+    teamId: f.teamId,
+    year: 2026,
+    name: "tab order copy",
+    referenceDate: "2026-10-01",
+    view: defaultView(2026),
+    taskIds: [f.taskId],
+  });
+  const row = (await service.read(id)).tasks.find(
+    (task) => task.id === f.taskId,
+  );
+  assert.deepEqual(
+    row.documents.map((document) => document.id),
+    source,
+  );
+  const copied = (
+    await pg.pool.query(
+      "SELECT entity_key,payload FROM graeboard.site_entities WHERE team_id=$1 AND entity='document' AND entity_key LIKE $2",
+      [
+        f.teamId,
+        JSON.stringify(["sheetClone", id, f.taskId]).slice(0, -1) + ",%",
+      ],
+    )
+  ).rows.map((entry) => [
+    JSON.parse(entry.entity_key).at(-1),
+    JSON.parse(entry.payload).position,
+  ]);
+  assert.deepEqual(
+    Object.fromEntries(copied),
+    Object.fromEntries(source.map((documentId, index) => [documentId, index])),
+  );
+});

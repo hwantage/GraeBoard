@@ -30,6 +30,7 @@
     "sync:maintenance-recover": "node --env-file-if-exists=.env scripts/sync/sync-maintenance-recover.mjs",
     "sync:recover": "node --env-file-if-exists=.env scripts/sync/sync-recover.mjs",
     "sync:weekly-order": "node --env-file-if-exists=.env scripts/sync/sync-weekly-order.mjs",
+    "sync:sheet-clone-document-order": "node --env-file-if-exists=.env scripts/sync/sync-sheet-clone-document-order.mjs",
     "sync:external-import": "node scripts/sync/sync-external-import.mjs",
     "dev:snapshot-import": "node --env-file-if-exists=.env scripts/transfer/dev-snapshot-import.mjs",
     "transfer": "node --env-file-if-exists=.env scripts/transfer/transfer.mjs",

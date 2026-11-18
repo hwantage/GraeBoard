@@ -983,6 +983,59 @@ test("주 메뉴, 월 이동과 날짜 강조, 공통 Markdown 저장·수정·�
   await expect(page.locator(`[data-cell="${taskId}:title"]`)).toBeVisible();
 });
 
+test("개인 월간 보기에서 팀 주간 일정 보기로 바꾸면 맨 위의 내 주간 일정부터 보인다", async ({
+  page,
+}, info) => {
+  // Enough members that the team week scrolls, so a position left over from
+  // the monthly view would open on someone else's week.
+  for (const name of ["가람", "나래", "다솜", "라온"])
+    await request(page, "/admin/users", "POST", {
+      username: `calendar-${randomUUID()}@example.com`,
+      password,
+      name,
+      memberships: [{ teamId, role: "member" }],
+    });
+  await page.setViewportSize({ width: 1366, height: 700 });
+  await enter(page);
+  // The monthly and team views share one scrolled grid.
+  const grid = calendar(page).locator(".calendar-scroll");
+  await grid.evaluate((element) => element.scrollTo({ top: 400 }));
+  await expect
+    .poll(() => grid.evaluate((element) => element.scrollTop))
+    .toBeGreaterThan(0);
+  // Opening the monthly view jumped to today and turned anchoring off.
+  expect(await grid.evaluate((element) => element.style.overflowAnchor)).toBe(
+    "none",
+  );
+  await calendar(page)
+    .getByRole("button", { name: "팀 주간 일정 보기", exact: true })
+    .click();
+  const sections = calendar(page).locator(".calendar-team-section");
+  await expect(sections).toHaveCount(6);
+  await expect(
+    calendar(page).locator('.calendar-team-section[aria-busy="true"]'),
+  ).toHaveCount(0);
+  expect(
+    await grid.evaluate(
+      (element) => element.scrollHeight > element.clientHeight,
+    ),
+  ).toBe(true);
+  await expect(sections.first()).toHaveAttribute("data-member-id", userId);
+  await expect
+    .poll(() => grid.evaluate((element) => element.scrollTop))
+    .toBe(0);
+  // The monthly jump's anchoring switch does not carry over either.
+  expect(await grid.evaluate((element) => element.style.overflowAnchor)).toBe(
+    "",
+  );
+  await expect(
+    sections.first().locator(".calendar-team-heading"),
+  ).toBeInViewport();
+  await page.screenshot({
+    path: info.outputPath("team-weekly-from-monthly.png"),
+  });
+});
+
 test("개인 요일 설정은 재로그인 후 유지되고 숨긴 날짜 보존·팀 주간 비교·다른 사용자의 기본값을 지킨다", async ({
   page,
 }, info) => {
