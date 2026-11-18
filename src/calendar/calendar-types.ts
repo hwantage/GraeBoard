@@ -49,6 +49,8 @@ export type WeeklyItem = {
   taskId: string;
   title: string;
   importedAt: string;
+  // When the task was created, while it can be shown; marks a new task.
+  taskCreatedAt: string | null;
   unavailable: boolean;
   documentCount: number;
   hasDocument: boolean;

@@ -44,6 +44,8 @@ const aliases = {
 };
 // 예시 양식의 속성은 팀에 없어도 가져오기 열을 연결할 수 있다. 적용 시 정의를 추가한다.
 const SAMPLE_PROPERTIES = sampleProperties();
+// Version 5 UUIDs: the new-task mark (src/sheet/NewTaskMark.tsx) tells
+// imported tasks from app-added ones (version 4) by this version.
 export const stableId = (s) => {
   const h = createHash("sha256").update(s).digest("hex");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`;

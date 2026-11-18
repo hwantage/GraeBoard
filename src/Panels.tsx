@@ -37,6 +37,7 @@ import { ErrorNote } from "./ui/ErrorNote";
 import Toast, { useToast } from "./ui/Toast";
 import HistoryTime, { HistoryTimeline } from "./ui/HistoryTime";
 import { describeStyle } from "./sheet/history";
+import NewTaskMark, { useNewTask } from "./sheet/NewTaskMark";
 import { pack, compactStyle } from "../shared/formatting/compact.js";
 import {
   taskHasWorkInWeeks,
@@ -270,6 +271,7 @@ export function RowPanel({
   onAction?: (action: string) => void;
 }) {
   const editable = !readOnly && canEdit(user, task);
+  const newTask = useNewTask(task);
   const detailRef = useRef<TaskDetailHandle>(null);
   const [preferredFullPage, setDocumentFullPage] = useState(initialFullPage);
   // The full-page button's new tab opens the document shown here.
@@ -312,6 +314,7 @@ export function RowPanel({
       title="업무 상세"
       titleAction={
         <>
+          {newTask && <NewTaskMark />}
           <CopyDocumentLinkButton
             target={linkTarget}
             title={String(value(task, "title"))}

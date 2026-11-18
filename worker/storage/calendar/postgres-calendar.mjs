@@ -237,6 +237,8 @@ async function weekly(s, userId, from, to) {
         ? String(title?.payload.value || r.payload.title)
         : r.payload.title,
       importedAt: weeklyImportedAt(r),
+      // Marks a task added in the last 12 hours as new.
+      taskCreatedAt: (available && t.payload.createdAt) || null,
       unavailable: !available,
       documentCount: summary?.count || 0,
       hasDocument: !!summary?.content,

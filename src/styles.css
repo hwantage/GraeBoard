@@ -21,6 +21,8 @@
   --error-ink: #a43e58;
   --error-soft: #fce8ee;
   --error-border: #f3c4d1;
+  /* The new-task mark stands out on every team theme and cell color. */
+  --new-task-ink: #d4483b;
   --document-icon-gap: 6px;
   --sheet-toolbar-height: 36px;
   --accent-muted: color-mix(in srgb, var(--accent) 60%, #76828b);
@@ -2569,6 +2571,9 @@ body.document-block-moving * {
    right and the emoji button stays just left of the close button. */
 .task-detail-modal > header > .modal-heading {
   flex-grow: 1;
+}
+.task-detail-modal .modal-heading .task-new-mark::before {
+  font-size: 11px;
 }
 .task-detail-modal > header .document-expand,
 .task-detail-modal > header .document-link-copy,
@@ -5548,6 +5553,46 @@ body.document-block-moving * {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1;
+}
+/* Text after the title, beside the document button, in a new task's row. */
+.sheet-cell.task-title.is-new-task,
+.sheet-cell.is-new-task .cell-overflow-content {
+  padding-right: 28px;
+}
+.sheet-cell.task-title.is-new-task.has-detail-action,
+.sheet-cell.is-new-task.has-detail-action .cell-overflow-content {
+  padding-right: 48px;
+}
+.sheet-cell.task-title.is-new-task.has-document-count,
+.sheet-cell.is-new-task.has-document-count .cell-overflow-content {
+  padding-right: 60px;
+}
+/* Level with the document icon, which sits 1.5px to 12.5px from the cell
+   top (raised in its 22px button), above overflowing text. */
+.sheet-cell .task-new-mark {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 5;
+  height: 10px;
+  font-size: 10px;
+  line-height: 1;
+  pointer-events: none;
+}
+.sheet-cell.has-detail-action .task-new-mark {
+  right: 23px;
+}
+.sheet-cell.has-document-count .task-new-mark {
+  right: 35px;
+}
+.task-new-mark::before {
+  content: "new";
+  color: var(--new-task-ink);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1;
+  text-decoration: none;
 }
 
 /* Workbook sheets remain reachable below the scrollable grid. */

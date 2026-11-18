@@ -38,6 +38,7 @@ import LoadingState from "../ui/LoadingState";
 import GridHeaderMenu from "../ui/GridHeaderMenu";
 
 import { StandaloneRowPanel } from "../Panels";
+import { NewTaskMarkFor } from "../sheet/NewTaskMark";
 import { UndoToast } from "../ui/Toast";
 import CalendarEntryPanel from "./CalendarEntryPanel";
 import SecretCalendarEntryPanel from "./SecretCalendarEntryPanel";
@@ -765,6 +766,14 @@ export default function Calendar({
                   <span>
                     {item.title || "제목 없는 업무"}
                     {item.unavailable && <span> · 조회할 수 없는 업무</span>}
+                    {!item.unavailable && (
+                      <NewTaskMarkFor
+                        task={{
+                          id: item.taskId,
+                          createdAt: item.taskCreatedAt,
+                        }}
+                      />
+                    )}
                   </span>
                   {/* Like the annual board, a single document shows the
                       icon only and several show their count. */}

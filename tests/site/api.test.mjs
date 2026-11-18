@@ -377,6 +377,9 @@ test("셀 테두리와 주차 머리글 색은 검증·설정 호환·팀 양식
   const restored = (
     await request(`/tasks?teamId=${tid}&year=2026`)
   ).data.tasks.find((t) => t.cells.title.value === "테두리 재이관");
+  // Imported rows get version 5 IDs (stableId), app-added rows version 4.
+  // The new-task mark leaves imported rows unmarked by this difference.
+  assert.equal(restored.id.charAt(14), "5");
   assert.deepEqual(restored.cells.title.style.borderLeft, {
     ...left,
     color: left.color.toUpperCase(),
@@ -408,6 +411,7 @@ test("주차 기본 경계선은 설정·양식·보고본과 현재 날짜 범�
       fields: { title: "움직이는 경계" },
     })
   ).data.task;
+  assert.equal(created.id.charAt(14), "4");
   const weekBorders = {
     left: { style: "double", color: "#2255aa" },
     right: { style: "thick", color: "#bb3344" },
