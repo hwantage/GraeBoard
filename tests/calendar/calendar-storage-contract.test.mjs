@@ -498,6 +498,9 @@ async function contract({
     [taskId, 2, true, false],
   );
   const original = await service.getTask({ params: { id: taskId } });
+  // The task's creation time lets the list mark a task added lately as new.
+  assert.ok(item.taskCreatedAt);
+  assert.equal(item.taskCreatedAt, original.task.createdAt);
   await rejects(() => view.removeWeekly({ body: itemBody }), 403);
   await rejects(
     () =>

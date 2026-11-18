@@ -667,6 +667,14 @@
   vertical-align: -1px;
   white-space: nowrap;
 }
+/* Directly after the title text, like the document mark beside a title. */
+.calendar-week-task-open .task-new-mark {
+  margin-left: 4px;
+  white-space: nowrap;
+}
+.workspace[data-calendar-theme="dark"] .task-new-mark::before {
+  color: color-mix(in srgb, var(--new-task-ink) 65%, var(--ink));
+}
 /* The annual board lifts its count above overflowing text; these do not. */
 :is(.calendar-week-document, .calendar-task-document) .task-document-count {
   margin-top: 0;

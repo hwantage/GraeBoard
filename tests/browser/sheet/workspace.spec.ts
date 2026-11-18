@@ -6665,9 +6665,12 @@ test("셀은 좌우 여백 4px를 유지하고 작업명은 상세 버튼 공간
     await expect(target).toHaveCSS("padding-left", "4px");
     await expect(target).toHaveCSS("padding-right", "4px");
   }
+  // The task was just created, so the title also keeps room for its "new"
+  // mark beside the detail button (24px each).
+  await expect(title.locator(".task-new-mark")).toBeVisible();
   for (const target of [title, title.locator(".cell-overflow-content")]) {
     await expect(target).toHaveCSS("padding-left", "4px");
-    await expect(target).toHaveCSS("padding-right", "24px");
+    await expect(target).toHaveCSS("padding-right", "48px");
   }
   await week.dblclick();
   await expect(week.getByRole("textbox")).toHaveCSS("padding-left", "4px");
