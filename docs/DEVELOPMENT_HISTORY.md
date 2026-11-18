@@ -26,6 +26,7 @@
 - 기존 동작에 대한 영향: 경합이 없으면 Git 명령이 `rev-parse` 한 번 늘어날 뿐 판단은 같습니다. 경합이면 받기(`ls-remote`·`fetch`) 한 번이 더해집니다. 받은 커밋은 `refs/remotes/origin/sync-v1`만 옮기며 연결의 `canonical_head`는 다음 주기의 수신이 바꿉니다. 화면의 외부망 반영은 상대 head가 사내 head와 같아야 "완료"이므로 이 경우 "대기"로 보입니다. 무관한 이력의 head는 계속 미확인이고, 이력 재작성은 수신 단계가 계속 오류로 알립니다. 다른 `verifyReachable` 호출(수신·체크포인트·보관·디렉토리·설정 키)은 바꾸지 않았습니다.
 - 검증: `tests/sync/transport/sync-log.test.mjs`에 실제 Git 저장소 두 개로 경합을 재현하는 검사와 `hasCommit` 입력 검사를 추가했습니다. 수정 전 코드에서는 운영과 같은 `Git operation failed (128, merge-base)`로 실패하고 수정 후 통과합니다. 받은 뒤 확인·원격에 없는 커밋·받기 실패·중단 전달·무관한 이력과 실패 Git 명령 기록이 없는지 확인합니다.
 - CodeRabbit 리뷰 반영(같은 날, PR #200): 상대 상태의 유효 기간(180초)은 `peerReachable` 전에만 검사했습니다. 그 사이 받기가 오래 걸리면 만료된 상태가 `verified: true`로 저장될 수 있어, 확인 뒤 한 번 더 검사합니다. 읽는 쪽(`node-status.mjs`·화면·`syncVerification`)은 시각을 다시 보므로 표시 오류는 없었고 동기화 로그의 `peerVerified`만 해당했습니다. 받기 도중 만료되면 미확인으로 저장하는 검사를 추가했고, 재검사를 빼면 실패합니다.
+- 병합 전 검증(macOS·PostgreSQL 17): 최신 main과 합친 상태에서 `sync-integration.test.mjs`의 동기화 로그 검사가 실패했습니다. 이 검사는 상대가 올리지 않은 커밋을 상태로 알릴 때의 `merge-base` 128 실패를 "실패한 Git 단계 기록"의 예로 썼는데, 이번 수정으로 그 주기는 성공합니다. 검사를 두 부분으로 나눴습니다. 같은 경합에서는 주기가 성공하고 `lastError`가 비며 상대 상태만 미확인이다가, 그 커밋이 확인되면 확인됨으로 바뀝니다. 실패 기록·회복 표시는 공유 저장소(`remote.git`)를 한 주기 동안 치워 생기는 실제 Git 128 실패로 확인합니다(명령·코드·stderr·다음 주기의 회복). 고친 검사는 main의 `service.mjs`로는 `Git operation failed (128, merge-base)`로 실패하고 이 PR의 코드로는 통과합니다. 최신 main(`dccc4c5`)과 합친 상태에서 Node 22·PostgreSQL 17 전체 856건이 통과했습니다(실패·취소·skip 0).
 
 ## 2026-11-18 — 신규 업무 new 표시(12시간)
 
