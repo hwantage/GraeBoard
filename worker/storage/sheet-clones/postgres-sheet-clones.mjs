@@ -33,7 +33,10 @@ import {
   taskView,
   stamp,
 } from "../../sheet/task-view.mjs";
-import { documentListsUnder } from "../documents/postgres-documents.mjs";
+import {
+  byDocumentPosition,
+  documentListsUnder,
+} from "../documents/postgres-documents.mjs";
 import { controlTransaction } from "../data.mjs";
 import { userRecord } from "../../control/control.mjs";
 export const sheetCloneRevision = (data) =>
@@ -384,17 +387,22 @@ async function execute(ctx, command, body, sheetCloneId, options) {
           if (!docs.has(taskId)) docs.set(taskId, []);
           docs.get(taskId).push(d);
         }
+        // A row's documents keep their tab order (position, as listView and
+        // the internal site read them), and each copy takes its place in that
+        // list as its position, as saving a copy and the internal reader do.
+        // Copying the source's own position left a copy whose list and
+        // positions disagreed, so its deletes conflicted on the internal site.
         for (const task of data.tasks) {
-          const sourceDocs = docs.get(task.id) || [];
+          const sourceDocs = (docs.get(task.id) || []).sort(byDocumentPosition);
           task.documents = sourceDocs.map((d) => ({
             id: d.key.at(-1),
             title: d.payload.title,
           }));
-          for (const doc of sourceDocs)
+          for (const [position, doc] of sourceDocs.entries())
             await s.put(
               "document",
               ["sheetClone", id, task.id, doc.key.at(-1)],
-              doc.payload,
+              { ...doc.payload, position },
             );
         }
         for (const memo of await s.listChildren(
