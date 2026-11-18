@@ -4,6 +4,7 @@ import useCalendarCommands from "./useCalendarCommands";
 import useResourceSync from "../platform/useResourceSync";
 import {
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -381,6 +382,16 @@ export default function Calendar({
     setEntryMenu(null);
     setTagEntry(null);
   }, [scope]);
+  // The monthly views and the team week share one scrolled grid. The team
+  // week opens at its top, the viewer's own week, not where a monthly view
+  // left the grid, and with the scroll anchoring a monthly jump turned off
+  // back on.
+  useLayoutEffect(() => {
+    const root = scroll.current;
+    if (view !== "team" || !root) return;
+    root.style.removeProperty("overflow-anchor");
+    root.scrollTo({ top: 0 });
+  }, [view]);
   useEffect(() => {
     if (!rangeChange) return;
     const unload = (event: BeforeUnloadEvent) => {
