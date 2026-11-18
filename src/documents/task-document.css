@@ -1691,16 +1691,25 @@ dialog.annual-memos.memo-panel.document-full-page {
 .memo-panel.document-full-page .memo-document-card:not([data-selected]) {
   display: none;
 }
+/* Laid out like the task detail's header (.task-detail-modal > header). */
 .memo-panel.document-full-page .memo-accordion-heading {
   display: flex;
   align-items: center;
   padding: 14px 24px;
-  min-height: 56px;
-  gap: 8px;
+  gap: 12px;
+  background: white;
+  border-top: 0;
+  cursor: auto;
 }
-.memo-panel-close {
-  margin-left: 0;
-  margin-right: 6px;
+.memo-page-heading {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.memo-page-link {
+  display: contents;
 }
 .memo-panel.document-full-page .memo-documents {
   padding: 0;
@@ -1715,25 +1724,26 @@ dialog.annual-memos.memo-panel.document-full-page {
   border-radius: 0;
   padding-bottom: 16px;
 }
+/* The tab row lines up with the toolbar and text, as in the task detail. */
+.memo-panel.document-full-page .document-tabs,
 .memo-panel.document-full-page .memo-document-body > * {
   width: min(1120px, calc(100% - 48px));
   margin-inline: auto;
 }
 
+/* Sized as the task detail's title (.modal > header h2 in styles.css). */
 .memo-page-title {
   margin: 0;
-  flex: 1;
-  font-size: 20px;
 }
 .memo-panel.document-full-page .memo-document-heading {
   display: none;
 }
+.memo-panel.document-full-page.document-full-width .document-tabs,
 .memo-panel.document-full-page.document-full-width .memo-document-body > * {
   width: 100%;
 }
-@media (max-width: 700px) {
+@media (max-width: 720px) {
   .memo-panel.document-full-page .memo-accordion-heading {
-    padding: 8px 12px;
-    min-height: 40px;
+    padding-inline: 16px;
   }
 }

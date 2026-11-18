@@ -74,6 +74,7 @@ import InlineCellEditor, { type EditorState } from "./InlineCellEditor";
 import PropertyBadge from "./PropertyBadge";
 import LinkedText from "./LinkedText";
 import MemberValue from "./MemberValue";
+import NewTaskMark, { NEW_TASK_LABEL, useNewTask } from "./NewTaskMark";
 import GridHeaderMenu, { type HeaderMenuAction } from "../ui/GridHeaderMenu";
 import PropertyFilter from "./PropertyFilter";
 import {
@@ -1578,6 +1579,8 @@ const GridCell = memo(function GridCell({
   const editing = !!editor;
   const showDetailAction =
     c.key === "title" && !editing && (!presentation || task.hasDocument);
+  const newTask = useNewTask(c.key === "title" ? task : null);
+  const showNewTask = newTask && !editing;
   const prepareText =
     !touchInput &&
     focused &&
@@ -1664,7 +1667,7 @@ const GridCell = memo(function GridCell({
       data-task-id={task.id}
       data-column={c.key}
       data-text-mode={mode}
-      className={`sheet-cell ${c.fixed ? "fixed" : ""} ${selection !== null ? "selected" : ""} ${focused ? "focused" : ""} ${c.key === "title" ? `task-title ${task.hasDocument ? `has-document ${showDocumentCount ? "has-document-count" : ""}` : ""}` : ""} ${showDetailAction ? "has-detail-action" : ""} ${c.month ? "week-cell" : ""} ${editing ? "editing" : ""} ${!choice && mode === "overflow" && text && !editing ? "text-overflow-cell" : ""}`}
+      className={`sheet-cell ${c.fixed ? "fixed" : ""} ${selection !== null ? "selected" : ""} ${focused ? "focused" : ""} ${c.key === "title" ? `task-title ${task.hasDocument ? `has-document ${showDocumentCount ? "has-document-count" : ""}` : ""}` : ""} ${showDetailAction ? "has-detail-action" : ""} ${showNewTask ? "is-new-task" : ""} ${c.month ? "week-cell" : ""} ${editing ? "editing" : ""} ${!choice && mode === "overflow" && text && !editing ? "text-overflow-cell" : ""}`}
       style={style}
       title={
         [
@@ -1676,9 +1679,13 @@ const GridCell = memo(function GridCell({
           .join("\n") || undefined
       }
       aria-description={
-        presence
-          ? `${presence.label} ${presence.editing ? "편집 중" : "선택 중"}`
-          : undefined
+        [
+          presence &&
+            `${presence.label} ${presence.editing ? "편집 중" : "선택 중"}`,
+          showNewTask && NEW_TASK_LABEL,
+        ]
+          .filter(Boolean)
+          .join(", ") || undefined
       }
       onPointerDown={(e) => actions.cellPointerDown(e, point)}
       onPointerMove={(e) => actions.dragSelect(e, point)}
@@ -1774,6 +1781,8 @@ const GridCell = memo(function GridCell({
         ) : (
           content
         ))}
+      {/* Placed by CSS beside the document button; after the text in the DOM. */}
+      {showNewTask && <NewTaskMark />}
     </div>
   );
 });

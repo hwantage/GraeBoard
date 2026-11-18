@@ -148,7 +148,7 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
     const visibility = retentionView(db, teamId);
     return db
       .prepare(
-        `SELECT w.user_id AS userId,w.week_start AS weekStart,w.task_id AS taskId,w.title AS savedTitle,w.imported_at AS importedAt,t.deleted_at,t.id AS found,c.value AS currentTitle,
+        `SELECT w.user_id AS userId,w.week_start AS weekStart,w.task_id AS taskId,w.title AS savedTitle,w.imported_at AS importedAt,t.deleted_at,t.id AS found,t.created_at AS taskCreatedAt,c.value AS currentTitle,
       ${documentColumns("t.id")}
       FROM calendar_weekly_items w LEFT JOIN tasks t ON t.id=w.task_id AND t.team_id=w.team_id LEFT JOIN cells c ON c.task_id=t.id AND c.key='title'
       WHERE w.team_id=? AND w.week_start BETWEEN ? AND ?${userId ? " AND w.user_id=?" : ""}
@@ -168,6 +168,7 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
           found,
           currentTitle,
           savedTitle,
+          taskCreatedAt,
           documentCount,
           hasDocument,
           ...item
@@ -179,6 +180,8 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
             title: available
               ? String(parse(currentTitle, savedTitle))
               : savedTitle,
+            // Marks a task added in the last 12 hours as new.
+            taskCreatedAt: available ? taskCreatedAt : null,
             unavailable: !available,
             ...(available
               ? documentSummary(visibility, item.taskId, {

@@ -19,6 +19,7 @@ import {
   ArrowLeft,
   ArrowRight,
 } from "lucide-react";
+import { createPortal } from "react-dom";
 import { api, send, ApiError } from "../platform/api";
 import {
   reorderItems,
@@ -70,6 +71,9 @@ export type DocumentPanelProps = Pick<
   onDocumentSelected?: (id: string) => void;
   inline?: boolean;
   inlineFullPage?: boolean;
+  // Memo full page: where the selected memo's link button goes, in the page
+  // heading beside its title (AnnualMemoPanel).
+  fullPageLinkSlot?: HTMLElement | null;
   onExpand?: () => void;
   // Memos shown as tabs (document browser): the list may be empty, and it
   // opens with any memo as the inline cards do.
@@ -954,12 +958,17 @@ export default forwardRef<DocumentPanelHandle, DocumentPanelProps>(
             </Button>
           )}
           <div className="document-tab-actions">
-            {props.inlineFullPage && current && props.documentLink && (
-              <CopyDocumentLinkButton
-                target={props.documentLink(current.id)}
-                title={current.title}
-              />
-            )}
+            {props.inlineFullPage &&
+              current &&
+              props.documentLink &&
+              props.fullPageLinkSlot &&
+              createPortal(
+                <CopyDocumentLinkButton
+                  target={props.documentLink(current.id)}
+                  title={current.title}
+                />,
+                props.fullPageLinkSlot,
+              )}
             {(!props.inline || props.inlineFullPage) && (
               <div ref={setControlsTarget} />
             )}

@@ -366,6 +366,171 @@ test("일정 상세의 이모지 복사도 닫기 바로 왼쪽에 있고 방향
   await expect(dialog).toHaveCount(0);
 });
 
+test("꼬리 메모 전체 페이지도 업무 상세와 같은 머리 배치·아이콘·탭 위치에서 이모지를 복사한다", async ({
+  page,
+  browserName,
+}, info) => {
+  const memoPath = `/teams/${teamId}/years/2026/memos`;
+  for (const title of ["첫 메모", "둘째 메모"])
+    await request(page, memoPath, "POST", { id: randomUUID(), title });
+  await request(page, `/tasks/${taskId}/documents/main`, "PUT", {
+    markdown: "본문",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  await page.reload();
+  await page.getByLabel("팀 선택").selectOption(teamId);
+  // Each heading's title, its buttons and the first tab, left to right.
+  const layout = async (heading: Locator, scope: Locator) => {
+    const box = async (target: Locator) => (await target.boundingBox())!;
+    const button = (name: string) =>
+      heading.getByRole("button", { name, exact: true });
+    const title = await box(heading.getByRole("heading"));
+    // A task added in the last 12 hours shows "new" after its title; the
+    // link follows that mark with the gap it otherwise keeps from the title.
+    const mark = heading.locator(".task-new-mark");
+    const beforeLink = (await mark.count()) ? await box(mark) : title;
+    const link = await box(button("링크 복사"));
+    const expand = await box(button("전체 페이지 닫기"));
+    const icons = await Promise.all(
+      ["전체 너비로 보기", "이모지 복사", "닫기"].map((name) =>
+        box(button(name)),
+      ),
+    );
+    const style = await Promise.all(
+      ["링크 복사", "전체 페이지 닫기", "이모지 복사", "닫기"].map((name) =>
+        button(name).evaluate((element) => {
+          const css = getComputedStyle(element);
+          return [css.borderTopWidth, css.color, css.padding].join(" ");
+        }),
+      ),
+    );
+    return {
+      title: {
+        x: Math.round(title.x),
+        size: await heading
+          .getByRole("heading")
+          .evaluate((element) => getComputedStyle(element).fontSize),
+      },
+      // The link and full-page toggle follow the title.
+      leftGap: [
+        link.x - beforeLink.x - beforeLink.width,
+        expand.x - link.x - link.width,
+      ],
+      right: icons.map((icon) => Math.round(icon.x)),
+      middle: icons.map((icon) => Math.round(icon.y + icon.height / 2)),
+      style,
+      tab: Math.round((await box(scope.getByRole("tab").first())).x),
+      toolbar: Math.round(
+        (
+          await box(
+            scope.locator(".document-formatbar").filter({ visible: true }),
+          )
+        ).x,
+      ),
+    };
+  };
+
+  const detail = await openTask(page);
+  await detail
+    .getByRole("button", { name: "문서 전체 페이지로 보기", exact: true })
+    .click();
+  await expect(detail.getByRole("tab").first()).toBeVisible();
+  const task = await layout(detail.locator(":scope > header"), detail);
+  await detail.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(detail).toHaveCount(0);
+
+  const memos = page.locator(".annual-memos.memo-panel");
+  await memos.locator(".toggle-memos").click();
+  await memos
+    .getByRole("button", { name: "문서 전체 페이지로 보기", exact: true })
+    .first()
+    .click();
+  await expect(memos).toHaveClass(/document-full-page/);
+  const heading = memos.locator(".memo-page-header");
+  // The link button arrives in the heading after the slot renders.
+  await expect(
+    heading.getByRole("button", { name: "링크 복사", exact: true }),
+  ).toBeVisible();
+  const memo = await layout(heading, memos);
+  expect(memo.title).toEqual(task.title);
+  for (const [index, gap] of memo.leftGap.entries())
+    expect(gap).toBeCloseTo(task.leftGap[index], 0);
+  expect(memo.right).toEqual(task.right);
+  expect(memo.style).toEqual(task.style);
+  // The buttons share one line, and the tabs start at the toolbar's edge.
+  expect(new Set(memo.middle).size).toBe(1);
+  expect(memo.tab).toBe(task.tab);
+  expect(memo.toolbar).toBe(task.toolbar);
+  // The selected memo's link moved from the tab row into the heading.
+  await expect(memos.locator(".document-tabs .document-link-copy")).toHaveCount(
+    0,
+  );
+  await heading.screenshot({ path: info.outputPath("memo-heading.png") });
+
+  const clipboard = await watchClipboard(page, browserName);
+  const emoji = heading.getByRole("button", {
+    name: "이모지 복사",
+    exact: true,
+  });
+  await emoji.click();
+  const search = picker(page).getByRole("textbox", { name: "이모지 검색" });
+  await expect(search).toBeFocused();
+  await page.screenshot({ path: info.outputPath("memo-emoji-picker.png") });
+  await search.fill("하트");
+  await search.press("Enter");
+  await expect(notice(page)).toHaveText("❤️ 이모지를 복사했습니다.");
+  expect(await clipboard()).toBe("❤️");
+  await expect(picker(page)).toHaveCount(0);
+  await expect(emoji).toBeFocused();
+  // Esc closes only the list; the next one leaves the full page.
+  await emoji.click();
+  await expect(search).toBeFocused();
+  await search.press("Escape");
+  await expect(picker(page)).toHaveCount(0);
+  await expect(memos).toHaveClass(/document-full-page/);
+  await page.keyboard.press("Escape");
+  await expect(memos).not.toHaveClass(/document-full-page/);
+
+  // On a phone both open full page without the expand and width buttons;
+  // the headings keep the same padding, title, link and right-hand icons.
+  const phone = async (heading: Locator) => {
+    const box = async (target: Locator) => (await target.boundingBox())!;
+    const button = (name: string) =>
+      heading.getByRole("button", { name, exact: true });
+    await expect(button("링크 복사")).toBeVisible();
+    await expect(button("전체 페이지 닫기")).toBeHidden();
+    await expect(button("기본 너비로 보기")).toBeHidden();
+    const title = await box(heading.getByRole("heading"));
+    // A task added in the last 12 hours shows "new" after its title; the
+    // link follows that mark with the gap it otherwise keeps from the title.
+    const mark = heading.locator(".task-new-mark");
+    const beforeLink = (await mark.count()) ? await box(mark) : title;
+    const link = await box(button("링크 복사"));
+    const icons = await Promise.all(
+      ["이모지 복사", "닫기"].map((name) => box(button(name))),
+    );
+    return {
+      padding: await heading.evaluate(
+        (element) => getComputedStyle(element).padding,
+      ),
+      title: Math.round(title.x),
+      link: Math.round(link.x - beforeLink.x - beforeLink.width),
+      right: icons.map((icon) => Math.round(icon.x)),
+    };
+  };
+  await openTask(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(detail).toHaveClass(/document-full-page/);
+  const taskPhone = await phone(detail.locator(":scope > header"));
+  await detail.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(detail).toHaveCount(0);
+  // The memo list left open above opens full page on its own.
+  await expect(memos).toHaveClass(/document-full-page/);
+  expect(await phone(heading)).toEqual(taskPhone);
+  await page.screenshot({ path: info.outputPath("memo-heading-phone.png") });
+});
+
 test("HTTP 사이트에서도 복사 명령으로 이모지를 복사한다", async ({ page }) => {
   const dialog = await openTask(page);
   await page.evaluate(() => {

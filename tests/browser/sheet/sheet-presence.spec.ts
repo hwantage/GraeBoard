@@ -71,9 +71,10 @@ test("같은 사내 서버의 다른 사람이 선택·편집 중인 셀에 이�
     // the full name is in the tooltip and the cell's accessible description.
     const watched = page.locator(`[data-cell="${taskIds[0]}:title"]`);
     await expect(watched).toHaveText("첫 업무");
+    // The task was just created, so the description also says it is new.
     await expect(watched).toHaveAttribute(
       "aria-description",
-      "옆자리 팀원 선택 중",
+      "옆자리 팀원 선택 중, 새 업무",
     );
     await expect(watched).toHaveAttribute(
       "title",

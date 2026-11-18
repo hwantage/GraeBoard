@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { applySheetCloneOperation } from "../../shared/sheet-clones/sheet-clone-editing.js";
 import { rebaseSheetCloneCells } from "../../shared/sheet-clones/sheet-clone-sync.js";
-import { api, ApiError, send } from "../platform/api";
+import { api, ApiError, send, serverNow } from "../platform/api";
 import type {
   Cell,
   CellChange,
@@ -118,7 +118,9 @@ export default function useSheetCloneDraft(teamId: string, actorId: string) {
       throw new Error(
         "저장하지 못한 변경이 많습니다. 저장 오류를 확인해 주세요.",
       );
-    const operation = { ...command, at: new Date().toISOString() };
+    // Server time, as for cell requests: a row added here keeps it as its
+    // creation time, which the new-task mark compares with the server clock.
+    const operation = { ...command, at: serverNow() };
     const tasks = applySheetCloneOperation(current.tasks, operation, {
       teamId,
       actorId,
@@ -232,7 +234,7 @@ export default function useSheetCloneDraft(teamId: string, actorId: string) {
       removeIds: current.tasks
         .filter((task) => !ids.has(task.id))
         .map((task) => task.id),
-      at: new Date().toISOString(),
+      at: serverNow(),
     };
     update({
       ...current,
