@@ -29,6 +29,16 @@
 
 - 원인 수정(같은 날, 재검토): 외부 사본 생성(`postgres-sheet-clones.mjs`)은 원본 문서를 문서 ID 순(`ORDER BY entity_key`)으로 사본 목록에 넣고 원본의 `position`을 그대로 복사했습니다. 그래서 목록 위치와 `position`이 어긋났고, 외부는 탭을 `position`으로(`byDocumentPosition`), 사내는 목록으로 보여 줘 같은 사본 행의 탭 순서가 두 사이트에서 다를 수 있었습니다. 이제 원본 탭 순서(`position`, 같으면 ID)로 목록을 만들고 `position`을 목록 위치로 씁니다. 사내 사본 생성(`ORDER BY position,id`)·사본 저장·사내 reader와 같은 규칙입니다. `sheet-clone-storage-contract.test.mjs`에 ID 순과 탭 순서가 다른 문서 세 개로 만든 사본의 목록·위치 검사를 더했습니다(수정 전 실패, 수정 후 통과). 이미 어긋난 사본의 정규화는 DB 변경 지침에 따라 별도 승인 후 진행합니다. CodeRabbit이 지적한 추가·이동 시 위치 섞임은 그 정규화로 해소합니다.
 
+## 2026-11-18 — 상대가 주기 도중 올린 커밋으로 사내 동기화가 실패하던 문제
+
+- 사용자 보고(2026-11-18, 사내 서버): `동기화 오류: Git operation failed (128, merge-base)`가 자주 표시되고 기다리면 사라집니다. 로그의 실패 주기는 137초가 걸렸고 `git merge-base --is-ancestor 60925e7… 5be8593…`이 `fatal: Not a valid commit name 5be8593…`로 끝났습니다. 원인은 2026-11-13 기록과 같습니다. 사내가 `sync-v1`을 받은 뒤 외부가 새 커밋을 올리고 상태에 알리면, 주기 마지막 상태 확인이 사내 clone에 없는 커밋으로 조상 관계를 묻습니다. 주기가 길수록 잦아집니다.
+- 결정(사용자 요청): 문구 대신 동작을 고칩니다. 상태 확인 단계만 바꾸고 받기·올리기·충돌 처리와 DB·저장 형식은 바꾸지 않습니다.
+- 수정: `GitCliTransport.hasCommit`(`git rev-parse --verify --quiet <oid>^{commit}`, 40자 소문자 ID만 허용)을 추가했습니다. `SyncService.peerReachable`은 상대 head가 없으면 `readHead()`로 `sync-v1`을 한 번 받고 다시 확인합니다. 그래도 없거나 받기가 실패하면 `verified: false`로 저장하고 주기는 성공으로 끝냅니다. 중단 오류는 그대로 전달합니다. `hasCommit`이 없는 전송(외부 GitHub API·테스트 대역)은 이전과 같이 바로 `verifyReachable`을 호출합니다. 외부는 사내가 올린 뒤에 상태를 알리므로 GitHub에 항상 그 커밋이 있어 해당하지 않습니다.
+- 기존 동작에 대한 영향: 경합이 없으면 Git 명령이 `rev-parse` 한 번 늘어날 뿐 판단은 같습니다. 경합이면 받기(`ls-remote`·`fetch`) 한 번이 더해집니다. 받은 커밋은 `refs/remotes/origin/sync-v1`만 옮기며 연결의 `canonical_head`는 다음 주기의 수신이 바꿉니다. 화면의 외부망 반영은 상대 head가 사내 head와 같아야 "완료"이므로 이 경우 "대기"로 보입니다. 무관한 이력의 head는 계속 미확인이고, 이력 재작성은 수신 단계가 계속 오류로 알립니다. 다른 `verifyReachable` 호출(수신·체크포인트·보관·디렉토리·설정 키)은 바꾸지 않았습니다.
+- 검증: `tests/sync/transport/sync-log.test.mjs`에 실제 Git 저장소 두 개로 경합을 재현하는 검사와 `hasCommit` 입력 검사를 추가했습니다. 수정 전 코드에서는 운영과 같은 `Git operation failed (128, merge-base)`로 실패하고 수정 후 통과합니다. 받은 뒤 확인·원격에 없는 커밋·받기 실패·중단 전달·무관한 이력과 실패 Git 명령 기록이 없는지 확인합니다.
+- CodeRabbit 리뷰 반영(같은 날, PR #200): 상대 상태의 유효 기간(180초)은 `peerReachable` 전에만 검사했습니다. 그 사이 받기가 오래 걸리면 만료된 상태가 `verified: true`로 저장될 수 있어, 확인 뒤 한 번 더 검사합니다. 읽는 쪽(`node-status.mjs`·화면·`syncVerification`)은 시각을 다시 보므로 표시 오류는 없었고 동기화 로그의 `peerVerified`만 해당했습니다. 받기 도중 만료되면 미확인으로 저장하는 검사를 추가했고, 재검사를 빼면 실패합니다.
+- 병합 전 검증(macOS·PostgreSQL 17): 최신 main과 합친 상태에서 `sync-integration.test.mjs`의 동기화 로그 검사가 실패했습니다. 이 검사는 상대가 올리지 않은 커밋을 상태로 알릴 때의 `merge-base` 128 실패를 "실패한 Git 단계 기록"의 예로 썼는데, 이번 수정으로 그 주기는 성공합니다. 검사를 두 부분으로 나눴습니다. 같은 경합에서는 주기가 성공하고 `lastError`가 비며 상대 상태만 미확인이다가, 그 커밋이 확인되면 확인됨으로 바뀝니다. 실패 기록·회복 표시는 공유 저장소(`remote.git`)를 한 주기 동안 치워 생기는 실제 Git 128 실패로 확인합니다(명령·코드·stderr·다음 주기의 회복). 고친 검사는 main의 `service.mjs`로는 `Git operation failed (128, merge-base)`로 실패하고 이 PR의 코드로는 통과합니다. 최신 main(`dccc4c5`)과 합친 상태에서 Node 22·PostgreSQL 17 전체 856건이 통과했습니다(실패·취소·skip 0).
+
 ## 2026-11-18 — 신규 업무 new 표시(12시간)
 
 - 새로 등록한 업무에 등록 후 12시간 동안 빨간 `new`를 표시합니다. 연간 업무·사본 표(휴대폰 포함)는 작업명 셀의 문서 버튼 왼쪽, 업무 상세는 제목 줄의 **업무 상세** 오른쪽, 캘린더 주간 할 일은 업무 제목 뒤에 둡니다. 등록자를 포함한 모든 사람에게 보이고 엑셀 가져오기로 만든 업무는 제외합니다(사용자와 협의해 정함).
