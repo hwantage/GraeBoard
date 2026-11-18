@@ -2047,6 +2047,7 @@ test("주간 업무 삭제는 그 주의 연결만 지우고 실행취소로 같
     (item) => item.taskId === tasks[2].id,
   );
   assert.equal(unavailable.unavailable, true);
+  assert.equal(unavailable.taskCreatedAt, null);
   const leadRemoved = await f.req(
     "/calendar/weekly",
     "DELETE",

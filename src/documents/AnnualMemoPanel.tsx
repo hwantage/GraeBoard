@@ -10,6 +10,7 @@ import {
 import { ChevronDown, ChevronUp, FileText, X } from "lucide-react";
 import DocumentFullPageButton from "./DocumentFullPageButton";
 import DocumentFullWidthButton from "./DocumentFullWidthButton";
+import CopyEmojiButton from "./CopyEmojiButton";
 import { useDocumentFullPage } from "./useDocumentFullPage";
 import { Button } from "../ui/Button";
 import type { DocumentPanelHandle } from "./DocumentPanel";
@@ -89,6 +90,9 @@ export default forwardRef<
   const [selectedDocument, setSelectedDocument] = useState(
     initialDocumentId || "",
   );
+  // The full page's heading, where DocumentPanel puts the selected memo's
+  // link button as the task detail has it beside its title.
+  const [linkSlot, setLinkSlot] = useState<HTMLSpanElement | null>(null);
   const {
     fullPage: preferredPage,
     fullWidth,
@@ -291,13 +295,35 @@ export default forwardRef<
         />
       )}
       <div
-        className="memo-accordion-heading"
+        className={`memo-accordion-heading${fullPage ? " memo-page-header" : ""}`}
         onClick={(event) => {
           if (!fullPage && event.target === event.currentTarget) void toggle();
         }}
       >
+        {/* The full page's heading follows the task detail's (Panels.tsx):
+            title, link and full-page toggle on the left; full width, emoji
+            and close on the right. */}
         {fullPage ? (
-          <h2 className="memo-page-title">꼬리 메모</h2>
+          <div className="memo-page-heading">
+            <h2 className="memo-page-title">꼬리 메모</h2>
+            <span className="memo-page-link" ref={setLinkSlot} />
+            <DocumentFullPageButton
+              link={
+                selectedDocument
+                  ? sheetCloneId
+                    ? {
+                        kind: "sheet-clone-memo",
+                        sheetCloneId,
+                        id: selectedDocument,
+                      }
+                    : { kind: "memo", teamId, year, id: selectedDocument }
+                  : undefined
+              }
+              onNewTab={() => panel.current?.flush() ?? Promise.resolve(true)}
+              fullPage
+              onToggle={() => void closePage()}
+            />
+          </div>
         ) : (
           <Button
             className="toggle-memos"
@@ -380,26 +406,10 @@ export default forwardRef<
         )}
         {fullPage && (
           <>
-            <DocumentFullPageButton
-              link={
-                selectedDocument
-                  ? sheetCloneId
-                    ? {
-                        kind: "sheet-clone-memo",
-                        sheetCloneId,
-                        id: selectedDocument,
-                      }
-                    : { kind: "memo", teamId, year, id: selectedDocument }
-                  : undefined
-              }
-              onNewTab={() => panel.current?.flush() ?? Promise.resolve(true)}
-              fullPage
-              onToggle={() => void closePage()}
-            />
             <DocumentFullWidthButton />
+            <CopyEmojiButton userId={userId} />
             <Button
               ref={closeButton}
-              className="memo-panel-close"
               tooltip="닫기"
               disabled={closing}
               onClick={() => void closePage()}
@@ -421,6 +431,7 @@ export default forwardRef<
             }}
             browserTitleFallback={browserTitleFallback}
             inlineFullPage={fullPage}
+            fullPageLinkSlot={linkSlot}
             onExpand={() => setExpanded(true)}
             onScrollRatioChange={(ratio, available) => {
               setScrollRatio(ratio);
