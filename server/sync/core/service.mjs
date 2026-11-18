@@ -988,7 +988,7 @@ export class SyncService {
           remote.installationId === this.identity.peerInstallationId &&
           typeof remote.appliedCanonicalHead === "string" &&
           /^[a-f0-9]{40}$/.test(remote.appliedCanonicalHead) &&
-          (await this.transport.verifyReachable(
+          (await this.peerReachable(
             link.canonical_head,
             remote.appliedCanonicalHead,
           ));
@@ -996,6 +996,26 @@ export class SyncService {
         await this.store.saveRemoteStatus?.(remote);
       }
     }
+  }
+  // The peer can publish and announce a commit after this cycle received, so
+  // its head may not be in a local clone yet. Fetch the branch once; if the
+  // commit is still missing, or the fetch fails, the peer stays unverified
+  // until a later cycle receives it instead of failing a cycle whose exchange
+  // already finished. Rewritten history is still caught when receiving.
+  async peerReachable(head, peerHead) {
+    if (
+      this.transport.hasCommit &&
+      !(await this.transport.hasCommit(peerHead))
+    ) {
+      try {
+        await this.transport.readHead();
+      } catch (error) {
+        if (isSyncInterruption(error)) throw error;
+        return false;
+      }
+      if (!(await this.transport.hasCommit(peerHead))) return false;
+    }
+    return this.transport.verifyReachable(head, peerHead);
   }
   // `target` is protocol 5. Protocol 4 remains only so its history and tests
   // replay; the routes and the CLI never ask for it.

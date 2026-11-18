@@ -102,10 +102,12 @@ export class GitCliTransport {
         this.log({
           command: args[0],
           args: redactGitOutput(args.join(" ").slice(0, 400), this.token),
-          // merge-base and grep answer "no" with exit code 1.
+          // merge-base, grep and rev-parse --verify --quiet answer "no" with
+          // exit code 1.
           ok:
             !error ||
-            (error.code === 1 && ["merge-base", "grep"].includes(args[0])),
+            (error.code === 1 &&
+              ["merge-base", "grep", "rev-parse"].includes(args[0])),
           ...(error ? { code: error.code ?? null } : {}),
           ms: Math.round(performance.now() - started),
           ...(input !== undefined
@@ -333,6 +335,20 @@ export class GitCliTransport {
     const commits = [];
     for (const oid of ids) commits.push(await this.readCommit(oid));
     return commits;
+  }
+  // Whether this clone already holds the commit. A peer can announce a commit
+  // that this clone has not fetched yet.
+  async hasCommit(oid) {
+    if (typeof oid !== "string" || !/^[a-f0-9]{40}$/.test(oid))
+      throw new ProtocolError("SYNC_FORMAT", "Invalid Git ancestry identity");
+    await this.init();
+    try {
+      await this.git(["rev-parse", "--verify", "--quiet", `${oid}^{commit}`]);
+      return true;
+    } catch (error) {
+      if (error.code === 1) return false;
+      throw error;
+    }
   }
   async verifyReachable(ancestor, head) {
     if (!ancestor) return true;
