@@ -25,6 +25,13 @@
 - 회귀 검사 `detail-emoji-copy.spec.ts`의 꼬리 메모 전체 페이지 항목이 같은 화면 폭의 업무 상세와 제목 위치·글자 크기, 링크·토글 간격, 오른쪽 버튼 위치, 버튼 테두리·색·여백, 첫 탭·툴바 시작 위치를 비교하고 이모지 복사·Esc 순서를 확인합니다. 390px에서도 두 헤더의 여백·제목·링크·이모지·닫기 위치가 같고 펼치기·전체 너비 버튼이 숨는지 확인합니다.
 - 검증: PostgreSQL 17 포함 Node 전체 854건 통과(실패·취소·skip 0), 프런트엔드·Supabase Edge 빌드, 구조 오류 0·import 경계 위반 0. 관련 브라우저 spec 5개(`detail-emoji-copy`·`annual-memos`·`document-links`·`task-documents`·`workspace-improvements`)를 Chromium·Firefox·WebKit에서 실행해 396건 통과·8건 skip·1건 실패였습니다. 실패는 WebKit `document-links.spec.ts:1317` 원본 메모 주소 제목 검사가 페이지 정리 중 `/api/presence` 접근 제어 오류를 기록한 것으로, 같은 검사를 WebKit에서 원본·사본 5회씩 반복한 10건이 모두 통과해 재현되지 않았습니다. 리뷰 반영 후 재빌드에서 `detail-emoji-copy` 전체와 해당 검사를 3개 엔진에서 다시 실행해 24건 모두 통과했습니다.
 
+## 2026-11-18 — 월간 보기에서 팀 주간으로 바꿀 때 스크롤 위치 초기화
+
+- 개인 월간에서 **팀 주간 일정 보기**로 바꾸면 내 주간 일정이 맨 위에 있는데도 화면이 중간 팀원부터 보였습니다. 두 보기가 같은 `.calendar-scroll` 요소를 재사용해, 월간 보기가 오늘 주로 옮긴 `scrollTop`이 팀 주간에 그대로 남았습니다.
+- `Calendar.tsx`가 보기가 팀 주간으로 바뀔 때 레이아웃 단계에서 세로 스크롤을 0으로 옮깁니다. 월간 jump가 꺼 둔 `overflow-anchor`는 격자 위 입력에서만 다시 켜져 버튼으로 바꾸면 팀 주간까지 남았으므로 같은 시점에 지웁니다. 가로 위치·월간 보기의 오늘 이동·팀 주간 안의 주 이동은 바꾸지 않으며 DB·저장 형식 변경은 없습니다.
+- 회귀 검사 `monthly-calendar.spec.ts`의 **개인 월간 보기에서 팀 주간 일정 보기로 바꾸면 맨 위의 내 주간 일정부터 보인다**는 팀원 6명·높이 700px에서 월간 격자를 400px 내린 뒤 전환해 스크롤 0, 남은 `overflow-anchor` 없음, 내 구역 머리글 노출을 확인합니다. 수정 전 Chromium에서 `scrollTop` 400으로 실패했고 수정 후 3개 엔진에서 통과했습니다.
+- 검증: `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 854건 통과(실패·취소·skip 0), `npm run build`·`npm run build:edge`, `check:structure`·`check:architecture` 통과. `tests/browser/calendar/` 3개 엔진 390건 중 385건 통과·2건 skip, 실패 3건은 **늦은 팀원/기간 응답은 현재 범위에 섞이지 않으며 모바일은 모든 요일을 표시한다**의 시크릿 버튼 탭 이동으로, 수정을 뺀 기준 소스에서도 같은 위치에서 실패합니다. 새 검사는 3개 엔진에서 3회씩 반복 통과했습니다.
+
 ## 2026-11-18 — 새 Claude 아티팩트 공유 주소의 실제 제목 조회
 
 - `/artifact/Bsxkr6atfFSNs6MpuJKoyF`를 붙여넣으면 실제 이름 대신 HTML의 `Claude Artifact`가 표시됐습니다. 기존 코드는 `/public/artifacts/:uuid`만 처리했습니다. 공개 페이지의 루트 `data-frame-uuid`와 실제 `/api/frame/:uuid` 응답을 확인해 새 `/artifact/:id`·`/code/artifact/:id` 주소를 지원합니다.
