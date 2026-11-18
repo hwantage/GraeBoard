@@ -23,6 +23,8 @@ import {
   SYNC_LOG_RETENTION_DAYS,
   SYNC_LOG_SCAN,
 } from "../../../server/sync/node/sync-log.mjs";
+import { SyncService } from "../../../server/sync/core/service.mjs";
+import { canonical } from "../../../server/sync/core/protocol.mjs";
 
 const team = "11111111-1111-4111-8111-111111111111";
 function temporary(t) {
@@ -336,4 +338,156 @@ test("Git transport reports each command with what Git printed and names the fai
     transport.readFile(first, "manifest.json"),
     /Git operation failed \(128, show\)/,
   );
+});
+
+// The peer can publish a commit and announce it in its status after this
+// clone received, so the announced head is not in this clone yet. The status
+// step must not fail a cycle whose exchange already finished.
+test("a peer head announced after this clone received is fetched or left unverified without failing", async (t) => {
+  const dir = temporary(t),
+    remote = join(dir, "remote.git"),
+    seen = [];
+  execFileSync("git", ["init", "--bare", remote], { stdio: "ignore" });
+  const peer = new GitCliTransport({
+    directory: join(dir, "peer.git"),
+    repository: remote,
+    allowLocal: true,
+  });
+  const local = new GitCliTransport({
+    directory: join(dir, "local.git"),
+    repository: remote,
+    allowLocal: true,
+    log: (entry) => seen.push(entry),
+  });
+  const identity = { teamId: "team", repoId: "repo" };
+  const announce = async (head) => {
+    const branch = "sync-status/peer",
+      parent = await peer.readHead(branch),
+      oid = await peer.createCandidate(parent, {
+        "status.json": canonical({
+          ...identity,
+          installationId: "peer",
+          writerEpoch: "epoch",
+          mode: "active",
+          appliedCanonicalHead: head,
+          observedAt: new Date().toISOString(),
+        }),
+      });
+    assert.equal(await peer.publish(oid, parent, branch), true);
+  };
+  const first = await peer.createCandidate(null, { "manifest.json": "1" });
+  assert.equal(await peer.publish(first, null), true);
+  assert.equal(await local.readHead(), first);
+  // The peer moves on after this clone received `first`.
+  const second = await peer.createCandidate(first, { "manifest.json": "2" });
+  assert.equal(await peer.publish(second, first), true);
+  await announce(second);
+  assert.equal(await local.hasCommit(second), false);
+  let saved = null;
+  const service = new SyncService({
+    transport: local,
+    store: { saveRemoteStatus: async (value) => (saved = value) },
+    identity: { ...identity, peerInstallationId: "peer" },
+  });
+  const link = {
+    canonical_head: first,
+    installation_id: "local",
+    writer_epoch: "epoch",
+    mode: "active",
+  };
+  seen.length = 0;
+  await service.status(link);
+  assert.equal(saved.verified, true);
+  assert.equal(saved.appliedCanonicalHead, second);
+  assert.equal(saved.verifiedAgainstHead, first);
+  assert.equal(await local.hasCommit(second), true);
+  assert.deepEqual(
+    seen.filter((entry) => !entry.ok),
+    [],
+    "a missing commit is an answer, not a failed Git command",
+  );
+  // A commit that never reached the remote stays unverified.
+  const unpublished = await peer.createCandidate(second, {
+    "manifest.json": "3",
+  });
+  await announce(unpublished);
+  await service.status(link);
+  assert.equal(saved.verified, false);
+  assert.equal(saved.appliedCanonicalHead, unpublished);
+  // A failed fetch leaves the peer unverified; an interruption still stops.
+  const third = await peer.createCandidate(second, { "manifest.json": "4" });
+  assert.equal(await peer.publish(third, second), true);
+  await announce(third);
+  const readHead = local.readHead.bind(local);
+  local.readHead = async (branch) => {
+    if (branch === undefined)
+      throw new Error("Git operation failed (128, fetch)");
+    return readHead(branch);
+  };
+  await service.status(link);
+  assert.equal(saved.verified, false);
+  local.readHead = async (branch) => {
+    if (branch === undefined)
+      throw Object.assign(new Error("stopped"), { code: "SYNC_INTERRUPTED" });
+    return readHead(branch);
+  };
+  await assert.rejects(
+    service.status(link),
+    (error) => error.code === "SYNC_INTERRUPTED",
+  );
+  local.readHead = readHead;
+  await service.status(link);
+  assert.equal(saved.verified, true);
+  // A status that expires while the fetch runs is stored unverified.
+  const fourth = await peer.createCandidate(third, { "manifest.json": "5" });
+  assert.equal(await peer.publish(fourth, third), true);
+  await announce(fourth);
+  const now = Date.now;
+  local.readHead = async (branch) => {
+    const head = await readHead(branch);
+    if (branch === undefined) Date.now = () => now() + 181000;
+    return head;
+  };
+  try {
+    await service.status(link);
+  } finally {
+    Date.now = now;
+    local.readHead = readHead;
+  }
+  assert.equal(await local.hasCommit(fourth), true);
+  assert.equal(saved.verified, false);
+  await service.status(link);
+  assert.equal(saved.verified, true);
+  // A head this clone holds on unrelated history is still unreachable.
+  const apart = await local.createCandidate(null, { "manifest.json": "x" });
+  await announce(apart);
+  await service.status(link);
+  assert.equal(saved.verified, false);
+});
+
+test("Git CLI commit lookup only accepts full object IDs", async (t) => {
+  const dir = temporary(t),
+    remote = join(dir, "remote.git");
+  execFileSync("git", ["init", "--bare", remote], { stdio: "ignore" });
+  const transport = new GitCliTransport({
+    directory: join(dir, "cache.git"),
+    repository: remote,
+    allowLocal: true,
+  });
+  for (const value of [":/pattern", "--all", "HEAD", "a".repeat(39), 3])
+    await assert.rejects(
+      transport.hasCommit(value),
+      (error) => error.code === "SYNC_FORMAT",
+    );
+  const commit = await transport.createCandidate(null, { "a.txt": "a" });
+  assert.equal(await transport.hasCommit(commit), true);
+  assert.equal(await transport.hasCommit("1".repeat(40)), false);
+  const blob = execFileSync(
+    "git",
+    ["-C", join(dir, "cache.git"), "hash-object", "-w", "--stdin"],
+    { input: "blob" },
+  )
+    .toString()
+    .trim();
+  assert.equal(await transport.hasCommit(blob), false);
 });

@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -1415,8 +1416,9 @@ test(
     // Successful Git commands are not written at the default level.
     assert.ok(!listed.some((entry) => entry.kind === "git"));
 
-    // The reported failure: the peer's status names a commit this clone has
-    // not fetched. The log says which Git step failed and what Git printed.
+    // The peer can announce a commit it published after this cycle fetched;
+    // this clone has not received it yet. The cycle still succeeds: it fetches
+    // once more, and while the commit is missing the peer is only unverified.
     const publishPeerStatus = async (appliedCanonicalHead) => {
       const parent = await b.transport.readHead("sync-status/" + bId),
         old = JSON.parse(
@@ -1441,30 +1443,46 @@ test(
       "events/ahead.json": "{}",
     });
     await publishPeerStatus(ahead);
-    await assert.rejects(run(), /Git operation failed \(128, merge-base\)/);
-    assert.equal(
-      ok(await a.api(`/teams/${teamId}/sync`)).lastError,
-      "Git operation failed (128, merge-base)",
-    );
+    await run();
+    let status = ok(await a.api(`/teams/${teamId}/sync`));
+    assert.equal(status.lastError, null);
+    assert.equal(status.remoteStatus.appliedCanonicalHead, ahead);
+    assert.equal(status.remoteStatus.verified, false);
+    listed = await entries();
+    assert.equal(listed[0].kind, "cycle");
+    assert.equal(listed[0].ok, true);
+    // Asking whether the clone holds the commit is an answer, not a failure.
+    assert.ok(!listed.some((entry) => entry.kind === "git"));
+    await publishPeerStatus(canonicalHead);
+    await run();
+    status = ok(await a.api(`/teams/${teamId}/sync`));
+    assert.equal(status.remoteStatus.verified, true);
+
+    // A failed Git step is written with what Git printed: the shared
+    // repository is out of reach for one cycle.
+    const remote = join(dir, "remote.git"),
+      away = remote + ".away";
+    renameSync(remote, away);
+    try {
+      await assert.rejects(run(), /Git operation failed \(128, /);
+    } finally {
+      renameSync(away, remote);
+    }
+    const failure = ok(await a.api(`/teams/${teamId}/sync`)).lastError;
     listed = await entries("?problems=1");
     const failed = listed.find((entry) => entry.kind === "cycle");
     assert.equal(failed.ok, false);
-    assert.equal(
-      failed.error.message,
-      "Git operation failed (128, merge-base)",
-    );
+    assert.equal(failed.error.message, failure);
     assert.equal(failed.error.code, 128);
     assert.equal(failed.head, canonicalHead);
     const git = listed.find((entry) => entry.kind === "git");
-    assert.equal(git.command, "merge-base");
+    assert.equal(failure, `Git operation failed (128, ${git.command})`);
     assert.equal(git.code, 128);
-    assert.match(git.stderr, /Not a valid commit name/);
-    assert.ok(git.args.includes(ahead));
+    assert.match(git.stderr, /remote\.git/);
     assert.ok(
       listed.every((entry) => entry.ok === false || entry.kind === "state"),
     );
     // The next successful cycle is marked as the recovery.
-    await publishPeerStatus(canonicalHead);
     await run();
     listed = await entries();
     assert.equal(listed[0].kind, "cycle");
