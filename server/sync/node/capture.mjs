@@ -75,7 +75,8 @@ export function installCapture(db, { onPending = () => {} } = {}) {
     beforeSheetClones = new Map(),
     afterSheetClones = new Map(),
     hintedCells = new Set(),
-    afterImages = new Map();
+    afterImages = new Map(),
+    documentPlaces = new Map();
   // Keep prepared reads local to capture. The shared entity reader still defines
   // payloads, while each keystroke avoids preparing the same SQLite programs.
   const statements = new Map(),
@@ -182,6 +183,35 @@ export function installCapture(db, { onPending = () => {} } = {}) {
     ).get(teamId)?.rules;
     return typeof rules === "string" ? JSON.parse(rules) : null;
   };
+  // A copy's document keeps its title and order inside the copy, so the local
+  // reader numbers it by its place in the copy's list. Shared state keeps the
+  // title and position the writing site sent, which can differ: an external
+  // copy has held position 2 for the first document of a row. The reducer
+  // compares a delete's whole base, so take these two fields as the reducer
+  // has them: from the newest pending change, or else from shared state.
+  const sharedDocumentPlace = (teamId, key, pending) => {
+    let place;
+    if (pending) {
+      const index = Number(pending.version.slice(pending.opId.length + 1));
+      if (Number.isInteger(index))
+        place = prepare(
+          "SELECT json_extract(payload,?) AS title,json_extract(payload,?) AS position FROM sync_outbox WHERE op_id=? AND team_id=?",
+        ).get(
+          `$.changes[${index}].desired.title`,
+          `$.changes[${index}].desired.position`,
+          pending.opId,
+          teamId,
+        );
+    }
+    if (typeof place?.position !== "number")
+      place = prepare(
+        "SELECT json_extract(payload,'$.title') AS title,json_extract(payload,'$.position') AS position FROM sync_entities WHERE team_id=? AND entity='document' AND entity_key=? AND deleted=0",
+      ).get(teamId, canonical(key));
+    return typeof place?.position === "number" &&
+      typeof place.title === "string"
+      ? { title: place.title, position: place.position }
+      : null;
+  };
   const record = (teamId, entity, key, beforeImage = undefined) => {
     if (!active || suppressed || !links.has(teamId)) return;
     const mapKey = teamId + entityId(entity, key);
@@ -250,6 +280,23 @@ export function installCapture(db, { onPending = () => {} } = {}) {
             sharedFormatRules(teamId, pending),
           ),
         };
+      if (entity === "document" && key[0] === "sheetClone" && row) {
+        const shared = sharedDocumentPlace(teamId, key, pending);
+        if (
+          shared &&
+          (shared.title !== value.payload.title ||
+            shared.position !== value.payload.position)
+        ) {
+          documentPlaces.set(mapKey, {
+            local: {
+              title: value.payload.title,
+              position: value.payload.position,
+            },
+            shared,
+          });
+          value.payload = { ...value.payload, ...shared };
+        }
+      }
     }
     before.set(mapKey, { teamId, entity, key, value, body });
   };
@@ -330,6 +377,7 @@ export function installCapture(db, { onPending = () => {} } = {}) {
       afterSheetClones = new Map();
       hintedCells = new Set();
       afterImages = new Map();
+      documentPlaces = new Map();
       actors = new Map();
       created = [];
       checkedTeams = new Set();
@@ -396,6 +444,25 @@ export function installCapture(db, { onPending = () => {} } = {}) {
             };
           else if (!calendarBodySaved(item)) after = null;
         }
+        // A copy document whose title or place in the list did not change
+        // keeps the shared value its base carries (see sharedDocumentPlace);
+        // a renamed or moved one sends its new local value.
+        const place = documentPlaces.get(item.teamId + key);
+        if (after && place)
+          after = {
+            ...after,
+            payload: {
+              ...after.payload,
+              title:
+                after.payload.title === place.local.title
+                  ? place.shared.title
+                  : after.payload.title,
+              position:
+                after.payload.position === place.local.position
+                  ? place.shared.position
+                  : after.payload.position,
+            },
+          };
         // Formats written with the same rules change nothing: the ID order
         // read back is not an edit of the shared order kept in the base.
         if (
