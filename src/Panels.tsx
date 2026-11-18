@@ -314,7 +314,7 @@ export function RowPanel({
       title="업무 상세"
       titleAction={
         <>
-          {newTask && <NewTaskMark />}
+          {newTask && <NewTaskMark labelled />}
           <CopyDocumentLinkButton
             target={linkTarget}
             title={String(value(task, "title"))}

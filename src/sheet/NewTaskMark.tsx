@@ -1,4 +1,4 @@
-import { useEffect, useReducer } from "react";
+import { useEffect, useReducer, type ReactNode } from "react";
 import { serverNow } from "../platform/api";
 
 // A task stays marked as new for 12 hours after it was created.
@@ -28,11 +28,12 @@ export function useNewTask(task: NewTaskSource | null | undefined) {
   useEffect(() => {
     if (!active) return;
     let timer: ReturnType<typeof setTimeout>;
-    // Each API response re-anchors the server clock, so the timer can fire a
-    // little early; it then waits for the rest instead of keeping the mark.
+    // Each API response re-anchors the server clock, which can move it either
+    // way (and a device asleep may stop the page clock), so the remaining
+    // time is checked again at least once a minute.
     const check = () => {
       const left = until! - Date.parse(serverNow());
-      if (left > 0) timer = setTimeout(check, left + 50);
+      if (left > 0) timer = setTimeout(check, Math.min(left, 60_000) + 50);
       else expire();
     };
     check();
@@ -41,13 +42,28 @@ export function useNewTask(task: NewTaskSource | null | undefined) {
   return active;
 }
 
+// What assistive technology hears for the mark.
+export const NEW_TASK_LABEL = "새 업무";
+
 // CSS draws the text, like the presence name tag, so it stays out of the
-// cell and title text (textContent) that copy, search and checks read.
-export default function NewTaskMark() {
-  return <span className="task-new-mark" aria-hidden="true" />;
+// cell and title text (textContent) that copy, search and checks read. Where
+// the surrounding element already describes the task, the mark is hidden;
+// standing alone it is announced through its label.
+export default function NewTaskMark({ labelled = false }) {
+  return labelled ? (
+    <span className="task-new-mark" role="img" aria-label={NEW_TASK_LABEL} />
+  ) : (
+    <span className="task-new-mark" aria-hidden="true" />
+  );
 }
 
 // For lists that render each task in a loop, where a hook cannot be called.
-export function NewTaskMarkFor({ task }: { task: NewTaskSource }) {
-  return useNewTask(task) ? <NewTaskMark /> : null;
+export function NewTaskState({
+  task,
+  children,
+}: {
+  task: NewTaskSource;
+  children: (isNew: boolean) => ReactNode;
+}) {
+  return <>{children(useNewTask(task))}</>;
 }

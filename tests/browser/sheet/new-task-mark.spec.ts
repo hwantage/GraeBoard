@@ -98,6 +98,8 @@ test("새 업무는 12시간 동안 제목 끝·상세·주간 할 일에 new를
   expect(await markText(mark)).toBe('"new"');
   // The word stays out of the cell text that copy and search read.
   await expect(cell).toHaveText("새로 등록한 업무");
+  // Screen readers hear it through the cell's description.
+  await expect(cell).toHaveAttribute("aria-description", "새 업무");
   // Left of the document button, after the title text.
   const button = cell.locator(".task-document-indicator");
   const markBox = (await mark.boundingBox())!;
@@ -112,6 +114,9 @@ test("새 업무는 12시간 동안 제목 끝·상세·주간 할 일에 new를
   const detail = page.getByRole("dialog", { name: "업무 상세", exact: true });
   const detailMark = detail.locator(".modal-heading .task-new-mark");
   await expect(detailMark).toBeVisible();
+  await expect(
+    detail.getByRole("img", { name: "새 업무", exact: true }),
+  ).toBeVisible();
   expect(await markText(detailMark)).toBe('"new"');
   await page.screenshot({ path: info.outputPath("detail.png") });
   await detail.getByRole("button", { name: "닫기", exact: true }).click();
@@ -122,6 +127,7 @@ test("새 업무는 12시간 동안 제목 끝·상세·주간 할 일에 new를
     .locator(".calendar-week-task-open")
     .filter({ hasText: "새로 등록한 업무" });
   await expect(weekly.locator(".task-new-mark")).toBeVisible();
+  await expect(weekly).toHaveAttribute("aria-description", "새 업무");
   await page.screenshot({ path: info.outputPath("calendar.png") });
 
   // The mark stays until 12 hours pass, then goes without reloading.
@@ -129,9 +135,11 @@ test("새 업무는 12시간 동안 제목 끝·상세·주간 할 일에 new를
   await expect(weekly.locator(".task-new-mark")).toBeVisible();
   await advance("01:30", 90_000);
   await expect(weekly.locator(".task-new-mark")).toHaveCount(0);
+  await expect(weekly).not.toHaveAttribute("aria-description");
   await page.getByRole("button", { name: "캘린더 닫기", exact: true }).click();
   await expect(cell).toBeVisible();
   await expect(cell.locator(".task-new-mark")).toHaveCount(0);
+  await expect(cell).not.toHaveAttribute("aria-description");
   await cell.hover();
   await button.click();
   await expect(detail.locator(".modal-heading")).toBeVisible();
@@ -187,6 +195,19 @@ test("사본과 모바일 표에도 문서 버튼 옆에 new를 표시한다", a
     Math.abs(mark.y + mark.height / 2 - (icon.y + icon.height / 2)),
   ).toBeLessThanOrEqual(3);
   await page.screenshot({ path: info.outputPath("sheet-clone-mobile.png") });
+  // A row added in the copy takes its creation time from the server clock.
+  await page
+    .getByRole("button", { name: "사본에 업무 추가", exact: true })
+    .click();
+  const editor = page.getByRole("textbox", { name: "작업 편집", exact: true });
+  await editor.fill("사본에서 추가한 업무");
+  await editor.press("Enter");
+  await expect(
+    page
+      .locator('[data-column="title"]')
+      .filter({ hasText: "사본에서 추가한 업무" })
+      .locator(".task-new-mark"),
+  ).toBeVisible();
 });
 
 test("엑셀 가져오기로 만든 업무에는 new를 표시하지 않는다", async ({

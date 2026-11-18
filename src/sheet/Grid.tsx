@@ -74,7 +74,7 @@ import InlineCellEditor, { type EditorState } from "./InlineCellEditor";
 import PropertyBadge from "./PropertyBadge";
 import LinkedText from "./LinkedText";
 import MemberValue from "./MemberValue";
-import NewTaskMark, { useNewTask } from "./NewTaskMark";
+import NewTaskMark, { NEW_TASK_LABEL, useNewTask } from "./NewTaskMark";
 import GridHeaderMenu, { type HeaderMenuAction } from "../ui/GridHeaderMenu";
 import PropertyFilter from "./PropertyFilter";
 import {
@@ -1679,9 +1679,13 @@ const GridCell = memo(function GridCell({
           .join("\n") || undefined
       }
       aria-description={
-        presence
-          ? `${presence.label} ${presence.editing ? "편집 중" : "선택 중"}`
-          : undefined
+        [
+          presence &&
+            `${presence.label} ${presence.editing ? "편집 중" : "선택 중"}`,
+          showNewTask && NEW_TASK_LABEL,
+        ]
+          .filter(Boolean)
+          .join(", ") || undefined
       }
       onPointerDown={(e) => actions.cellPointerDown(e, point)}
       onPointerMove={(e) => actions.dragSelect(e, point)}

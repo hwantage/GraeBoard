@@ -602,7 +602,7 @@ test("문서가 있는 주간 업무는 오른쪽 아래에 문서 아이콘과 
       name: "문서 하나 주간 업무",
       exact: true,
     }),
-  ).toHaveAttribute("aria-description", "문서 있음");
+  ).toHaveAttribute("aria-description", "문서 있음, 새 업무");
   const counted = item("문서 둘 주간 업무").locator(".calendar-week-document");
   await expect(counted).toHaveText("2");
   await expect(counted.locator("svg")).toHaveCount(1);
@@ -611,7 +611,7 @@ test("문서가 있는 주간 업무는 오른쪽 아래에 문서 아이콘과 
       name: "문서 둘 주간 업무",
       exact: true,
     }),
-  ).toHaveAttribute("aria-description", "문서 2개");
+  ).toHaveAttribute("aria-description", "문서 2개, 새 업무");
   await expect(
     item("문서 없는 주간 업무").locator(".calendar-week-document"),
   ).toHaveCount(0);

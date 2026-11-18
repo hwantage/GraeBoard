@@ -5595,6 +5595,13 @@ body.document-block-moving * {
 .sheet-cell.has-document-count .task-new-mark {
   right: 35px;
 }
+/* A white halo keeps the word readable on any cell color, the mark's own
+   red included. */
+.sheet-cell .task-new-mark::before {
+  text-shadow:
+    0 0 2px #fff,
+    0 0 2px #fff;
+}
 .task-new-mark::before {
   content: "new";
   color: var(--new-task-ink);
