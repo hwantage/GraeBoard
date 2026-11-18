@@ -18,6 +18,13 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-18 — 월간 보기에서 팀 주간으로 바꿀 때 스크롤 위치 초기화
+
+- 개인 월간에서 **팀 주간 일정 보기**로 바꾸면 내 주간 일정이 맨 위에 있는데도 화면이 중간 팀원부터 보였습니다. 두 보기가 같은 `.calendar-scroll` 요소를 재사용해, 월간 보기가 오늘 주로 옮긴 `scrollTop`이 팀 주간에 그대로 남았습니다.
+- `Calendar.tsx`가 보기가 팀 주간으로 바뀔 때 레이아웃 단계에서 세로 스크롤을 0으로 옮깁니다. 월간 jump가 꺼 둔 `overflow-anchor`는 격자 위 입력에서만 다시 켜져 버튼으로 바꾸면 팀 주간까지 남았으므로 같은 시점에 지웁니다. 가로 위치·월간 보기의 오늘 이동·팀 주간 안의 주 이동은 바꾸지 않으며 DB·저장 형식 변경은 없습니다.
+- 회귀 검사 `monthly-calendar.spec.ts`의 **개인 월간 보기에서 팀 주간 일정 보기로 바꾸면 맨 위의 내 주간 일정부터 보인다**는 팀원 6명·높이 700px에서 월간 격자를 400px 내린 뒤 전환해 스크롤 0, 남은 `overflow-anchor` 없음, 내 구역 머리글 노출을 확인합니다. 수정 전 Chromium에서 `scrollTop` 400으로 실패했고 수정 후 3개 엔진에서 통과했습니다.
+- 검증: `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 854건 통과(실패·취소·skip 0), `npm run build`·`npm run build:edge`, `check:structure`·`check:architecture` 통과. `tests/browser/calendar/` 3개 엔진 390건 중 385건 통과·2건 skip, 실패 3건은 **늦은 팀원/기간 응답은 현재 범위에 섞이지 않으며 모바일은 모든 요일을 표시한다**의 시크릿 버튼 탭 이동으로, 수정을 뺀 기준 소스에서도 같은 위치에서 실패합니다. 새 검사는 3개 엔진에서 3회씩 반복 통과했습니다.
+
 ## 2026-11-18 — 새 Claude 아티팩트 공유 주소의 실제 제목 조회
 
 - `/artifact/Bsxkr6atfFSNs6MpuJKoyF`를 붙여넣으면 실제 이름 대신 HTML의 `Claude Artifact`가 표시됐습니다. 기존 코드는 `/public/artifacts/:uuid`만 처리했습니다. 공개 페이지의 루트 `data-frame-uuid`와 실제 `/api/frame/:uuid` 응답을 확인해 새 `/artifact/:id`·`/code/artifact/:id` 주소를 지원합니다.
