@@ -180,6 +180,27 @@ export function iconButton(label: string, paths: string[]) {
   return button;
 }
 
+// A touch screen has no pointer to rest on an image, so the image tapped last
+// shows its tools (see the hover: none rules) until a tap lands elsewhere. One
+// image at a time, so one listener serves every editor on the page.
+let tapped: HTMLElement | null = null;
+const hideTools = (event?: Event) => {
+  if (!tapped || (event && tapped.contains(event.target as globalThis.Node)))
+    return;
+  tapped.classList.remove("tools-shown");
+  tapped = null;
+  document.removeEventListener("pointerdown", hideTools, true);
+};
+function showTools(dom: HTMLElement) {
+  if (tapped === dom) return;
+  hideTools();
+  tapped = dom;
+  dom.classList.add("tools-shown");
+  document.addEventListener("pointerdown", hideTools, true);
+}
+const imageKey = (node: Node) =>
+  typeof node.attrs.src === "string" ? node.attrs.src.split("#")[0] : "";
+
 export function documentImageView(
   initial: Node,
   view: EditorView,
@@ -247,10 +268,11 @@ export function documentImageView(
   };
   const update = (next: Node) => {
     if (next.type !== node.type) return false;
+    // This view may be handed another image, which was not the one tapped.
+    if (tapped === dom && imageKey(next) !== imageKey(node)) hideTools();
     node = next;
     if (images) {
-      const key =
-        typeof node.attrs.src === "string" ? node.attrs.src.split("#")[0] : "";
+      const key = imageKey(node);
       if (sourceKey !== key) {
         sourceKey = key;
         img.removeAttribute("src");
@@ -393,6 +415,9 @@ export function documentImageView(
     if (!readOnly()) preview(true);
   });
   enlarge.addEventListener("click", () => preview());
+  // The tap that shows the tools reaches the image and not a hidden button,
+  // which takes no pointer on a touch screen.
+  dom.addEventListener("click", () => showTools(dom));
   img.addEventListener("dblclick", (event) => {
     event.preventDefault();
     preview();
@@ -468,6 +493,7 @@ export function documentImageView(
     update,
     destroy: () => {
       active = false;
+      if (tapped === dom) hideTools();
     },
     selectNode: () => dom.classList.add("ProseMirror-selectednode"),
     deselectNode: () => dom.classList.remove("ProseMirror-selectednode"),
