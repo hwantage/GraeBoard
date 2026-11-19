@@ -18,6 +18,15 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-20 — 개인 월간에서 구성원 이름을 누르면 오늘로 이동
+
+- 요청(2026-11-20, 사용자): 캘린더를 처음 열 때 내 월간 일정의 오늘 주로 가는 것처럼, 이전 달·다음 달 옆의 다른 구성원이나 내 이름을 누를 때도 오늘로 가야 합니다. 이전에는 다른 구성원을 고르면 지금 표시된 달의 첫 주부터 다시 표시했고(`restart()`), 이미 선택된 이름은 눌러도 아무 일도 하지 않았습니다.
+- 수정: `src/calendar/Calendar.tsx`의 구성원 이름 버튼이 처음 열기·보기 전환과 같은 `months.open()`을 부른 뒤 구성원을 바꿉니다. 선택된 이름을 다시 눌러도 `open()`을 부르므로 오늘 달부터 다시 표시하고 오늘 주를 머리글 아래로, 오늘 열을 주 열 오른쪽으로 옮깁니다. 유일한 호출 위치가 없어진 `useCalendarMonthRange`의 `restart`는 지웠습니다. 새 안내·확인 UI는 없습니다.
+- 기존 동작에 대한 영향: 이전 달·다음 달·연월 선택·오늘·팀 월간·팀 주간·스크롤로 달 이어 붙이기는 코드가 바뀌지 않았습니다. 다른 달을 보던 중 구성원을 바꾸면 그 달이 아니라 이번 달로 돌아갑니다(요청한 동작). DB·저장 형식·API 변경은 없고 사내·외부 사이트가 같은 화면 코드를 씁니다.
+- 테스트: `calendar-month-scroll.spec.ts`에 "개인 월간에서 팀원이나 내 이름을 누르면 오늘 주로 이동한다"를 추가했습니다. 2026-11-26 고정 시계에서 10월로 옮긴 뒤 다른 구성원·내 이름·선택된 내 이름을 차례로 눌러 11월 표시, 오늘 주(11-22)가 머리글 바로 아래, 그 사람 달력의 오늘 표시(`aria-current`)를 확인합니다. `monthly-calendar.spec.ts` "드래그 취소·키보드 이동·읽기 전용…"은 10월로 옮긴 뒤 이름을 눌러 10월 일정을 확인하던 순서라 새 동작에서 실패했고, 이름을 먼저 누르고 10월로 옮기도록 순서만 바꿨습니다.
+- 검증(macOS 27.0.1·Node.js 22.23.1, `E2E_PORT=4331`, 로그는 로컬 `draft/calendar-member-today/`): 새 테스트는 수정 전 빌드의 Chromium에서 표시 월이 `10`에 머물러 실패했고(`regression-before.log`) 수정 후 통과했습니다. `calendar-month-scroll`·`calendar-controls`·`calendar-improvements` 3개 spec을 Chromium·Firefox·WebKit에서 실행해 69건 모두 통과했습니다(실패·skip 0, `browser-calendar.log`). 구성원 이름 버튼을 누르는 `monthly-calendar`·`calendar-tags`·`secret-calendar`를 Chromium에서 실행해 99건 중 97건 통과·2건 실패였습니다(`browser-member-click-after.log`). 실패 중 `monthly-calendar.spec.ts:3909`는 위 순서 변경 뒤 세 브라우저에서 통과했습니다. `monthly-calendar.spec.ts:1586`(Tab 순서의 **시크릿 일정 숨기기** 버튼을 찾지 못함)은 세 브라우저에서 계속 실패하며, 수정 전 소스로 다시 빌드한 Chromium에서도 같은 위치에서 실패하는 기존 실패입니다(`browser-1586-baseline.log`). 이 PR에서 고치지 않았습니다. 전체 브라우저 검사는 실행하지 않았습니다.
+- `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test`: 860건 모두 통과(실패·취소·skip 0, 약 856초, `npm-test.log`). 첫 실행은 실행 명령에 건 10분 제한으로 618건 통과·실패 0인 채 중단돼(`npm-test-killed-at-10min.log`) 제한을 늘려 처음부터 한 번 다시 실행한 결과입니다. `npm run build`·`npm run build:edge`·`check:structure`(오류 0)·`check:architecture`(위반 0)·변경 코드 Prettier·`git diff --check`를 통과했습니다.
+
 ## 2026-11-19 — 사내에서 지운 주간 할 일을 다시 추가하면 충돌로 보관되던 문제
 
 - 사용자 보고(2026-11-19, 사내 운영 서버): 다른 팀원의 주간 할 일 목록에서 이번 주 기준 가져오기를 실행하자 충돌 보관함에 "주간 항목 3개 · 같은 항목이 이미 있어 보관했습니다"가 생겼습니다. 먼저 수정 쪽은 `(삭제된 항목)`이었고, 가져오기를 누른 사람이 나중에 수정으로 기록됐습니다.
