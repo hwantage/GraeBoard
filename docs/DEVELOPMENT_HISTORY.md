@@ -18,6 +18,13 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-20 — 캘린더 토·일 칸 배경 구분
+
+- 사용자 요청(2026-11-20): 캘린더에서 토요일·일요일이 날짜 숫자 색으로만 구분되어 평일과 한눈에 나뉘지 않았습니다. 미리보기에서 농도를 비교한 뒤 10%로 정했습니다.
+- 변경: `src/calendar/calendar.css`에 `--calendar-weekend`(칸 배경 `--calendar-sheet`에 글자색 `--ink`를 10% 섞은 색)를 추가하고 `.calendar-day[data-weekday="0"]`·`[data-weekday="6"]`의 배경으로 씁니다. 각 테마의 `--ink`·`--calendar-sheet`에서 계산하므로 밝은·어두운 테마와 다섯 팔레트에 값을 따로 두지 않습니다. 규칙을 `is-outside`·`is-today` 앞에 두어 흐리게 표시한 날짜와 오늘은 기존 배경을 유지합니다. 요일 머리글, 저장 형식, API는 바뀌지 않습니다.
+- 검증(Windows 11·Node.js 22.14.0·설치된 Chrome): 새 브라우저 테스트 `calendar-theme.spec.ts` "토·일 칸은 밝은·어두운 테마에서 평일과 다른 배경이고 오늘 강조는 유지한다"가 두 테마에서 토·일 배경이 평일과 다르고 서로 같으며 오늘 배경과도 다름을 확인합니다. `tests/browser/calendar` 전체와 `platform/mobile.spec.ts` 156건 중 152건 통과·4건 실패였고, 실패 4건(`monthly-calendar.spec.ts` 2건·`mobile.spec.ts` 2건)은 CSS를 되돌린 같은 장비에서도 똑같이 실패해 이 변경과 무관합니다. `npm run build`·`build:edge`·`check:structure`(오류 0)·`check:architecture`(위반 0)·변경 코드 Prettier·`git diff --check`를 통과했습니다.
+- 검증 한계: 이 장비에서는 Playwright 브라우저 다운로드가 차단되어 Firefox·WebKit과 번들 Chromium은 실행하지 못했습니다. `npm test`는 고정 전환 의존성 설치 단계(`spawnSync npm ENOENT`)에서 멈춰 전체 Node 목록을 실행하지 못했습니다. `tests/calendar`·`tests/tooling`을 직접 실행한 71건은 통과 62·실패 7·skip 2였고, 실패 7건은 모두 `tests/tooling`의 Git·고정 소스·수집기 검사로 이 장비의 환경 원인이며 변경과 무관합니다.
+
 ## 2026-11-19 — 사내에서 지운 주간 할 일을 다시 추가하면 충돌로 보관되던 문제
 
 - 사용자 보고(2026-11-19, 사내 운영 서버): 다른 팀원의 주간 할 일 목록에서 이번 주 기준 가져오기를 실행하자 충돌 보관함에 "주간 항목 3개 · 같은 항목이 이미 있어 보관했습니다"가 생겼습니다. 먼저 수정 쪽은 `(삭제된 항목)`이었고, 가져오기를 누른 사람이 나중에 수정으로 기록됐습니다.
