@@ -212,6 +212,32 @@ export function installCapture(db, { onPending = () => {} } = {}) {
       ? { title: place.title, position: place.position }
       : null;
   };
+  // A weekly item removed from a person's week has no row here, while shared
+  // state keeps it as a deleted record under the same key (person, week,
+  // task). Adding it again restores that record: sent as a new one it would be
+  // refused as one that already exists. The newest pending change of the item
+  // decides before shared state does.
+  const removedRecord = (teamId, entity, key, pending) => {
+    let payload;
+    if (pending) {
+      const index = Number(pending.version.slice(pending.opId.length + 1));
+      const row = Number.isInteger(index)
+        ? prepare(
+            "SELECT json_extract(payload,?) AS change FROM sync_outbox WHERE op_id=? AND team_id=?",
+          ).get(`$.changes[${index}]`, pending.opId, teamId)
+        : null;
+      const change = row?.change ? JSON.parse(row.change) : null;
+      if (change?.action !== "delete") return null;
+      payload = change.base;
+    } else {
+      const stored = prepare(
+        "SELECT payload FROM sync_entities WHERE team_id=? AND entity=? AND entity_key=? AND deleted=1",
+      ).get(teamId, entity, canonical(key));
+      if (!stored) return null;
+      payload = JSON.parse(stored.payload);
+    }
+    return { entity, key, payload, deleted: true };
+  };
   const record = (teamId, entity, key, beforeImage = undefined) => {
     if (!active || suppressed || !links.has(teamId)) return;
     const mapKey = teamId + entityId(entity, key);
@@ -257,6 +283,8 @@ export function installCapture(db, { onPending = () => {} } = {}) {
         value = null;
       }
     }
+    if (!value && entity === "weekly")
+      value = removedRecord(teamId, entity, key, prior.get(mapKey));
     if (value) {
       let pending = prior.get(mapKey);
       const restored = parentRestore(teamId, entity, key);

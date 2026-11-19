@@ -15,7 +15,10 @@ import { createApp } from "../../../server/app.mjs";
 import { DEFAULT_SETTINGS } from "../../../shared/domain.js";
 import { unpack } from "../../../shared/formatting/compact.js";
 import { GitCliTransport } from "../../../server/sync/node/git-cli.mjs";
-import { entityId } from "../../../server/sync/core/protocol.mjs";
+import { entityId, stateHash } from "../../../server/sync/core/protocol.mjs";
+import { reduceMany } from "../../../server/sync/core/reducer.mjs";
+import { allEntities } from "../../../server/sync/node/entities.mjs";
+import { performanceFixture } from "../../../scripts/performance/sync-performance.mjs";
 
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-capture-")),
@@ -448,4 +451,111 @@ test("cell saves reuse their transaction before-image without losing styles, cre
   assert.equal(store.readPending().length, 0);
   assert.equal(getTask(db, task.id).cells.title.value, "fallback");
   assert.equal(getTask(db, task.id).cells["2026-11-02"].value, "new cell");
+});
+
+test("a weekly item added again after its removal restores the removed shared record instead of creating it", async (t) => {
+  // No Git: the pending commands are reduced into shared state here, as a
+  // publication does.
+  const f = await performanceFixture({ rows: 1, users: 1, clients: 1 });
+  t.after(() => f.close());
+  f.setLink("paused");
+  const { db, teamId } = f,
+    sync = f.app.locals.sync,
+    store = sync.store(teamId),
+    userId = db.prepare("SELECT id FROM users LIMIT 1").get().id,
+    item = { teamId, userId, weekStart: "2026-11-15", taskId: f.taskIds[0] },
+    id = entityId("weekly", [userId, item.weekStart, item.taskId]);
+  let head = 0;
+  const publish = () => {
+    const pending = store.readPending(),
+      state = reduceMany(store.readState(), pending);
+    for (const op of pending)
+      assert.equal(state.receipts[op.opId].result, "applied", op.opId);
+    assert.deepEqual(Object.keys(state.conflicts), []);
+    const commit = String(++head).padStart(40, "0");
+    store.writeState(state, commit);
+    store.writeLink({
+      canonical_head: commit,
+      canonical_hash: stateHash(state),
+    });
+    db.prepare(
+      "UPDATE sync_outbox SET status='acknowledged' WHERE team_id=?",
+    ).run(teamId);
+    sync.capture.refresh();
+    assert.deepEqual(store.readPending(), []);
+    return state.entities[id];
+  };
+  store.writeState(
+    {
+      entities: allEntities(db, store.readLink()),
+      receipts: {},
+      conflicts: {},
+    },
+    "0".repeat(40),
+  );
+  const api = async (body, method = "POST") => {
+      const response = await fetch(f.origin + "/api/calendar/weekly", {
+        method,
+        headers: {
+          cookie: "weekly_session=" + f.tokens[0],
+          "X-Requested-With": "WeeklyPlan",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      const data = unpack(await response.json());
+      assert.ok(response.ok, JSON.stringify(data));
+      return data;
+    },
+    add = async () =>
+      assert.equal(
+        (
+          await api({
+            teamId,
+            userId,
+            weekStart: item.weekStart,
+            taskIds: [item.taskId],
+          })
+        ).added,
+        1,
+      ),
+    remove = async () => assert.equal((await api(item, "DELETE")).removed, 1),
+    actions = () =>
+      store
+        .readPending()
+        .flatMap((op) => op.changes)
+        .filter((change) => change.entity === "weekly")
+        .map((change) => change.action);
+  await add();
+  assert.deepEqual(actions(), ["create"]);
+  assert.equal(publish().deleted, false);
+  // Removed and published, as when the other site removed it: no row here and
+  // a deleted record in shared state.
+  await remove();
+  const removed = publish();
+  assert.equal(removed.deleted, true);
+  await add();
+  const [restore] = store.readPending().flatMap((op) => op.changes);
+  assert.equal(restore.action, "restore");
+  assert.equal(restore.baseVersion, removed.version);
+  assert.equal(publish().deleted, false);
+  // Removed and added again before publication, with and without the pending
+  // changes read back from the outbox.
+  for (const refresh of [false, true]) {
+    await remove();
+    if (refresh) sync.capture.refresh();
+    await add();
+    await remove();
+    await add();
+    assert.deepEqual(actions(), ["delete", "restore", "delete", "restore"]);
+    const pending = store.readPending();
+    for (const [index, op] of pending.entries())
+      if (index)
+        assert.equal(op.changes[0].baseVersion, `${pending[index - 1].opId}:0`);
+    assert.equal(publish().deleted, false);
+    assert.equal(
+      db.prepare("SELECT COUNT(*) AS n FROM calendar_weekly_items").get().n,
+      1,
+    );
+  }
 });
