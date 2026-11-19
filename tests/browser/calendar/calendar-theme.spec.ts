@@ -202,6 +202,47 @@ test("세 캘린더 보기와 일정·태그 팝업이 다크 테마를 공유�
   expect(after.updatedAt).toBe(saved.updatedAt);
 });
 
+test("토·일 칸은 밝은·어두운 테마에서 평일과 다른 배경이고 오늘 강조는 유지한다", async ({
+  page,
+}, info) => {
+  const response = await page.request.put("/api/calendar/preferences", {
+    headers,
+    data: { weekdays: [0, 1, 2, 3, 4, 5, 6] },
+  });
+  expect(response.ok(), await response.text()).toBeTruthy();
+  await page.reload();
+  await page.getByLabel("팀 선택", { exact: true }).selectOption(teamId);
+  const background = (selector: string) =>
+    calendar(page)
+      .locator(selector)
+      .first()
+      .evaluate((el) => getComputedStyle(el).backgroundColor);
+  const plain = ":not(.is-today):not(.is-outside)";
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+    if (colorScheme === "light") await enter(page);
+    await expect(workspace(page)).toHaveAttribute(
+      "data-calendar-theme",
+      colorScheme,
+    );
+    const weekday = await background(`.calendar-day[data-weekday="3"]${plain}`);
+    const sunday = await background(`.calendar-day[data-weekday="0"]${plain}`);
+    const saturday = await background(
+      `.calendar-day[data-weekday="6"]${plain}`,
+    );
+    expect(sunday).not.toBe(weekday);
+    expect(saturday).toBe(sunday);
+    // Today keeps its highlight on any weekday, including a weekend.
+    const today = await background(".calendar-day.is-today");
+    expect(today).not.toBe(sunday);
+    expect(today).not.toBe(weekday);
+    await page.screenshot({
+      path: info.outputPath(`calendar-weekend-${colorScheme}.png`),
+      fullPage: true,
+    });
+  }
+});
+
 test("테마 저장소를 사용할 수 없어도 전환과 홈 이동이 동작한다", async ({
   page,
 }) => {
