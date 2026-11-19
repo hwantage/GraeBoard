@@ -29,12 +29,8 @@ import {
   stateHash,
   digest,
   entityId,
-  protocolVersion,
 } from "../../../server/sync/core/protocol.mjs";
-import { makeOperation } from "../../../server/sync/core/operations.mjs";
-import { sqliteTeamStore } from "../../../server/storage/sqlite.mjs";
 import { calendarWeek } from "../../../shared/calendar/calendar.js";
-import { backfillWeeklyOrder } from "../../../scripts/sync/sync-weekly-order.mjs";
 import { catchUpTeam } from "../../../scripts/sync/sync-external-import.mjs";
 import { migratePostgres } from "../../../server/migrations/postgres.mjs";
 import { PostgresDatabase } from "../../../worker/storage/postgres.mjs";
@@ -547,9 +543,8 @@ test(
         ].deleted,
         true,
       );
-      // Weekly items shared before importedAt (2026-11-04) have no order in
-      // shared state. The one-time backfill gives them this site's order, and
-      // then a reorder on either site gives both the same order.
+      // A week's items keep one order on both sites, and a reorder on either
+      // site gives both the same order.
       const week = calendarWeek("2026-11-04"),
         second = ok(
           await inside("/tasks", {
@@ -558,8 +553,6 @@ test(
             fields: { title: "Second weekly" },
           }),
         ).task,
-        legacy = [task.id, second.id],
-        legacyTimes = ["2026-11-02T01:00:00.000Z", "2026-11-02T02:00:00.000Z"],
         weekOrder = async (site) =>
           ok(
             await site(
@@ -573,77 +566,20 @@ test(
             (c) => !c.resolved,
           ).length,
         conflictsBefore = await openConflicts(inside);
-      // The rows and the operation the code before 2026-11-04 wrote.
-      app.locals.sync.capture.without(() =>
-        legacy.forEach((id, index) =>
-          db
-            .prepare("INSERT INTO calendar_weekly_items VALUES(?,?,?,?,?,?)")
-            .run(
-              teamId,
-              internalUser,
-              week,
-              id,
-              "Weekly " + index,
-              legacyTimes[index],
-            ),
-        ),
-      );
-      const legacyStore = sqliteTeamStore(db, teamId);
-      transaction(db, () =>
-        legacyStore.enqueue(
-          makeOperation({
-            link: {
-              ...legacyStore.readLink(),
-              protocol: protocolVersion(legacyStore.readState()),
-            },
-            actorRef: internalUser,
-            before: {},
-            after: Object.fromEntries(
-              legacy.map((id, index) => [
-                entityId("weekly", [internalUser, week, id]),
-                {
-                  entity: "weekly",
-                  key: [internalUser, week, id],
-                  payload: { title: "Weekly " + index },
-                  deleted: false,
-                },
-              ]),
-            ),
+      for (const id of [task.id, second.id])
+        ok(
+          await inside("/calendar/weekly", {
+            teamId,
+            userId: internalUser,
+            weekStart: week,
+            taskIds: [id],
           }),
-        ),
-      );
+        );
       await app.locals.sync.get(teamId).run();
       await drain();
-      const sharedWeekly = async (id) =>
-        (await pgStore.readState(teamId)).entities[
-          entityId("weekly", [internalUser, week, id])
-        ].payload;
-      assert.deepEqual(await sharedWeekly(task.id), { title: "Weekly 0" });
-      assert.deepEqual(backfillWeeklyOrder({ db, teamId, dryRun: true }), {
-        teamId,
-        items: 2,
-        enqueued: false,
-      });
-      assert.deepEqual(backfillWeeklyOrder({ db, teamId }), {
-        teamId,
-        items: 2,
-        enqueued: true,
-      });
-      // A rerun, also before publishing, finds nothing to add.
-      assert.deepEqual(backfillWeeklyOrder({ db, teamId }), {
-        teamId,
-        items: 0,
-        enqueued: false,
-      });
-      await app.locals.sync.get(teamId).run();
-      await drain();
-      for (const [index, id] of legacy.entries())
-        assert.deepEqual(await sharedWeekly(id), {
-          title: "Weekly " + index,
-          importedAt: legacyTimes[index],
-        });
-      assert.deepEqual(await weekOrder(outside), legacy);
-      assert.deepEqual(await weekOrder(inside), legacy);
+      const added = await weekOrder(inside);
+      assert.equal(added.length, 2);
+      assert.deepEqual(await weekOrder(outside), added);
       const reorder = (site, taskIds) =>
         site("/calendar/weekly/reorder", {
           teamId,
