@@ -733,12 +733,6 @@ small {
 .period-nav.button:focus-visible {
   outline-offset: -2px;
 }
-.date-controls .period-work-filter {
-  flex: 0 0 40px;
-  width: 40px;
-  height: 40px;
-  padding: 0;
-}
 .period-picker {
   flex: 1 1 1024px;
   min-width: 900px;
@@ -5924,11 +5918,6 @@ body.document-block-moving * {
     scrollbar-width: none;
   }
   .workspace .date-controls .year-control {
-    height: 36px;
-  }
-  .workspace .date-controls .period-work-filter {
-    flex-basis: 36px;
-    width: 36px;
     height: 36px;
   }
   .workspace .date-controls .period-grid {

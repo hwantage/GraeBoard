@@ -90,6 +90,7 @@ export default function Toolbar({
   workColors,
   workColorsDisabled = false,
   markedWorkColors,
+  workMarkAction,
 }: {
   style: Style;
   workColors?: { color: string; name?: string }[];
@@ -99,6 +100,8 @@ export default function Toolbar({
   // 행·열·전체 선택(workColorsDisabled)에서는 칩만 눌린 상태로 보이고
   // 배경색은 막지 않는다. 일반 배경색이 선택한 업무 표시를 덮어 해제한다.
   markedWorkColors?: ReadonlySet<string>;
+  // 업무 표시 칩 바로 오른쪽에 붙는 동작. 칩과 달리 편집 권한·선택과 무관하다.
+  workMarkAction?: ReactNode;
   disabled: boolean;
   onStyle: (s: Partial<Style>) => void;
   onBorder: (preset: BorderPreset, border: Border | null) => void;
@@ -258,6 +261,7 @@ export default function Toolbar({
               </button>
             );
           })}
+          {workMarkAction}
         </div>
       )}
       <div className="toolbar-group">

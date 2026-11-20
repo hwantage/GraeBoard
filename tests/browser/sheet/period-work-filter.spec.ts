@@ -74,13 +74,14 @@ test("선택 기간 업무 필터는 고른 주차에 업무 표시가 있는 �
   );
   const rows = page.locator('[data-column="title"]');
   const toggle = page.getByRole("button", {
-    name: /선택 기간에 업무 표시가 있는 업무만 보기|업무 색상을 등록하면/,
+    name: "선택 기간에 업무 표시가 있는 업무만 보기",
+    exact: true,
   });
 
-  // Without work colors there is nothing to filter by.
+  // Without work colors there are no work chips and nothing to filter by.
   await page.goto("/");
   await expect(rows).toHaveText(titles);
-  await expect(toggle).toBeDisabled();
+  await expect(toggle).toHaveCount(0);
 
   const settings = (await request(page, "/bootstrap")).teams.find(
     (t: any) => t.id === teamId,
@@ -138,6 +139,13 @@ test("선택 기간 업무 필터는 고른 주차에 업무 표시가 있는 �
   await expect(rows).toHaveText(titles);
   await expect(toggle).toBeEnabled();
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  // It sits right after the work chips of the format toolbar.
+  await expect(
+    page
+      .getByRole("group", { name: "업무 표시", exact: true })
+      .getByRole("button")
+      .last(),
+  ).toHaveAccessibleName("선택 기간에 업무 표시가 있는 업무만 보기");
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-pressed", "true");
   await expect(rows).toHaveText([titles[0], titles[3]]);
