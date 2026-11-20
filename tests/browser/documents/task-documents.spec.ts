@@ -5350,3 +5350,131 @@ test("이미지 편집은 사본 업무·꼬리 메모·사본 메모·일정의
     (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
   ).toBe(original);
 });
+
+test.describe("터치 화면의 이미지 도구", () => {
+  test.use({ hasTouch: true });
+  const mobile = { width: 390, height: 844 };
+  const images = (page: Page) => rich(page).locator(".document-image:visible");
+  const tools = (image: Locator) => image.locator(".document-image-actions");
+  const enlarge = (image: Locator) =>
+    image.getByRole("button", { name: "이미지 크게 보기", exact: true });
+  const preview = (page: Page) =>
+    page.getByRole("dialog", { name: "이미지 크게 보기", exact: true });
+  const editor = (page: Page) =>
+    page.getByRole("dialog", { name: "이미지 편집", exact: true });
+  const title = (page: Page) =>
+    detail(page).getByRole("textbox", { name: "작업 편집", exact: true });
+  // A real tap at the button's place: a hidden button takes no tap, so the
+  // locator's own tap would wait for it.
+  async function tapPlace(page: Page, target: Locator) {
+    await target.scrollIntoViewIfNeeded();
+    const box = (await target.boundingBox())!;
+    await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+  }
+
+  test("탭한 이미지에만 도구를 보이고 숨은 버튼 자리의 첫 탭은 실행하지 않는다", async ({
+    page,
+  }, info) => {
+    await open(page);
+    await pasteImage(page);
+    await expect(images(page)).toHaveCount(1);
+    await pasteImage(page, "#984c48");
+    await expect(images(page)).toHaveCount(2);
+    await expect(detail(page).locator(".document-save-state")).toHaveText(
+      "저장됨",
+    );
+    await page.setViewportSize(mobile);
+    const first = images(page).nth(0),
+      second = images(page).nth(1);
+    const handle = first.getByRole("slider", { name: "이미지 너비 조절" });
+    await first.scrollIntoViewIfNeeded();
+    for (const image of [first, second])
+      await expect(tools(image)).toHaveCSS("opacity", "0");
+    await expect(handle).toHaveCSS("opacity", "0");
+    await page.screenshot({ path: info.outputPath("image-tools-hidden.png") });
+
+    await tapPlace(page, enlarge(first));
+    await expect(tools(first)).toHaveCSS("opacity", "1");
+    await expect(handle).toHaveCSS("opacity", "1");
+    await expect(tools(second)).toHaveCSS("opacity", "0");
+    await expect(preview(page)).toHaveCount(0);
+    await page.screenshot({ path: info.outputPath("image-tools-shown.png") });
+
+    await enlarge(first).tap();
+    await expect(preview(page)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(preview(page)).toHaveCount(0);
+    const edit = first.getByRole("button", {
+      name: "이미지 편집",
+      exact: true,
+    });
+    await edit.tap();
+    await expect(editor(page).locator("canvas")).toBeVisible();
+    await editor(page).getByRole("button", { name: "취소", exact: true }).tap();
+    await expect(editor(page)).toHaveCount(0);
+    // Firefox returns the focus to the edit button, which keeps the tools.
+    await title(page).tap();
+    await expect(tools(first)).toHaveCSS("opacity", "0");
+    await tapPlace(page, edit);
+    await expect(tools(first)).toHaveCSS("opacity", "1");
+    await expect(editor(page)).toHaveCount(0);
+
+    await second.locator("img").tap();
+    await expect(tools(second)).toHaveCSS("opacity", "1");
+    await expect(tools(first)).toHaveCSS("opacity", "0");
+    await expect(handle).toHaveCSS("opacity", "0");
+    await tapPlace(page, enlarge(first));
+    await expect(tools(first)).toHaveCSS("opacity", "1");
+    await expect(tools(second)).toHaveCSS("opacity", "0");
+    await expect(preview(page)).toHaveCount(0);
+
+    await title(page).tap();
+    for (const image of [first, second])
+      await expect(tools(image)).toHaveCSS("opacity", "0");
+    expect(
+      (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
+    ).not.toContain("width=");
+  });
+
+  test("열람자도 이미지를 탭한 뒤에 크게 보기를 연다", async ({ page }) => {
+    await open(page);
+    await pasteImage(page);
+    await expect(images(page)).toHaveCount(1);
+    await expect(detail(page).locator(".document-save-state")).toHaveText(
+      "저장됨",
+    );
+    const username = `image-viewer-${randomUUID()}@example.com`;
+    await post(page, "/admin/users", {
+      username,
+      password: "local-test-only-password",
+      name: "이미지 열람자",
+      memberships: [{ teamId, role: "viewer" }],
+    });
+    await page.context().clearCookies();
+    await post(page, "/auth/login", {
+      username,
+      password: "local-test-only-password",
+    });
+    await page.reload();
+    await icon(page).click();
+    await expect(rich(page)).toHaveAttribute("contenteditable", "false");
+    await page.setViewportSize(mobile);
+    const image = images(page).first();
+    await expect(image.locator("img[src]")).toBeVisible();
+    await expect(tools(image)).toHaveCSS("opacity", "0");
+    await tapPlace(page, enlarge(image));
+    await expect(tools(image)).toHaveCSS("opacity", "1");
+    await expect(preview(page)).toHaveCount(0);
+    await expect(
+      image.getByRole("button", { name: "이미지 편집", exact: true }),
+    ).toBeHidden();
+    await expect(
+      image.getByRole("slider", { name: "이미지 너비 조절" }),
+    ).toBeHidden();
+    await enlarge(image).tap();
+    await expect(preview(page)).toBeVisible();
+    await page.keyboard.press("Escape");
+    await title(page).tap();
+    await expect(tools(image)).toHaveCSS("opacity", "0");
+  });
+});
