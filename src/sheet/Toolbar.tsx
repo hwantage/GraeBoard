@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import FormatSelect from "./FormatSelect";
 import {
   Undo2,
@@ -31,40 +31,27 @@ const ICON_PATHS: Record<string, string> = {
   wrap: "M4 5h11a4 4 0 0 1 0 8H9m3-3-3 3 3 3M4 9h3M4 17h3",
   clip: "M4 3v18M20 3v18M7 12h9m-3-3 3 3-3 3",
 };
-// A funnel filled with the team's work colors: it filters by work marks,
-// unlike the plain funnel that clears the column filters.
-function WorkFilterIcon({ colors }: { colors: string[] }) {
-  const id = useId(),
-    shown = colors.slice(0, 3);
+// Cells of a sheet with some painted: tasks that have painted work cells.
+// Two rows of three keep the cells readable at toolbar size.
+function WorkFilterIcon() {
   return (
     <svg
       width="17"
       height="17"
       viewBox="0 0 24 24"
-      fill={`url(#${id})`}
+      fill="none"
       stroke="currentColor"
       strokeWidth="1.6"
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <defs>
-        <linearGradient id={id} x1="0" y1="0" x2="1" y2="0">
-          {shown.flatMap((color, index) => [
-            <stop
-              key={`${index}a`}
-              offset={index / shown.length}
-              stopColor={color}
-            />,
-            <stop
-              key={`${index}b`}
-              offset={(index + 1) / shown.length}
-              stopColor={color}
-            />,
-          ])}
-        </linearGradient>
-      </defs>
-      <path d="M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14z" />
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M3 12h18M9 5v14M15 5v14" />
+      <g fill="currentColor" stroke="none">
+        <rect x="9" y="5" width="6" height="7" />
+        <rect x="15" y="12" width="6" height="7" />
+      </g>
     </svg>
   );
 }
@@ -307,7 +294,7 @@ export default function Toolbar({
               disabled={workFilter.disabled}
               onClick={workFilter.onToggle}
             >
-              <WorkFilterIcon colors={workColors.map((entry) => entry.color)} />
+              <WorkFilterIcon />
             </Button>
           )}
         </div>
