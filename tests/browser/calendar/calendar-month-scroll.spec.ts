@@ -194,6 +194,31 @@ test("개인·팀 월간 보기는 처음 열거나 다른 보기에서 돌아�
   await shownMonth(page, "2026", "11");
 });
 
+test("개인 월간에서 팀원이나 내 이름을 누르면 오늘 주로 이동한다", async ({
+  page,
+}) => {
+  await open(page, "2026-11-26T03:00:00+09:00");
+  const owners = calendar(page).getByRole("group", { name: "캘린더 팀원" });
+  for (const owner of [memberId, userId, userId]) {
+    // A different month, switching back to me, and selecting me again all
+    // follow the same today navigation as opening the calendar.
+    await calendar(page)
+      .getByLabel("표시 월", { exact: true })
+      .selectOption("10");
+    await shownMonth(page, "2026", "10");
+    const button = owners.locator(`[data-member-id="${owner}"]`);
+    await button.click();
+    await expect(button).toHaveAttribute("aria-pressed", "true");
+    await shownMonth(page, "2026", "11");
+    await expectAtTop(page, row(page, "2026-11-22"));
+    await expect(
+      calendar(page).locator(
+        `[data-owner-id="${owner}"][data-date="2026-11-26"] time`,
+      ),
+    ).toHaveAttribute("aria-current", "date");
+  }
+});
+
 test("월간 보기는 아래로 스크롤하면 다음 달을 이어 붙이고 위로는 이전 달을 붙이지 않는다", async ({
   page,
 }, info) => {

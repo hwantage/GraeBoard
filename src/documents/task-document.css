@@ -1011,9 +1011,18 @@ body.document-block-selecting * {
 .document-prose[data-readonly] .document-image-edit {
   display: none;
 }
+/* A touch screen shows the tools of the image tapped last (showTools): a tap
+   leaves :hover and the selection behind, which would keep them over the
+   image. Hidden tools take no tap, so the first tap on their place only shows
+   them. */
 @media (hover: none) {
-  .document-image-actions,
-  .document-image-resize {
+  .document-image:not(.tools-shown, :focus-within, .resizing)
+    :is(.document-image-actions, .document-image-resize) {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .document-image.tools-shown
+    :is(.document-image-actions, .document-image-resize) {
     opacity: 1;
   }
 }
