@@ -84,6 +84,7 @@ import {
   Moon,
   Sun,
   Tag,
+  Save,
 } from "lucide-react";
 import {
   api,
@@ -2590,6 +2591,21 @@ function Workspace({
                     </span>
                   </ActiveFilterConditions>
                   <div className="active-filter-actions">
+                    {activeSavedFilter.canEdit && !sheetClone && (
+                      <Button
+                        className="active-filter-save"
+                        title="필터 변경 사항 저장"
+                        disabled={
+                          !filters.isChanged(view) ||
+                          filterUpdateNotice?.state === "saving" ||
+                          !!deletingFilterId
+                        }
+                        onClick={() => filters.commit(viewRef.current)}
+                      >
+                        <Save size={14} />
+                        <span>변경 사항 저장</span>
+                      </Button>
+                    )}
                     {activeSavedFilter.canEdit && (
                       <>
                         <Button

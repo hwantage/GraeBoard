@@ -1151,6 +1151,11 @@ small {
   background: var(--view-hover-bg);
   border-color: var(--view-border);
 }
+.active-filter-actions .active-filter-save:not(:disabled) {
+  border-color: var(--view-border);
+  background: var(--view-hover-bg);
+  font-weight: 700;
+}
 .active-filter-actions .active-filter-delete:hover:not(:disabled) {
   background: #fdecea;
   border-color: color-mix(in srgb, #b4413a 35%, white);
