@@ -31,6 +31,30 @@ const ICON_PATHS: Record<string, string> = {
   wrap: "M4 5h11a4 4 0 0 1 0 8H9m3-3-3 3 3 3M4 9h3M4 17h3",
   clip: "M4 3v18M20 3v18M7 12h9m-3-3 3 3-3 3",
 };
+// Cells of a sheet with some painted: tasks that have painted work cells.
+// Two rows of three keep the cells readable at toolbar size.
+function WorkFilterIcon() {
+  return (
+    <svg
+      width="17"
+      height="17"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="M3 12h18M9 5v14M15 5v14" />
+      <g fill="currentColor" stroke="none">
+        <rect x="9" y="5" width="6" height="7" />
+        <rect x="15" y="12" width="6" height="7" />
+      </g>
+    </svg>
+  );
+}
 function FormatIcon({ kind }: { kind: string }) {
   const paths = ICON_PATHS;
   return (
@@ -90,6 +114,7 @@ export default function Toolbar({
   workColors,
   workColorsDisabled = false,
   markedWorkColors,
+  workFilter,
 }: {
   style: Style;
   workColors?: { color: string; name?: string }[];
@@ -99,6 +124,8 @@ export default function Toolbar({
   // 행·열·전체 선택(workColorsDisabled)에서는 칩만 눌린 상태로 보이고
   // 배경색은 막지 않는다. 일반 배경색이 선택한 업무 표시를 덮어 해제한다.
   markedWorkColors?: ReadonlySet<string>;
+  // 업무 표시 칩 바로 오른쪽의 보기 필터. 칩과 달리 편집 권한·선택과 무관하다.
+  workFilter?: { active: boolean; disabled?: boolean; onToggle: () => void };
   disabled: boolean;
   onStyle: (s: Partial<Style>) => void;
   onBorder: (preset: BorderPreset, border: Border | null) => void;
@@ -258,6 +285,18 @@ export default function Toolbar({
               </button>
             );
           })}
+          {workFilter && (
+            <Button
+              className="work-period-filter"
+              tooltip="선택 기간에 업무 표시가 있는 업무만 보기"
+              aria-pressed={workFilter.active}
+              active={workFilter.active}
+              disabled={workFilter.disabled}
+              onClick={workFilter.onToggle}
+            >
+              <WorkFilterIcon />
+            </Button>
+          )}
         </div>
       )}
       <div className="toolbar-group">

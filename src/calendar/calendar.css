@@ -12,6 +12,8 @@
   --calendar-outside: #f7efdf;
   --calendar-outside-ink: #8c8070;
   --calendar-today: #fff4cf;
+  /* Mixed from each theme's own ink and sheet, so every palette gets it. */
+  --calendar-weekend: color-mix(in srgb, var(--ink) 10%, var(--calendar-sheet));
   --calendar-week-paper: #fff8e7;
   --calendar-card-hover: #c9eeb9;
   --calendar-shadow: var(--ink);
@@ -874,6 +876,11 @@
   padding: 7px;
   border-right: 1px solid var(--line);
   background: var(--calendar-sheet);
+}
+/* Before is-outside and is-today, which keep their own background. */
+.calendar-day[data-weekday="0"],
+.calendar-day[data-weekday="6"] {
+  background: var(--calendar-weekend);
 }
 .calendar-day[data-weekday="0"] time {
   color: var(--calendar-sunday);
