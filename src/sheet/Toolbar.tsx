@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 import FormatSelect from "./FormatSelect";
 import {
   Undo2,
@@ -31,6 +31,43 @@ const ICON_PATHS: Record<string, string> = {
   wrap: "M4 5h11a4 4 0 0 1 0 8H9m3-3-3 3 3 3M4 9h3M4 17h3",
   clip: "M4 3v18M20 3v18M7 12h9m-3-3 3 3-3 3",
 };
+// A funnel filled with the team's work colors: it filters by work marks,
+// unlike the plain funnel that clears the column filters.
+function WorkFilterIcon({ colors }: { colors: string[] }) {
+  const id = useId(),
+    shown = colors.slice(0, 3);
+  return (
+    <svg
+      width="17"
+      height="17"
+      viewBox="0 0 24 24"
+      fill={`url(#${id})`}
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id={id} x1="0" y1="0" x2="1" y2="0">
+          {shown.flatMap((color, index) => [
+            <stop
+              key={`${index}a`}
+              offset={index / shown.length}
+              stopColor={color}
+            />,
+            <stop
+              key={`${index}b`}
+              offset={(index + 1) / shown.length}
+              stopColor={color}
+            />,
+          ])}
+        </linearGradient>
+      </defs>
+      <path d="M10 20a1 1 0 0 0 .553.895l2 1A1 1 0 0 0 14 21v-7a2 2 0 0 1 .517-1.341L21.74 4.67A1 1 0 0 0 21 3H3a1 1 0 0 0-.742 1.67l7.225 7.989A2 2 0 0 1 10 14z" />
+    </svg>
+  );
+}
 function FormatIcon({ kind }: { kind: string }) {
   const paths = ICON_PATHS;
   return (
@@ -90,7 +127,7 @@ export default function Toolbar({
   workColors,
   workColorsDisabled = false,
   markedWorkColors,
-  workMarkAction,
+  workFilter,
 }: {
   style: Style;
   workColors?: { color: string; name?: string }[];
@@ -100,8 +137,8 @@ export default function Toolbar({
   // 행·열·전체 선택(workColorsDisabled)에서는 칩만 눌린 상태로 보이고
   // 배경색은 막지 않는다. 일반 배경색이 선택한 업무 표시를 덮어 해제한다.
   markedWorkColors?: ReadonlySet<string>;
-  // 업무 표시 칩 바로 오른쪽에 붙는 동작. 칩과 달리 편집 권한·선택과 무관하다.
-  workMarkAction?: ReactNode;
+  // 업무 표시 칩 바로 오른쪽의 보기 필터. 칩과 달리 편집 권한·선택과 무관하다.
+  workFilter?: { active: boolean; disabled?: boolean; onToggle: () => void };
   disabled: boolean;
   onStyle: (s: Partial<Style>) => void;
   onBorder: (preset: BorderPreset, border: Border | null) => void;
@@ -261,7 +298,18 @@ export default function Toolbar({
               </button>
             );
           })}
-          {workMarkAction}
+          {workFilter && (
+            <Button
+              className="work-period-filter"
+              tooltip="선택 기간에 업무 표시가 있는 업무만 보기"
+              aria-pressed={workFilter.active}
+              active={workFilter.active}
+              disabled={workFilter.disabled}
+              onClick={workFilter.onToggle}
+            >
+              <WorkFilterIcon colors={workColors.map((entry) => entry.color)} />
+            </Button>
+          )}
         </div>
       )}
       <div className="toolbar-group">

@@ -84,7 +84,6 @@ import {
   Moon,
   Sun,
   Tag,
-  Funnel,
 } from "lucide-react";
 import {
   taskHasWorkInWeeks,
@@ -2518,21 +2517,14 @@ function Workspace({
                   workColors={workColors}
                   workColorsDisabled={workColorsDisabled}
                   markedWorkColors={markedWork}
-                  workMarkAction={
-                    <Button
-                      className="work-period-filter"
-                      tooltip="선택 기간에 업무 표시가 있는 업무만 보기"
-                      aria-pressed={periodWorkFilter}
-                      active={periodWorkFilter}
-                      disabled={!ready}
-                      onClick={() => {
-                        setSelection(null);
-                        setPeriodWorkOnly((value) => !value);
-                      }}
-                    >
-                      <Funnel size={15} aria-hidden="true" />
-                    </Button>
-                  }
+                  workFilter={{
+                    active: periodWorkFilter,
+                    disabled: !ready,
+                    onToggle() {
+                      setSelection(null);
+                      setPeriodWorkOnly((value) => !value);
+                    },
+                  }}
                   leadingAction={
                     (!sheetClone ? canAdd : editingSheetClone && canAdd) ? (
                       <Button
