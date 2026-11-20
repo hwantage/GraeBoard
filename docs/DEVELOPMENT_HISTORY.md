@@ -27,6 +27,29 @@
 - 검증(macOS 27.0.1·Node.js 22.23.1, `E2E_PORT=4331`, 로그는 로컬 `draft/calendar-member-today/`): 새 테스트는 수정 전 빌드의 Chromium에서 표시 월이 `10`에 머물러 실패했고(`regression-before.log`) 수정 후 통과했습니다. `calendar-month-scroll`·`calendar-controls`·`calendar-improvements` 3개 spec을 Chromium·Firefox·WebKit에서 실행해 69건 모두 통과했습니다(실패·skip 0, `browser-calendar.log`). 구성원 이름 버튼을 누르는 `monthly-calendar`·`calendar-tags`·`secret-calendar`를 Chromium에서 실행해 99건 중 97건 통과·2건 실패였습니다(`browser-member-click-after.log`). 실패 중 `monthly-calendar.spec.ts:3909`는 위 순서 변경 뒤 세 브라우저에서 통과했습니다. `monthly-calendar.spec.ts:1586`(Tab 순서의 **시크릿 일정 숨기기** 버튼을 찾지 못함)은 세 브라우저에서 계속 실패하며, 수정 전 소스로 다시 빌드한 Chromium에서도 같은 위치에서 실패하는 기존 실패입니다(`browser-1586-baseline.log`). 이 PR에서 고치지 않았습니다. 전체 브라우저 검사는 실행하지 않았습니다.
 - `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test`: 860건 모두 통과(실패·취소·skip 0, 약 856초, `npm-test.log`). 첫 실행은 실행 명령에 건 10분 제한으로 618건 통과·실패 0인 채 중단돼(`npm-test-killed-at-10min.log`) 제한을 늘려 처음부터 한 번 다시 실행한 결과입니다. `npm run build`·`npm run build:edge`·`check:structure`(오류 0)·`check:architecture`(위반 0)·변경 코드 Prettier·`git diff --check`를 통과했습니다.
 
+## 2026-11-20 — 저장된 필터를 변경 사항 저장 버튼으로만 업데이트
+
+- 사용자 요청(2026-11-20): 저장된 필터를 선택한 뒤 열 머리글에서 조건을 더 고르면 저장된 필터가 자동으로 덮어써졌습니다. 명시적인 저장 버튼으로만 업데이트하고, 조건을 고를 때마다 뜨던 토스트는 없애며, X로 닫을 때는 되묻지 않고 닫도록 요청했습니다.
+- 변경: `src/sheet/useSavedFilters.ts`의 `change()`가 더 이상 `PATCH /api/filters/:id`를 보내지 않고 선택 상태만 유지합니다. 새 `commit()`이 현재 조건을 저장하고, `isChanged()`가 저장본과 화면 조건을 비교합니다(값이 없는 속성과 기본 일치 모드는 같은 조건으로 봄). `App.tsx`의 필터 표시줄 오른쪽 버튼 영역 맨 앞에 **변경 사항 저장** 버튼을 두었고 달라졌을 때만 켜집니다. 사본과 읽기 전용 공용 필터에는 두지 않습니다. 토스트 "필터 변경사항이 업데이트되었습니다."·"해제한 필터는 저장된 필터에서 제외됩니다."를 없애고, 버튼으로 저장했을 때만 "필터 변경사항을 저장했습니다."를 띄웁니다. 저장에 실패하면 화면의 저장본을 이전 정의로 되돌려 버튼이 다시 켜집니다. 목록 재조회(`refresh`)는 저장본 자체가 바뀐 경우에만 화면 조건을 덮어써, 이름 변경 등으로 저장하지 않은 조건이 사라지지 않습니다.
+- 저장하지 않은 변경의 수명: 연도 이동에는 유지되고, 다른 필터 선택·X(필터 보기 종료)·새로고침에는 되묻지 않고 버려져 저장본으로 돌아갑니다. 새로고침 복귀는 서버가 선택된 필터의 저장본을 돌려주는 기존 동작(`currentFilterSelection`)을 그대로 쓴 것이며, 서버·API·DB·저장 형식은 바꾸지 않았습니다.
+- 기존 동작에 대한 영향: 읽기 전용 공용 필터의 조건을 바꾸면 선택이 해제되는 동작, 사본에서의 필터 적용, 필터 저장·이름 변경·삭제·복원은 그대로입니다.
+- 검증(Windows 11·Node.js 22.14.0·설치된 Chrome): `workspace.spec.ts`의 저장된 필터 테스트 8개를 명시적 저장에 맞게 고쳤습니다. 저장 전에는 기록·토스트가 없음, 저장 버튼의 활성·비활성, 저장 중 표시와 순서 보장, 저장 실패 후 재저장, 연도 이동 시 유지·새로고침 시 복귀, X로 닫을 때 버림, 다른 사용자의 공용 필터 반영을 확인합니다. 필터 관련 25건이 모두 통과했습니다. `tests/browser/sheet`·`sheet-clones`·`platform/mobile.spec.ts` 276건 중 270건 통과·6건 실패였고, 실패 6건(`mobile.spec.ts` 2건·`sheet-format-memo.spec.ts` 1건·`workspace.spec.ts`의 링크·발표 3건)은 변경 전 빌드에서도 똑같이 실패해 이 변경과 무관합니다. `npm run build`·`build:edge`·`tsc --noEmit`·`check:structure`(오류 0)·`check:architecture`(위반 0)·변경 코드 Prettier·`git diff --check`를 통과했습니다.
+- 검증 한계: 이 장비에서는 Playwright 브라우저 다운로드가 차단되어 Firefox·WebKit을 실행하지 못했고, `npm test`는 고정 전환 의존성 설치 단계(`spawnSync npm ENOENT`)에서 멈춰 실행하지 못했습니다. 서버·공용 모듈은 바꾸지 않았습니다.
+
+## 2026-11-20 — 연간 업무의 선택 기간 업무 필터
+
+- 사용자 요청(2026-11-20): 상단에서 고른 월·주차에 업무 색상이 칠해진 업무만 추려 보는 기능이 필요했습니다. 켠 상태는 저장하지 않는 것으로 정했습니다. 버튼은 처음에 기간 선택 오른쪽에 두었으나 크기가 어색하고 업무 필터인지 모호하다는 의견에 따라 서식 툴바의 업무 표시 칩 오른쪽으로 옮겼습니다.
+- 변경: 서식 툴바(`src/sheet/Toolbar.tsx`)의 업무 표시 칩 묶음 끝에 **선택 기간에 업무 표시가 있는 업무만 보기** 토글을 추가했습니다(`workFilter`). 아이콘은 표의 칸 일부가 칠해진 모양으로 직접 그렸습니다. 깔때기는 범용 필터로 읽히고 업무 색상을 채운 깔때기도 어색하다는 의견에 따라 후보를 비교해 정했습니다. 칩과 달리 편집 권한·선택 상태로 비활성화하지 않으며, 업무 색상이 없으면 칩 묶음과 함께 표시하지 않습니다. 켜면 `matchingTasks`가 열 필터를 통과한 업무 중 `taskHasWorkInWeeks`를 만족하는 업무만 남깁니다. 내보내기의 "선택 기간 수행 업무"와 같은 함수·같은 주차(`visibleWeeks`, 숨긴 주·접힌 월 제외)·같은 팀 업무 색상을 써서 기준이 일치합니다. 편집 중인 행은 기존 필터처럼 유지합니다. **모든 필터 초기화**가 함께 끄고, 행 추가·삽입·복제는 기존 필터 초기화와 같이 이 토글도 끕니다. 상태는 브라우저 메모리에만 두어 새로고침·팀 전환 시 꺼지며, 저장 형식·API·DB는 바뀌지 않습니다.
+- 검증(Windows 11·Node.js 22.14.0·설치된 Chrome): 새 브라우저 테스트 `tests/browser/sheet/period-work-filter.spec.ts`가 업무 색상 미설정 시 버튼 없음, 업무 표시 칩 뒤 배치, 선택 기간의 직접·상속 업무 표시만 포함, 일반 배경색·기간 밖 업무 제외, 기간 변경 반영, 모든 필터 초기화, 새로고침 후 해제를 확인합니다. `tests/browser/sheet` 전체와 `insights-period.spec.ts` 263건 중 259건 통과·4건 실패였고, 실패 4건(`sheet-format-memo.spec.ts` 1건·`workspace.spec.ts`의 링크·발표 3건)은 변경 전 빌드에서도 똑같이 실패해 이 변경과 무관합니다. `npm run build`·`build:edge`·`tsc --noEmit`·`check:structure`(오류 0)·`check:architecture`(위반 0)·변경 코드 Prettier·`git diff --check`를 통과했습니다.
+- 검증 한계: 이 장비에서는 Playwright 브라우저 다운로드가 차단되어 Firefox·WebKit을 실행하지 못했고, `npm test`는 고정 전환 의존성 설치 단계(`spawnSync npm ENOENT`)에서 멈춰 실행하지 못했습니다. 서버·공용 모듈은 바꾸지 않았습니다.
+
+## 2026-11-20 — 캘린더 토·일 칸 배경 구분
+
+- 사용자 요청(2026-11-20): 캘린더에서 토요일·일요일이 날짜 숫자 색으로만 구분되어 평일과 한눈에 나뉘지 않았습니다. 미리보기에서 농도를 비교한 뒤 10%로 정했습니다.
+- 변경: `src/calendar/calendar.css`에 `--calendar-weekend`(칸 배경 `--calendar-sheet`에 글자색 `--ink`를 10% 섞은 색)를 추가하고 `.calendar-day[data-weekday="0"]`·`[data-weekday="6"]`의 배경으로 씁니다. 각 테마의 `--ink`·`--calendar-sheet`에서 계산하므로 밝은·어두운 테마와 다섯 팔레트에 값을 따로 두지 않습니다. 규칙을 `is-outside`·`is-today` 앞에 두어 흐리게 표시한 날짜와 오늘은 기존 배경을 유지합니다. 요일 머리글, 저장 형식, API는 바뀌지 않습니다.
+- 검증(Windows 11·Node.js 22.14.0·설치된 Chrome): 새 브라우저 테스트 `calendar-theme.spec.ts` "토·일 칸은 밝은·어두운 테마에서 평일과 다른 배경이고 오늘 강조는 유지한다"가 두 테마에서 토·일 배경이 평일과 다르고 서로 같으며 오늘 배경과도 다름을 확인합니다. `tests/browser/calendar` 전체와 `platform/mobile.spec.ts` 156건 중 152건 통과·4건 실패였고, 실패 4건(`monthly-calendar.spec.ts` 2건·`mobile.spec.ts` 2건)은 CSS를 되돌린 같은 장비에서도 똑같이 실패해 이 변경과 무관합니다. `npm run build`·`build:edge`·`check:structure`(오류 0)·`check:architecture`(위반 0)·변경 코드 Prettier·`git diff --check`를 통과했습니다.
+- 검증 한계: 이 장비에서는 Playwright 브라우저 다운로드가 차단되어 Firefox·WebKit과 번들 Chromium은 실행하지 못했습니다. `npm test`는 고정 전환 의존성 설치 단계(`spawnSync npm ENOENT`)에서 멈춰 전체 Node 목록을 실행하지 못했습니다. `tests/calendar`·`tests/tooling`을 직접 실행한 71건은 통과 62·실패 7·skip 2였고, 실패 7건은 모두 `tests/tooling`의 Git·고정 소스·수집기 검사로 이 장비의 환경 원인이며 변경과 무관합니다.
+
 ## 2026-11-19 — 사내에서 지운 주간 할 일을 다시 추가하면 충돌로 보관되던 문제
 
 - 사용자 보고(2026-11-19, 사내 운영 서버): 다른 팀원의 주간 할 일 목록에서 이번 주 기준 가져오기를 실행하자 충돌 보관함에 "주간 항목 3개 · 같은 항목이 이미 있어 보관했습니다"가 생겼습니다. 먼저 수정 쪽은 `(삭제된 항목)`이었고, 가져오기를 누른 사람이 나중에 수정으로 기록됐습니다.

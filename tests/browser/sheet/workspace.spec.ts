@@ -10550,6 +10550,19 @@ test("저장된 필터는 열 조건만 저장하고 적용·해제할 때 현�
   await expect(page.locator(".saved-filter-choice")).toHaveCount(2);
 });
 
+// A saved filter changes only through its explicit save button.
+const filterSaveButton = (page: Page) =>
+  page
+    .getByRole("region", { name: "필터 보기", exact: true })
+    .getByRole("button", { name: "필터 변경 사항 저장", exact: true });
+async function saveFilterChanges(page: Page) {
+  await filterSaveButton(page).click();
+  await expect(page.locator(".toast")).toHaveText(
+    "필터 변경사항을 저장했습니다.",
+  );
+  await expect(filterSaveButton(page)).toBeDisabled();
+}
+
 test("저장된 필터를 직접 선택할 때만 보기 띠가 나타나고 상단 버튼은 유지된다", async ({
   page,
 }, info) => {
@@ -10645,6 +10658,8 @@ test("저장된 필터를 직접 선택할 때만 보기 띠가 나타나고 상
     (await readPreferences(page, teamId)).views.find(
       (v: any) => v.name === name,
     );
+  await page.keyboard.press("Escape");
+  await saveFilterChanges(page);
   await expect
     .poll(
       async () =>
@@ -10652,6 +10667,7 @@ test("저장된 필터를 직접 선택할 때만 보기 띠가 나타나고 상
     )
     .toEqual(["status-progress"]);
   // 조건과 일치·제외 모드는 선택한 항목만 갱신한다.
+  await page.locator('[data-header-key="status"]').click({ button: "right" });
   await completed.check();
   await filter.getByRole("radio", { name: "제외", exact: true }).check();
   await completed.uncheck();
@@ -10661,6 +10677,7 @@ test("저장된 필터를 직접 선택할 때만 보기 띠가 나타나고 상
   };
   await expect(banner.locator("strong")).toHaveText("동일 조건 다른 이름");
   await page.keyboard.press("Escape");
+  await saveFilterChanges(page);
   await expect
     .poll(async () => (await saved("동일 조건 다른 이름")).data)
     .toEqual(updatedData);
@@ -10821,19 +10838,23 @@ test("저장된 필터 표시줄은 숨긴 열도 속성 순서대로 표시하�
   await expect(conditions.getByRole("button").nth(2)).toHaveAccessibleName(
     `팀원 필터 변경: ${boot.user.name}, 미지정`,
   );
-  await expect(page.locator(".toast")).toHaveText(
-    "필터 변경사항이 업데이트되었습니다.",
-  );
-  await expect(page.locator(".toast")).toBeInViewport();
-  await expect(page.locator(".toast")).toHaveCSS("position", "fixed");
-  await page.screenshot({
-    path: info.outputPath("saved-filter-conditions.png"),
-  });
   await page.keyboard.press("Escape");
   const saved = async () =>
     (await readPreferences(page, teamId)).views.find(
       (v: any) => v.name === name,
     );
+  // Nothing is written until the save button is pressed.
+  await expect(page.locator(".toast")).toHaveCount(0);
+  expect((await saved()).data.propertyFilters.status).not.toEqual([
+    "status-planned",
+  ]);
+  await expect(filterSaveButton(page)).toBeEnabled();
+  await saveFilterChanges(page);
+  await expect(page.locator(".toast")).toBeInViewport();
+  await expect(page.locator(".toast")).toHaveCSS("position", "fixed");
+  await page.screenshot({
+    path: info.outputPath("saved-filter-conditions.png"),
+  });
   await expect
     .poll(async () => (await saved()).data)
     .toEqual({
@@ -10871,9 +10892,7 @@ test("저장된 필터 표시줄은 숨긴 열도 속성 순서대로 표시하�
       .click();
     await page.keyboard.press("Escape");
   }
-  await expect(page.locator(".toast")).toHaveText(
-    "해제한 필터는 저장된 필터에서 제외됩니다.",
-  );
+  await saveFilterChanges(page);
   await expect(conditions.locator(".active-filter-condition-name")).toHaveText([
     "상태:",
     "작업:",
@@ -10949,9 +10968,7 @@ test("필터 해제 항목은 닫기 전까지 다시 수정하고 재진입하�
   await expect(cleared).toBeFocused();
   await expect(conditions.getByRole("button")).toHaveCount(1);
   await expect(banner.locator("strong")).toHaveText("해제할 조건");
-  await expect(page.locator(".toast")).toHaveText(
-    "해제한 필터는 저장된 필터에서 제외됩니다.",
-  );
+  await saveFilterChanges(page);
   await expect
     .poll(
       async () =>
@@ -10978,9 +10995,7 @@ test("필터 해제 항목은 닫기 전까지 다시 수정하고 재진입하�
     }),
   ).toBeVisible();
   await expect(page.locator('[data-column="title"]')).toHaveText(["숨길 업무"]);
-  await expect(page.locator(".toast")).toHaveText(
-    "필터 변경사항이 업데이트되었습니다.",
-  );
+  await expect(filterSaveButton(page)).toBeEnabled();
   // Clearing from the column menu keeps the same banner control as well.
   await page.locator('[data-header-key="title"]').click({ button: "right" });
   await filter
@@ -10988,9 +11003,8 @@ test("필터 해제 항목은 닫기 전까지 다시 수정하고 재진입하�
     .click();
   await page.keyboard.press("Escape");
   await expect(cleared).toBeVisible();
-  await expect(page.locator(".toast")).toHaveText(
-    "해제한 필터는 저장된 필터에서 제외됩니다.",
-  );
+  // Back to the saved conditions, so there is nothing to save.
+  await expect(filterSaveButton(page)).toBeDisabled();
   await page.setViewportSize({ width: 650, height: 900 });
   await expect(cleared).toBeInViewport();
   await expect(banner.getByRole("status")).toBeInViewport();
@@ -11056,9 +11070,7 @@ test("필터 해제 항목은 닫기 전까지 다시 수정하고 재진입하�
   await filter.getByRole("checkbox", { name: "첫 업무", exact: true }).check();
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-column="title"]')).toHaveText(["첫 업무"]);
-  await expect(page.locator(".toast")).toHaveText(
-    "필터 변경사항이 업데이트되었습니다.",
-  );
+  await saveFilterChanges(page);
   await page.reload();
   await expect(
     conditions.getByRole("button", {
@@ -11178,6 +11190,21 @@ test("저장된 필터는 연도 이동·새로고침에도 적용하고 수정�
   await filter.getByRole("checkbox", { name: "완료", exact: true }).uncheck();
   await page.keyboard.press("Escape");
   await expect(titles).toHaveText(["내년 완료"]);
+  // Unsaved conditions follow a year change but not a reload.
+  await chooseYear(page, 2026);
+  await expect(titles).toHaveText(["첫 업무", "숨길 업무"]);
+  await expect(filterSaveButton(page)).toBeEnabled();
+  await page.reload();
+  await expect(banner.locator("strong")).toHaveText("전체 연도");
+  await expect(titles).toHaveText(["숨길 업무", "셋째 업무"]);
+  await expect(filterSaveButton(page)).toBeDisabled();
+  await chooseYear(page, 2027);
+  await page.locator('[data-header-key="status"]').click({ button: "right" });
+  await filter.getByRole("checkbox", { name: "진행 중", exact: true }).check();
+  await filter.getByRole("checkbox", { name: "완료", exact: true }).uncheck();
+  await page.keyboard.press("Escape");
+  await expect(titles).toHaveText(["내년 완료"]);
+  await saveFilterChanges(page);
   await chooseYear(page, 2026);
   await expect(banner.locator("strong")).toHaveText("전체 연도");
   await expect(titles).toHaveText(["첫 업무", "숨길 업무"]);
@@ -11260,8 +11287,10 @@ test("저장 필터 수정 중 연도를 바꿔도 저장 완료된 최신 조�
       .getByRole("group", { name: "상태 필터 선택", exact: true })
       .getByRole("checkbox", { name: "완료", exact: true })
       .check();
-    await expect.poll(() => writing).toBe(true);
     await page.keyboard.press("Escape");
+    expect(writing).toBe(false);
+    await filterSaveButton(page).click();
+    await expect.poll(() => writing).toBe(true);
     await page.getByRole("button", { name: "다음 연도", exact: true }).click();
     await expect(page.locator(".year-value")).toHaveText("2027");
     release();
@@ -11341,21 +11370,29 @@ test("저장된 필터를 연속 수정한 직후 다른 필터를 선택해도 
     await filter
       .getByRole("checkbox", { name: "진행 중", exact: true })
       .check();
+    await page.keyboard.press("Escape");
+    expect(writes).toHaveLength(0);
+    await filterSaveButton(page).click();
     await expect.poll(() => writes.length).toBe(1);
     await expect(banner.getByRole("status")).toHaveText(
       "필터 변경사항 저장 중…",
     );
+    // A change made after pressing save stays unsaved and is dropped by
+    // choosing another filter.
+    await page.locator('[data-header-key="status"]').click({ button: "right" });
     await filter.getByRole("radio", { name: "제외", exact: true }).check();
     await page.keyboard.press("Escape");
     await choose(other.name);
     expect(writes).toHaveLength(1);
     release();
     await expect
-      .poll(async () => (await saved(original.name)).data)
-      .toEqual({
-        propertyFilters: { status: ["status-completed", "status-progress"] },
-        propertyFilterModes: { status: "exclude" },
-      });
+      .poll(
+        async () => (await saved(original.name)).data.propertyFilters.status,
+      )
+      .toEqual(["status-completed", "status-progress"]);
+    expect(
+      (await saved(original.name)).data.propertyFilterModes?.status,
+    ).not.toBe("exclude");
     expect(await saved(other.name)).toEqual(other);
     await expect(banner.locator("strong")).toHaveText(other.name);
     await expect(banner.getByRole("status")).toBeEmpty();
@@ -11364,19 +11401,29 @@ test("저장된 필터를 연속 수정한 직후 다른 필터를 선택해도 
     await filter
       .getByRole("button", { name: "상태 필터 해제", exact: true })
       .click();
+    await page.keyboard.press("Escape");
     await expect(banner.locator("strong")).toHaveText(original.name);
-    await expect(page.locator(".toast")).toHaveText(
-      "해제한 필터는 저장된 필터에서 제외됩니다.",
-    );
+    await expect(page.locator(".toast")).toHaveCount(0);
+    expect(
+      (await saved(original.name)).data.propertyFilters.status,
+    ).toHaveLength(2);
+    await saveFilterChanges(page);
     await expect
       .poll(
         async () => (await saved(original.name)).data.propertyFilters.status,
       )
       .toEqual([]);
+    // Closing with X drops an unsaved change without asking.
+    await page.locator('[data-header-key="status"]').click({ button: "right" });
+    await filter.getByRole("checkbox", { name: "완료", exact: true }).check();
     await page.keyboard.press("Escape");
+    await expect(filterSaveButton(page)).toBeEnabled();
     await banner.getByRole("button", { name: "필터 보기 종료" }).click();
     await expect(banner).toHaveCount(0);
-    expect(writes).toHaveLength(3);
+    expect(writes).toHaveLength(2);
+    expect((await saved(original.name)).data.propertyFilters.status).toEqual(
+      [],
+    );
   } finally {
     release();
   }
@@ -11419,6 +11466,8 @@ test("저장된 필터 조건 저장 실패를 알리고 선택 상태에서 다
     exact: true,
   });
   await filter.getByRole("checkbox", { name: "완료", exact: true }).check();
+  await page.keyboard.press("Escape");
+  await filterSaveButton(page).click();
   await expect(page.getByRole("alert")).toContainText("필터 저장 실패");
   const notice = page
     .getByRole("region", { name: "필터 보기", exact: true })
@@ -11428,22 +11477,27 @@ test("저장된 필터 조건 저장 실패를 알리고 선택 상태에서 다
     original.name,
   );
   expect((await saved()).data.propertyFilters).toEqual({});
+  // The failed change is still unsaved and can be saved again.
+  await expect(filterSaveButton(page)).toBeEnabled();
+  await page.locator('[data-header-key="status"]').click({ button: "right" });
   await filter.getByRole("checkbox", { name: "진행 중", exact: true }).check();
+  await page.keyboard.press("Escape");
+  await saveFilterChanges(page);
   await expect
     .poll(async () => (await saved()).data.propertyFilters.status)
     .toEqual(["status-completed", "status-progress"]);
   await expect(page.getByRole("alert")).toHaveCount(0);
   await expect(notice).toHaveText("");
-  await expect(page.locator(".toast")).toHaveText(
-    "필터 변경사항이 업데이트되었습니다.",
-  );
   await expect(page.locator(".active-filter-banner strong")).toHaveText(
     original.name,
   );
+  await page.locator('[data-header-key="status"]').click({ button: "right" });
   await filter
     .getByRole("button", { name: "상태 필터 해제", exact: true })
     .click();
   await filter.getByRole("radio", { name: "제외", exact: true }).check();
+  await page.keyboard.press("Escape");
+  await saveFilterChanges(page);
   await expect
     .poll(async () => (await saved()).data)
     .toEqual({
@@ -11566,6 +11620,7 @@ test("팀장은 필터 공개 범위를 선택하고 팀원은 공용 원본 수
       .check();
     await status.getByRole("checkbox", { name: "완료", exact: true }).uncheck();
     await page.keyboard.press("Escape");
+    await saveFilterChanges(page);
     const readShared = async () =>
       (
         await (

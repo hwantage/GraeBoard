@@ -29,6 +29,21 @@ function propertyFilterKey(view: SavedFilter["data"]) {
   ]);
 }
 
+// What a definition filters by: a property without values filters nothing,
+// and a missing mode is "include".
+function conditionKey(view: SavedFilter["data"]) {
+  return JSON.stringify(
+    Object.entries(view.propertyFilters || {})
+      .filter(([, values]) => values.length)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, values]) => [
+        key,
+        [...new Set(values)].sort(),
+        view.propertyFilterModes?.[key] || "include",
+      ]),
+  );
+}
+
 // Team-owned definitions and personal selection share one ordered write queue.
 // The annual layout and a copy's view are owned by their respective callers.
 export default function useSavedFilters({
@@ -60,7 +75,6 @@ export default function useSavedFilters({
     filterId: string;
     revision: number;
     state: "saving" | "saved" | "error";
-    cleared: boolean;
   } | null>(null);
   const queue = useRef(Promise.resolve());
   const revision = useRef(0);
@@ -84,6 +98,8 @@ export default function useSavedFilters({
     () => filters.find((filter) => filter.id === selectedId),
     [filters, selectedId],
   );
+  const definitions = useRef(filters);
+  definitions.current = filters;
 
   useEffect(() => {
     let cancelled = false;
@@ -117,11 +133,7 @@ export default function useSavedFilters({
       notice.teamId === teamId &&
       notice.filterId === selectedId
     )
-      onNotify(
-        notice.cleared
-          ? "해제한 필터는 저장된 필터에서 제외됩니다."
-          : "필터 변경사항이 업데이트되었습니다.",
-      );
+      onNotify("필터 변경사항을 저장했습니다.");
   }, [notice, teamId, selectedId, onNotify]);
   useEffect(() => {
     if (ready && selectedId && !active) select("");
@@ -154,19 +166,15 @@ export default function useSavedFilters({
     if (!copy) saveCurrent(current.current.data, id);
   }
 
-  function update(filter: SavedFilter, next: View, previous: View) {
+  function update(filter: SavedFilter, next: SavedFilter["data"]) {
     onNotify("");
     const data = savedFilter(next, settings) as SavedFilter["data"];
     const savedRevision = ++revision.current;
-    const cleared = Object.entries(previous.propertyFilters || {}).some(
-      ([key, values]) => values.length && !next.propertyFilters?.[key]?.length,
-    );
     setNotice({
       teamId,
       filterId: filter.id,
       revision: savedRevision,
       state: "saving",
-      cleared,
     });
     const finish = (state: "saved" | "error") => {
       if (!sameScope()) return;
@@ -199,6 +207,15 @@ export default function useSavedFilters({
       })
       .catch((error) => {
         finish("error");
+        // Back to the stored definition, so the change can be saved again.
+        if (sameScope())
+          setFilters((items) =>
+            items.map((item) =>
+              item.id === filter.id && item.data === data
+                ? { ...item, data: filter.data }
+                : item,
+            ),
+          );
         if (sameScope())
           onError(`‘${filter.name}’ 필터 저장 실패: ${error.message}`);
       })
@@ -207,12 +224,25 @@ export default function useSavedFilters({
       });
   }
 
-  function change(next: View, previous: View, updateSelected = false) {
+  // An editable selection stays while its conditions change on screen; the
+  // definition is written only by commit().
+  function change(next: View, previous: View, keepSelected = false) {
     if (propertyFilterKey(next) === propertyFilterKey(previous)) return;
-    const id = updateSelected && active?.canEdit ? active.id : "";
-    if (!copy && id && active) update(active, next, previous);
+    const id = keepSelected && active?.canEdit ? active.id : "";
     setSelectedId(id);
     if (!copy) saveCurrent(savedFilter(next, settings), id);
+  }
+
+  function isChanged(view: SavedFilter["data"]) {
+    return (
+      !!active &&
+      conditionKey(savedFilter(view, settings)) !== conditionKey(active.data)
+    );
+  }
+
+  function commit(view: SavedFilter["data"]) {
+    if (copy || !active?.canEdit || !isChanged(view)) return;
+    update(active, view);
   }
 
   async function refresh() {
@@ -228,10 +258,14 @@ export default function useSavedFilters({
       const selected = result.filters.find(
         (filter: SavedFilter) => filter.id === current.current.selectedId,
       );
+      // Unsaved conditions stay unless the definition itself has changed.
+      const known = definitions.current.find(
+        (filter) => filter.id === selected?.id,
+      );
       if (
         selected &&
         propertyFilterKey(selected.data) !==
-          propertyFilterKey(current.current.data)
+          propertyFilterKey(known?.data || current.current.data)
       ) {
         saveCurrent(selected.data, selected.id);
         onDefinitionChange(selected.data);
@@ -311,6 +345,8 @@ export default function useSavedFilters({
     notice,
     deletingId,
     change,
+    isChanged,
+    commit,
     select,
     refresh,
     save,
