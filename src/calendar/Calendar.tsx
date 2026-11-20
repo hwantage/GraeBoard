@@ -1195,8 +1195,9 @@ export default function Calendar({
                         aria-pressed={memberId === member.id}
                         {...busyProps(locked, !context)}
                         onClick={() => {
-                          if (memberId === member.id) return;
-                          months.restart();
+                          // Any name, the selected one too, shows today as
+                          // opening the monthly view does.
+                          months.open();
                           setMemberId(member.id);
                         }}
                       >

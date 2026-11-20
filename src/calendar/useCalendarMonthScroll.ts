@@ -100,7 +100,8 @@ export function useCalendarMonthRange(today: string) {
     jump,
     jumped,
     setMonth,
-    // A monthly view opened anew shows today, as the 오늘 button does.
+    // A monthly view opened anew, or a member picked in it, shows today, as
+    // the 오늘 button does.
     open: () => show(current, todayJump, current),
     today: () =>
       current >= range.start && current <= range.end
@@ -128,8 +129,6 @@ export function useCalendarMonthRange(today: string) {
       )
         show(target);
     },
-    // Lists months from the shown one again, e.g. for another member.
-    restart: () => show(month),
     append: (end: string) =>
       setRange((previous) =>
         previous.end === end && end < LAST_MONTH

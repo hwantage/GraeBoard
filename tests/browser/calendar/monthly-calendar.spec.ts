@@ -3973,11 +3973,13 @@ test("드래그 취소·키보드 이동·읽기 전용과 실패한 기간 변�
     password,
   });
   await page.reload();
-  await october(page);
+  // Choosing a member shows today, so the month is chosen after it.
+  await enter(page);
   await calendar(page)
     .getByRole("group", { name: "캘린더 팀원" })
     .locator(`[data-member-id="${userId}"]`)
     .click();
+  await october(page);
   await expect(segment(page, entry.id)).toHaveCount(2);
   await expect(
     segment(page, entry.id).locator(".calendar-range-handle"),
