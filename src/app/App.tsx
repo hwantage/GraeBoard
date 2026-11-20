@@ -86,6 +86,10 @@ import {
   Tag,
 } from "lucide-react";
 import {
+  taskHasWorkInWeeks,
+  workColorSet,
+} from "../../shared/insights/insights.js";
+import {
   api,
   send,
   ApiError,
@@ -694,6 +698,15 @@ function Workspace({
     user.systemRole === "admin" ||
     Object.values(user.teamRoles).includes("lead");
   const settings = sheetClone?.settings || team?.settings || DEFAULT_SETTINGS;
+  // Session-only filter: tasks with a work mark in the selected weeks. Uses
+  // the team's work colors for the original and copies, like the export.
+  const [periodWorkOnly, setPeriodWorkOnly] = useState(false);
+  const periodWorkColors = useMemo(
+    () => workColorSet(team?.settings || DEFAULT_SETTINGS),
+    [team?.settings],
+  );
+  const periodWorkFilter = periodWorkOnly && periodWorkColors.size > 0;
+  useEffect(() => setPeriodWorkOnly(false), [teamId]);
   const fields = useMemo(() => fieldsFor(settings), [settings]);
   const properties = useMemo(
     () => propertiesFor(settings) as Property[],
@@ -1315,6 +1328,24 @@ function Workspace({
       view.sortDirection,
     ],
   );
+  // 보기의 다른 설정(행 높이·열 너비 등)이 바뀔 때 열 객체를 새로 만들지 않는다.
+  const weeks = useMemo(
+    () => visibleWeeks(viewYear, view),
+    [
+      viewYear,
+      view.startMonth,
+      view.fromWeek,
+      view.toWeek,
+      view.fromMonth,
+      view.toMonth,
+      view.hiddenWeeks,
+      view.collapsedMonths,
+    ],
+  );
+  const selectedWeekKeys = useMemo(
+    () => weeks.map((week) => week.key),
+    [weeks],
+  );
   // 필터를 통과한 업무(숨긴 행 포함) → 그중 화면에 보이는 업무.
   const matchingTasks = useMemo(() => {
     // While typing, evaluate this row's filter/sort against the edit baseline.
@@ -1330,10 +1361,25 @@ function Workspace({
       settings,
       users,
     ) as Task[];
-    return active
-      ? matching.map((t) => (t.id === active.id ? active : t))
+    // The row being edited stays, like the other filters above.
+    const shown = periodWorkFilter
+      ? matching.filter(
+          (t) =>
+            t.id === active?.id ||
+            taskHasWorkInWeeks(t, periodWorkColors, selectedWeekKeys),
+        )
       : matching;
-  }, [allTasks, filterView, settings, users, editor]);
+    return active ? shown.map((t) => (t.id === active.id ? active : t)) : shown;
+  }, [
+    allTasks,
+    filterView,
+    settings,
+    users,
+    editor,
+    periodWorkFilter,
+    periodWorkColors,
+    selectedWeekKeys,
+  ]);
   const visibleTasks = useMemo(() => {
     const hidden = new Set(view.hiddenRows);
     return matchingTasks.filter((t) => !hidden.has(t.id));
@@ -1354,20 +1400,6 @@ function Workspace({
       id: Math.max(Date.now(), (previous?.id || 0) + 1),
     }));
   }
-  // 보기의 다른 설정(행 높이·열 너비 등)이 바뀔 때 열 객체를 새로 만들지 않는다.
-  const weeks = useMemo(
-    () => visibleWeeks(viewYear, view),
-    [
-      viewYear,
-      view.startMonth,
-      view.fromWeek,
-      view.toWeek,
-      view.fromMonth,
-      view.toMonth,
-      view.hiddenWeeks,
-      view.collapsedMonths,
-    ],
-  );
   const periodWeeks = useMemo(
     () => weeksForPeriod(viewYear, view.startMonth),
     [viewYear, view.startMonth],
@@ -1528,6 +1560,12 @@ function Workspace({
     (!sheetClone || editingSheetClone) &&
     !failed;
 
+  // Creating a row clears the filters so the new row stays visible; a new row
+  // has no work mark, so the period filter ends with them.
+  function changeViewFromRows(part: Partial<View>) {
+    if (part.propertyFilters) setPeriodWorkOnly(false);
+    changeView(part);
+  }
   const rowCommands = useSheetRowCommands({
     teamId,
     year,
@@ -1550,7 +1588,7 @@ function Workspace({
     selectionEpoch,
     editorRef,
     rowTask,
-    changeView,
+    changeView: changeViewFromRows,
     setSelection,
     setEditor,
     setJump,
@@ -2479,6 +2517,14 @@ function Workspace({
                   workColors={workColors}
                   workColorsDisabled={workColorsDisabled}
                   markedWorkColors={markedWork}
+                  workFilter={{
+                    active: periodWorkFilter,
+                    disabled: !ready,
+                    onToggle() {
+                      setSelection(null);
+                      setPeriodWorkOnly((value) => !value);
+                    },
+                  }}
                   leadingAction={
                     (!sheetClone ? canAdd : editingSheetClone && canAdd) ? (
                       <Button
@@ -2496,17 +2542,22 @@ function Workspace({
                       tooltip="모든 필터 초기화"
                       disabled={
                         !ready ||
-                        !!activeSavedFilter ||
-                        !Object.values(view.propertyFilters || {}).some(
-                          (values) => values.length > 0,
-                        )
+                        (!periodWorkFilter &&
+                          (!!activeSavedFilter ||
+                            !Object.values(view.propertyFilters || {}).some(
+                              (values) => values.length > 0,
+                            )))
                       }
-                      onClick={() =>
-                        changeView({
-                          propertyFilters: {},
-                          propertyFilterModes: {},
-                        })
-                      }
+                      onClick={() => {
+                        setSelection(null);
+                        setPeriodWorkOnly(false);
+                        // A saved filter view is closed with its own X.
+                        if (!activeSavedFilter)
+                          changeView({
+                            propertyFilters: {},
+                            propertyFilterModes: {},
+                          });
+                      }}
                     >
                       <FunnelX size={16} aria-hidden="true" />
                     </Button>
