@@ -83,7 +83,11 @@ export class SlideFileService {
   }
   // Replaces the bytes only when the caller edited the current revision. A
   // repeated request ID returns the result of the first attempt.
-  async save(teamId, fileId, { baseRevision, bytes, requestId }) {
+  async save(
+    teamId,
+    fileId,
+    { baseRevision, baseTitle, title, bytes, requestId },
+  ) {
     await this.#write(teamId);
     requireThat(
       Number.isInteger(baseRevision) && baseRevision > 0,
@@ -94,6 +98,8 @@ export class SlideFileService {
       teamId,
       fileId,
       baseRevision,
+      title: title === undefined ? null : this.#title(title),
+      baseTitle: title === undefined ? null : this.#title(baseTitle),
       ...this.#content(bytes),
       requestId: this.#request(requestId),
       userId: this.user.id,

@@ -162,6 +162,39 @@ const createTask = (client, teamId, title) =>
     json: { teamId, year: 2026, fields: { title } },
   });
 
+test("편집기 제목과 파일을 함께 저장하고 목록에서 바뀐 제목과 경합하면 둘 다 보존한다", async (t) => {
+  const site = await externalSite(t);
+  if (!site) return;
+  const { lead, pg } = site;
+  const teamId = pg.teamId;
+  await migrateSlideSchema(pg.pool);
+  const file = (await lead.upload(teamId, "처음", slide("처음"))).body;
+  const path = "/teams/" + teamId + "/slides/" + file.id;
+  const save = (baseTitle, title, revision) =>
+    lead.data(path + "/content", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "X-Slide-Request-Id": randomUUID(),
+        "X-Slide-Base-Revision": String(revision),
+        "X-Slide-Base-Title": encodeURIComponent(baseTitle),
+        "X-Slide-Title": encodeURIComponent(title),
+      },
+      body: slide(title),
+    });
+  const saved = await save("처음", "새 이름", 1);
+  assert.equal(saved.status, 200);
+  assert.equal(saved.body.revision, 2);
+  assert.equal(saved.body.title, "새 이름");
+  await lead.data(path, { method: "PATCH", json: { title: "동료의 이름" } });
+  const conflict = await save("새 이름", "내 이름", 2);
+  assert.equal(conflict.status, 409);
+  assert.equal(conflict.body.details.current.title, "동료의 이름");
+  assert.deepEqual((await lead.bytes(teamId, file.id)).bytes, slide("새 이름"));
+  assert.equal((await lead.data(path)).body.revision, 2);
+  assert.equal((await save("동료의 이름", " ", 2)).status, 400);
+});
+
 test("외부 요청은 자료가 저장된 뒤에만 동기화를 예약한다", async (t) => {
   const site = await externalSite(t);
   if (!site) return;

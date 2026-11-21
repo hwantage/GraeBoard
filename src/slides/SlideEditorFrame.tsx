@@ -17,7 +17,10 @@ import {
   SLIDE_FRAME_SESSION_PARAM,
   slideRecoveryScope,
 } from "../../shared/slides/slide-frame-protocol.js";
-import { slideTitleProblem } from "../../shared/slides/slide-file-rules.js";
+import {
+  MAX_SLIDE_TITLE_LENGTH,
+  slideTitleProblem,
+} from "../../shared/slides/slide-file-rules.js";
 import {
   createSlideFile,
   createSlideShare,
@@ -102,7 +105,6 @@ export default function SlideEditorFrame({
   start,
   onClose,
   onSaved,
-  onNotify,
 }: {
   ref?: Ref<SlideEditorHandle>;
   editor: SlideEditorBuild;
@@ -112,7 +114,6 @@ export default function SlideEditorFrame({
   start: SlideEditorStart;
   onClose: () => void;
   onSaved: (file: SlideFile) => void;
-  onNotify: (message: string) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const bridge = useRef<SlideFrameBridge | null>(null);
@@ -120,9 +121,14 @@ export default function SlideEditorFrame({
   const [state, setState] = useState<SlideEditorState | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [writingTeamFile, setWritingTeamFile] = useState(false);
+  const [titleDraft, setTitleDraft] = useState<{
+    session: number;
+    name: string;
+  } | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
-  const live = useRef({ canWrite, onSaved, onNotify, start });
-  live.current = { canWrite, onSaved, onNotify, start };
+  const live = useRef({ canWrite, onSaved, start });
+  live.current = { canWrite, onSaved, start };
   const session = useMemo(() => crypto.randomUUID(), []);
   const source = useMemo(() => {
     const query = new URLSearchParams({
@@ -152,7 +158,6 @@ export default function SlideEditorFrame({
   const stored = (file: SlideFile) => {
     setError("");
     live.current.onSaved(file);
-    live.current.onNotify("팀 자료에 저장했습니다.");
     return target(file);
   };
   async function openFile(fileId: string, discard = false) {
@@ -185,17 +190,32 @@ export default function SlideEditorFrame({
       () => frame.current?.contentWindow ?? null,
       session,
       {
-        async save({ fileId, baseRevision, requestId, bytes }) {
+        async save({
+          fileId,
+          baseRevision,
+          baseTitle,
+          title,
+          requestId,
+          bytes,
+        }) {
           if (!live.current.canWrite)
             throw fail(
               new Error(
                 "이 팀의 자료를 저장할 권한이 없습니다. 다른 이름으로 저장에서 이 기기에 내려받을 수 있습니다.",
               ),
             );
+          setWritingTeamFile(true);
           try {
             return stored(
               await withRetry(() =>
-                saveSlideFile(teamId, fileId, baseRevision, bytes, requestId),
+                saveSlideFile(
+                  teamId,
+                  fileId,
+                  baseRevision,
+                  bytes,
+                  requestId,
+                  baseTitle === undefined ? undefined : { title, baseTitle },
+                ),
               ),
             );
           } catch (failure) {
@@ -230,11 +250,14 @@ export default function SlideEditorFrame({
                   ),
               );
             return null;
+          } finally {
+            setWritingTeamFile(false);
           }
         },
         async create({ requestId, title, bytes }) {
           if (!live.current.canWrite)
             throw fail(new Error("이 팀에 자료를 만들 권한이 없습니다."));
+          setWritingTeamFile(true);
           try {
             return stored(
               await withRetry(() =>
@@ -243,6 +266,8 @@ export default function SlideEditorFrame({
             );
           } catch (failure) {
             throw fail(failure);
+          } finally {
+            setWritingTeamFile(false);
           }
         },
         "save-target": ({ name, bound }) =>
@@ -274,8 +299,9 @@ export default function SlideEditorFrame({
       {
         ready(next) {
           setState(next);
-          setReady(true);
-          void begin();
+          void begin().finally(() => {
+            if (bridge.current === created) setReady(true);
+          });
         },
         state: setState,
       },
@@ -332,6 +358,23 @@ export default function SlideEditorFrame({
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
+  const binding = state?.binding ?? null;
+  function canSave(current: SlideEditorState | null) {
+    return (
+      ready &&
+      !saving &&
+      !writingTeamFile &&
+      !!current &&
+      (current.dirty || current.binding?.fileId === null) &&
+      (!current.binding || (canWrite && !slideTitleProblem(current.name)))
+    );
+  }
+  function rename(name: string) {
+    if (!state || !binding || !canWrite) return;
+    void bridge.current
+      ?.request("rename", { name, documentSession: state.documentSession })
+      .catch((failure) => setError((failure as Error).message));
+  }
   // Ctrl/Cmd+S pressed on GraeBoard's own bar saves the open document too.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -342,14 +385,19 @@ export default function SlideEditorFrame({
         !document.querySelector("dialog[open]")
       ) {
         event.preventDefault();
-        void save();
+        // A keystroke in the title can still be on its way to the frame.
+        void bridge.current
+          ?.request<SlideEditorState>("state")
+          .then((current) => {
+            if (canSave(current)) return save();
+          })
+          .catch((failure) => setError((failure as Error).message));
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const binding = state?.binding ?? null;
   return (
     <section className="slide-editor" aria-label="CanvaSlide 편집기">
       <header className="slide-editor-bar">
@@ -357,23 +405,44 @@ export default function SlideEditorFrame({
           <ArrowLeft size={15} />
           <span>목록</span>
         </Button>
-        <strong className="slide-editor-title">
-          {binding?.title || state?.name || "CanvaSlide"}
-        </strong>
-        <span className="tag" data-slide-target={binding ? "team" : "device"}>
-          {binding
-            ? binding.fileId
-              ? "팀 자료"
-              : "팀 자료 · 첫 저장 전"
-            : "이 기기의 문서 · 팀에 저장되지 않음"}
-        </span>
-        <span className="tag" role="status" data-slide-dirty={dirty}>
-          {saving ? "저장 중…" : dirty ? "저장 안 됨" : "저장됨"}
-        </span>
+        {ready && state && binding && canWrite ? (
+          <input
+            key={state.documentSession}
+            className="slide-editor-title"
+            aria-label="자료 제목"
+            value={
+              titleDraft?.session === state.documentSession
+                ? titleDraft.name
+                : state.name
+            }
+            onBlur={() => setTitleDraft(null)}
+            maxLength={MAX_SLIDE_TITLE_LENGTH}
+            onChange={(event) => {
+              setTitleDraft({
+                session: state.documentSession,
+                name: event.currentTarget.value,
+              });
+              if (!(event.nativeEvent as InputEvent).isComposing)
+                rename(event.currentTarget.value);
+            }}
+            onCompositionEnd={(event) => rename(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.nativeEvent.isComposing)
+                event.currentTarget.blur();
+            }}
+          />
+        ) : (
+          <strong className="slide-editor-title">
+            {state?.name || "CanvaSlide"}
+          </strong>
+        )}
+        {ready && state && !binding && (
+          <span className="tag">이 기기의 문서</span>
+        )}
         <Button
-          className="primary"
           title="저장 (Ctrl/Cmd+S)"
-          disabled={!ready || saving}
+          aria-busy={!ready || saving || writingTeamFile}
+          disabled={!canSave(state)}
           onClick={() => void save()}
         >
           <Save size={15} />

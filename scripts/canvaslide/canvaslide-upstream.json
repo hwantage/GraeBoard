@@ -4,9 +4,9 @@
   "version": "0.8.1",
   "pnpm": "11.24.0",
   "bundle": {
-    "buildId": "0de6fc3b40a8-d36e9125b06b",
-    "url": "https://raw.githubusercontent.com/hwantage/GraeBoard/canvaslide-editor/bundles/0de6fc3b40a8-d36e9125b06b.tar.gz",
-    "bytes": 9440356,
-    "sha256": "a418f4c988b6a2b22a8869e1b31acb836e2984b7443511f41013da332c581574"
+    "buildId": "0de6fc3b40a8-1b30c352580a",
+    "url": "https://raw.githubusercontent.com/hwantage/GraeBoard/canvaslide-editor/bundles/0de6fc3b40a8-1b30c352580a.tar.gz",
+    "bytes": 9440964,
+    "sha256": "7b7719134ad2a5bde583108fa9ed2bb073f413f820e0ee6735770ba0cecb7f4f"
   }
 }

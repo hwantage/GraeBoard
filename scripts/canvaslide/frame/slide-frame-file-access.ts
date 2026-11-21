@@ -35,27 +35,27 @@ const requestId = (): string =>
   crypto.randomUUID?.() ??
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
-function stored(file: StoredFile | null): SavedDocument | null {
-  return file ? { filePath: bindingPath(file) } : null;
-}
-
 async function storeTeamFile(
   document: CanvasDocument,
   binding: Pick<TeamFileBinding, "fileId" | "revision" | "title">,
+  title: string,
 ): Promise<SavedDocument | null> {
-  const bytes = await encodeDocumentFile(document);
-  const payload = { requestId: requestId(), title: binding.title, bytes };
+  const bytes = await encodeDocumentFile(
+    document.name === title ? document : { ...document, name: title },
+  );
+  const payload = { requestId: requestId(), title, bytes };
   // Null: the author cancelled, or chose to reopen the newer team file. The
   // document then stays unsaved, exactly like a dismissed file picker.
-  return stored(
+  const file =
     binding.fileId === null
       ? await requestHost<StoredFile | null>("create", payload)
       : await requestHost<StoredFile | null>("save", {
           ...payload,
           fileId: binding.fileId,
           baseRevision: binding.revision,
-        }),
-  );
+          baseTitle: binding.title,
+        });
+  return file ? { filePath: bindingPath(file) } : null;
 }
 
 export async function saveDocumentFile(
@@ -76,11 +76,15 @@ export async function saveDocumentFile(
       return null;
     }
     if (choice.kind === "team") {
-      return storeTeamFile(document, {
-        fileId: null,
-        revision: 0,
-        title: choice.title,
-      });
+      return storeTeamFile(
+        document,
+        {
+          fileId: null,
+          revision: 0,
+          title: choice.title,
+        },
+        choice.title.trim().normalize("NFC"),
+      );
     }
     if (!binding) {
       return upstream.saveDocumentFile(document, target, true);
@@ -94,7 +98,7 @@ export async function saveDocumentFile(
     return null;
   }
   return binding
-    ? storeTeamFile(document, binding)
+    ? storeTeamFile(document, binding, document.name.trim().normalize("NFC"))
     : upstream.saveDocumentFile(document, target, false);
 }
 

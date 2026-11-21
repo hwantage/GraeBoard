@@ -259,6 +259,8 @@ export class PostgresSlideFileRepository {
     teamId,
     fileId,
     baseRevision,
+    title = null,
+    baseTitle = null,
     bytes,
     contentHash,
     requestId,
@@ -279,13 +281,16 @@ export class PostgresSlideFileRepository {
       ).rows[0];
       if (earlier)
         return { saved: true, file: replay(file, earlier, contentHash) };
-      if (file.revision !== baseRevision)
+      if (
+        file.revision !== baseRevision ||
+        (baseTitle !== null && file.title !== baseTitle)
+      )
         return { saved: false, file: meta(file) };
       await this.#ensureBlob(contentHash, bytes);
       const revision = file.revision + 1;
       await client.query(
-        `UPDATE ${S}.slide_files SET revision=$1,byte_length=$2,content_hash=$3,updated_by=$4,updated_at=$5 WHERE id=$6`,
-        [revision, bytes.byteLength, contentHash, userId, at, fileId],
+        `UPDATE ${S}.slide_files SET title=COALESCE($7,title),revision=$1,byte_length=$2,content_hash=$3,updated_by=$4,updated_at=$5 WHERE id=$6`,
+        [revision, bytes.byteLength, contentHash, userId, at, fileId, title],
       );
       await client.query(
         `INSERT INTO ${S}.slide_file_revisions VALUES($1,$2,$3,$4,$5,$6,$7)`,

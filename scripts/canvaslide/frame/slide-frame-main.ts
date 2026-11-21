@@ -3,6 +3,7 @@
  * requests with the editor's real document commands, and reports the editor's
  * unsaved state so GraeBoard can guard navigation.
  */
+import { createDocumentContentComparator } from "@shared/canvas/document-content";
 import { createEmptyDocument } from "@shared/canvas/element-types";
 import { decodeDocumentFile } from "@/lib/workers/document-file-codec";
 import {
@@ -28,9 +29,10 @@ type OpenRequest = {
 
 function editorState() {
   const { dirty, filePath, document, session } = useDocumentStore.getState();
+  const binding = parseBinding(filePath);
   return {
     dirty,
-    binding: parseBinding(filePath),
+    binding,
     name: document.name,
     documentSession: session,
   };
@@ -89,6 +91,16 @@ if (hosted) {
     saved: await saveCurrentDocument(),
     ...editorState(),
   }));
+  handleHost("rename", ({ name, documentSession }) => {
+    const store = useDocumentStore.getState();
+    if (
+      store.session === documentSession &&
+      typeof name === "string" &&
+      store.document.name !== name
+    )
+      store.renameDocument(name);
+    return {};
+  });
   handleHost("state", () => editorState());
   // Leaving on purpose: the recovery copy of this session is no longer wanted.
   handleHost("discard", async () => {
@@ -105,6 +117,32 @@ if (hosted) {
       notifyHost("state", state);
     }
   };
-  useDocumentStore.subscribe(report);
+  const sameContent = createDocumentContentComparator();
+  useDocumentStore.subscribe((current, previous) => {
+    // Save As and conflict copies may get their team title after the snapshot
+    // was taken. Match the saved baseline and preserve edits made in flight.
+    if (
+      current.session === previous.session &&
+      current.filePath !== previous.filePath &&
+      current.savedDocument
+    ) {
+      const target = parseBinding(current.filePath);
+      const snapshot = current.savedDocument;
+      if (target && target.title !== snapshot.name) {
+        const savedDocument = { ...snapshot, name: target.title };
+        const document =
+          current.document.name === snapshot.name
+            ? { ...current.document, name: target.title }
+            : current.document;
+        useDocumentStore.setState({
+          savedDocument,
+          document,
+          dirty: !sameContent(savedDocument, document),
+        });
+        return;
+      }
+    }
+    report();
+  });
   notifyHost("ready", editorState());
 }

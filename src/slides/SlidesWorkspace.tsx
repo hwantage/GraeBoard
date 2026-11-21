@@ -170,7 +170,6 @@ export default function SlidesWorkspace({
             writeAddress({ file: file.id });
             refresh();
           }}
-          onNotify={onNotify}
         />
       </section>
     );

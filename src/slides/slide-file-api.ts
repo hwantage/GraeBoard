@@ -79,11 +79,17 @@ export const saveSlideFile = (
   baseRevision: number,
   bytes: Uint8Array<ArrayBuffer>,
   requestId: string,
+  rename?: { title: string; baseTitle: string },
 ) =>
   api<SlideFile>(`${base(teamId)}/${fileId}/content`, {
     method: "PUT",
     body: bytes,
-    headers: binary(null, requestId, baseRevision),
+    headers: {
+      ...binary(rename?.title ?? null, requestId, baseRevision),
+      ...(rename && {
+        "X-Slide-Base-Title": encodeURIComponent(rename.baseTitle),
+      }),
+    },
   });
 export async function readSlideFile(teamId: string, fileId: string) {
   const response = await api<Response>(`${base(teamId)}/${fileId}/content`);

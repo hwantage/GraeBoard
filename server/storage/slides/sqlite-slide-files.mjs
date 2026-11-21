@@ -366,6 +366,8 @@ export class SqliteSlideFileRepository {
     teamId,
     fileId,
     baseRevision,
+    title = null,
+    baseTitle = null,
     bytes,
     contentHash,
     requestId,
@@ -385,12 +387,15 @@ export class SqliteSlideFileRepository {
         .get(fileId, requestId);
       if (earlier)
         return { saved: true, file: replay(file, earlier, contentHash) };
-      if (file.revision !== baseRevision)
+      if (
+        file.revision !== baseRevision ||
+        (baseTitle !== null && file.title !== baseTitle)
+      )
         return { saved: false, file: meta(file) };
       const revision = file.revision + 1;
       db.prepare(
-        "UPDATE slide_files SET revision=?,byte_length=?,content_hash=?,updated_by=?,updated_at=? WHERE id=?",
-      ).run(revision, bytes.byteLength, contentHash, userId, at, fileId);
+        "UPDATE slide_files SET title=COALESCE(?,title),revision=?,byte_length=?,content_hash=?,updated_by=?,updated_at=? WHERE id=?",
+      ).run(title, revision, bytes.byteLength, contentHash, userId, at, fileId);
       db.prepare("INSERT INTO slide_file_revisions VALUES(?,?,?,?,?,?,?)").run(
         fileId,
         revision,

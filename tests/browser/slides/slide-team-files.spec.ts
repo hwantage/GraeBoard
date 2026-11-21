@@ -73,23 +73,25 @@ test.beforeEach(async ({ page }) => {
 });
 
 const editor = (page: Page) => page.frameLocator("iframe.slide-editor-frame");
-const dirtyTag = (page: Page) => page.locator("[data-slide-dirty]");
+const saveButton = (page: Page) =>
+  page.getByRole("button", { name: "저장 (Ctrl/Cmd+S)" });
+const idleSave = (page: Page) =>
+  saveButton(page).and(page.locator('[aria-busy="false"]'));
+const titleInput = (page: Page) =>
+  page.getByRole("textbox", { name: "자료 제목" });
 async function openTeamFile(page: Page, fileId: string) {
   await page.goto(`/slides?file=${fileId}`);
   await expect(editor(page).locator("[data-element-id]").first()).toBeVisible();
-  await expect(page.locator('[data-slide-target="team"]')).toHaveText(
-    "팀 자료",
-  );
-  await expect(dirtyTag(page)).toHaveText("저장됨");
+  await expect(idleSave(page)).toBeDisabled();
 }
 // A real edit through the editor's own canvas and keyboard handling.
-async function nudge(page: Page) {
+async function nudge(page: Page, canWrite = true) {
   // The editor's interaction layer sits above the drawn elements, as for a person's pointer.
   await editor(page)
     .getByText("Order received", { exact: true })
     .click({ force: true });
   await page.keyboard.press("ArrowRight");
-  await expect(dirtyTag(page)).toHaveText("저장 안 됨");
+  await expect(saveButton(page)).toBeEnabled({ enabled: canWrite });
 }
 async function saveShortcut(page: Page) {
   const mod = await page.evaluate(() =>
@@ -199,6 +201,9 @@ test("CanvaSlide 목록은 공통 제목줄과 원형 메뉴를 쓰고 화면 �
   const headingBox = (await heading.boundingBox())!;
   expect([headingBox.x, headingBox.y]).toEqual([annualBox.x, annualBox.y]);
   await expect(heading).toHaveCSS("font-size", titleFont);
+  await expect(page.getByRole("button", { name: "새 팀 자료" })).toHaveClass(
+    /\bprimary\b/,
+  );
   for (const button of [
     page.getByRole("button", { name: "새 팀 자료" }),
     page.getByRole("button", { name: /팀 자료로 가져오기/ }),
@@ -210,6 +215,57 @@ test("CanvaSlide 목록은 공통 제목줄과 원형 메뉴를 쓰고 화면 �
       name: /편집기만 열기|팀에 저장하지 않고 편집기 열기/,
     }),
   ).toHaveCount(0);
+});
+
+test("상세 제목을 고쳐 본문과 함께 저장하고 목록과 다시 연 파일에서 확인한다", async ({
+  page,
+}) => {
+  const file = await upload(
+    page.request,
+    teamId,
+    "상세 제목 원본",
+    example("flowchart.canvaslide"),
+  );
+  await openTeamFile(page, file.id);
+  const input = titleInput(page);
+  await expect(input).toHaveValue(file.title);
+  await expect(page.locator(".slide-editor-bar .tag")).toHaveCount(0);
+  for (const button of [
+    page.getByRole("button", { name: "팀 자료 목록" }),
+    saveButton(page),
+  ])
+    await expect(button).toHaveCSS("height", "26px");
+  await input.fill("회의 자료");
+  await expect(saveButton(page)).toBeEnabled();
+  await input.fill(file.title);
+  await expect(idleSave(page)).toBeDisabled();
+  const title = `분기 회의 ${randomUUID().slice(0, 8)}`;
+  await input.fill(title);
+  await saveButton(page).click();
+  await expect(idleSave(page)).toBeDisabled();
+  await expect(input).toHaveValue(title);
+  expect(await meta(page.request, teamId, file.id)).toMatchObject({
+    title,
+    revision: 2,
+  });
+  const bytes = await (await content(page.request, teamId, file.id)).body();
+  expect(JSON.parse(bytes.toString()).name).toBe(title);
+  await page.getByRole("button", { name: "팀 자료 목록" }).click();
+  await page.getByRole("button", { name: title, exact: true }).click();
+  await expect(input).toHaveValue(title);
+  await expect(idleSave(page)).toBeDisabled();
+  const editorTitle = editor(page).getByRole("textbox", {
+    name: /^(Document name|문서 이름)$/,
+  });
+  await editorTitle.fill("편집기에서 바꾼 이름");
+  await expect(input).toHaveValue("편집기에서 바꾼 이름");
+  await input.fill("상단에서 바로 저장");
+  await saveShortcut(page);
+  await expect
+    .poll(async () => (await meta(page.request, teamId, file.id)).title)
+    .toBe("상단에서 바로 저장");
+  await expect(idleSave(page)).toBeDisabled();
+  await expect(editorTitle).toHaveValue("상단에서 바로 저장");
 });
 
 test("팀 자료를 열어 편집하고 Ctrl/Cmd+S로 저장하면 다른 팀원이 같은 내용을 열고 내려받는다", async ({
@@ -236,7 +292,7 @@ test("팀 자료를 열어 편집하고 Ctrl/Cmd+S로 저장하면 다른 팀원
 
   await nudge(page);
   await saveShortcut(page);
-  await expect(dirtyTag(page)).toHaveText("저장됨");
+  await expect(idleSave(page)).toBeDisabled();
   const saved = await meta(page.request, teamId, fileId);
   expect(saved.revision).toBe(2);
 
@@ -284,13 +340,13 @@ test("저장이 실패하면 편집 내용이 미저장으로 남고 다시 저�
   });
   await saveShortcut(page);
   await expect(page.locator(".slide-editor .error-note")).toBeVisible();
-  await expect(dirtyTag(page)).toHaveText("저장 안 됨");
+  await expect(saveButton(page)).toBeEnabled();
   expect(failures).toBe(2);
   expect((await meta(page.request, teamId, file.id)).revision).toBe(1);
 
   await page.unroute("**/api/teams/*/slides/*/content");
   await page.getByRole("button", { name: "저장 (Ctrl/Cmd+S)" }).click();
-  await expect(dirtyTag(page)).toHaveText("저장됨");
+  await expect(idleSave(page)).toBeDisabled();
   await expect(page.locator(".slide-editor .error-note")).toHaveCount(0);
   expect((await meta(page.request, teamId, file.id)).revision).toBe(2);
 });
@@ -323,7 +379,7 @@ test("다른 팀원이 먼저 저장하면 두 내용을 모두 보존하고 사
   });
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "내 변경을 사본으로 저장" }).click();
-  await expect(dirtyTag(page)).toHaveText("저장됨");
+  await expect(idleSave(page)).toBeDisabled();
 
   // The team file still holds the other member's bytes; my edit is a new file.
   expect(
@@ -334,6 +390,18 @@ test("다른 팀원이 먼저 저장하면 두 내용을 모두 보존하고 사
   const copy = await meta(page.request, teamId, copyId);
   expect(copy.title).toBe("충돌 자료 (내 변경)");
   expect(copy.revision).toBe(1);
+  await expect(titleInput(page)).toHaveValue(copy.title);
+  await titleInput(page).fill(file.title);
+  await saveButton(page).click();
+  await expect(idleSave(page)).toBeDisabled();
+  expect(await meta(page.request, teamId, copyId)).toMatchObject({
+    title: file.title,
+    revision: 2,
+  });
+  expect(await meta(page.request, teamId, file.id)).toMatchObject({
+    title: file.title,
+    revision: 2,
+  });
 });
 
 test("새 자료는 첫 저장에서 팀 파일이 되고, 편집기의 새 문서는 팀 파일을 덮어쓰지 않는다", async ({
@@ -349,15 +417,13 @@ test("새 자료는 첫 저장에서 팀 파일이 되고, 편집기의 새 문�
   const prompt = page.getByRole("dialog", { name: "새 자료" });
   await prompt.getByRole("textbox").fill("분기 계획");
   await prompt.getByRole("button", { name: "만들기" }).click();
-  await expect(page.locator('[data-slide-target="team"]')).toHaveText(
-    "팀 자료 · 첫 저장 전",
-  );
+  await expect(titleInput(page)).toHaveValue("분기 계획");
+  await expect(saveButton(page)).toBeEnabled();
   await expect(editor(page).getByTestId("canvas-viewport")).toBeVisible();
   await editor(page).getByTestId("canvas-viewport").click();
   await saveShortcut(page);
-  await expect(page.locator('[data-slide-target="team"]')).toHaveText(
-    "팀 자료",
-  );
+  await expect(idleSave(page)).toBeDisabled();
+  await expect(page).toHaveURL(/file=/);
   const fileId = new URL(page.url()).searchParams.get("file")!;
   const created = await meta(page.request, teamId, fileId);
   expect(created).toMatchObject({ title: "분기 계획", revision: 1 });
@@ -372,7 +438,7 @@ test("새 자료는 첫 저장에서 팀 파일이 되고, 편집기의 새 문�
       writes++;
   });
   await editor(page).getByRole("button", { name: /^New/ }).click();
-  await expect(page.locator('[data-slide-target="device"]')).toBeVisible();
+  await expect(page.getByText("이 기기의 문서", { exact: true })).toBeVisible();
   const download = page.waitForEvent("download");
   await editor(page).getByTestId("canvas-viewport").click();
   await saveShortcut(page);
@@ -396,7 +462,7 @@ test("미저장 변경이 있으면 화면 이동 전에 묻고, 계속 편집�
   const dialog = page.getByRole("dialog", { name: "저장하지 않은 변경" });
   await dialog.getByRole("button", { name: "계속 편집" }).click();
   await expect(page).toHaveURL(/\/slides\?file=/);
-  await expect(dirtyTag(page)).toHaveText("저장 안 됨");
+  await expect(saveButton(page)).toBeEnabled();
 
   await page.getByRole("button", { name: "연간 업무", exact: true }).click();
   await dialog.getByRole("button", { name: "저장 후 이동" }).click();
@@ -431,12 +497,13 @@ test("열람자는 읽기만 하고, 팀 밖 사용자는 원본을 받을 수 �
   expect(refused.status()).toBe(403);
   const viewerPage = await viewer.newPage();
   await openTeamFile(viewerPage, file.id);
-  await nudge(viewerPage);
+  await expect(titleInput(viewerPage)).toHaveCount(0);
+  await nudge(viewerPage, false);
   await saveShortcut(viewerPage);
   await expect(viewerPage.locator(".slide-editor .error-note")).toContainText(
     "권한",
   );
-  await expect(dirtyTag(viewerPage)).toHaveText("저장 안 됨");
+  await expect(idleSave(viewerPage)).toBeDisabled();
   await viewer.close();
 
   const outsider = await peerSession(page, context, null);
@@ -455,7 +522,7 @@ async function selectAllAndNudge(page: Page) {
   await editor(page).getByTestId("canvas-viewport").click();
   await page.keyboard.press(`${mod}+a`);
   await page.keyboard.press("ArrowRight");
-  await expect(dirtyTag(page)).toHaveText("저장 안 됨");
+  await expect(saveButton(page)).toBeEnabled();
 }
 
 test("이미지가 든 대표 자료(5.9MB)를 저장하고 내려받아 독립 편집기에서 다시 연다", async ({
@@ -471,10 +538,10 @@ test("이미지가 든 대표 자료(5.9MB)를 저장하고 내려받아 독립 
   const file = await upload(page.request, teamId, "freefall", original);
   await page.goto(`/slides?file=${file.id}`);
   await expect(editor(page).locator("[data-element-id]").first()).toBeVisible();
-  await expect(dirtyTag(page)).toHaveText("저장됨");
+  await expect(idleSave(page)).toBeDisabled();
   await selectAllAndNudge(page);
   await saveShortcut(page);
-  await expect(dirtyTag(page)).toHaveText("저장됨", { timeout: 30000 });
+  await expect(idleSave(page)).toBeDisabled({ timeout: 30000 });
   const saved = await meta(page.request, teamId, file.id);
   expect(saved.revision).toBe(2);
   const stored = await (await content(page.request, teamId, file.id)).body();
@@ -643,11 +710,8 @@ test("복구본은 계정과 팀 범위로 나뉘어 다른 계정에는 보이�
   });
   await expect(offer).toBeVisible();
   await offer.getByRole("button", { name: "Restore" }).click();
-  await expect(admin.locator('[data-slide-target="team"]')).toHaveText(
-    "팀 자료",
-  );
-  await expect(dirtyTag(admin)).toHaveText("저장 안 됨");
+  await expect(saveButton(admin)).toBeEnabled();
   await saveShortcut(admin);
-  await expect(dirtyTag(admin)).toHaveText("저장됨");
+  await expect(idleSave(admin)).toBeDisabled();
   expect((await meta(admin.request, teamId, file.id)).revision).toBe(2);
 });

@@ -20,6 +20,7 @@ export const SLIDE_HOST_ACTIONS = Object.freeze([
 export const SLIDE_FRAME_ACTIONS = Object.freeze([
   "open",
   "new",
+  "rename",
   "save",
   "state",
   "discard",

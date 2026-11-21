@@ -36,9 +36,11 @@ export function installSlideFileRoutes(
       req.body.length,
     );
   };
-  const title = (req) => {
+  const title = (req, name = "X-Slide-Title") => {
+    const value = req.get(name);
+    if (value == null) return undefined;
     try {
-      return decodeURIComponent(req.get("X-Slide-Title") || "");
+      return decodeURIComponent(value);
     } catch {
       return "";
     }
@@ -103,6 +105,8 @@ export function installSlideFileRoutes(
     route(async (req, res) =>
       res.json(
         await service(req).save(req.params.teamId, req.params.fileId, {
+          title: title(req),
+          baseTitle: title(req, "X-Slide-Base-Title"),
           baseRevision: Number(req.get("X-Slide-Base-Revision")),
           bytes: body(req),
           requestId: req.get("X-Slide-Request-Id"),

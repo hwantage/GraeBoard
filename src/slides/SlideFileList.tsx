@@ -146,6 +146,7 @@ export default function SlideFileList({
               <span>파일 가져오기</span>
             </Button>
             <Button
+              className="primary"
               title="새 팀 자료"
               disabled={busy}
               onClick={() => setPrompt({ kind: "new" })}

@@ -626,6 +626,7 @@ small {
   flex-shrink: 0;
 }
 .heading-actions .button,
+.slide-editor-bar > .button,
 .slide-row-actions .button,
 .page-heading > .insights-toggle,
 .toolbar-add-task.button {

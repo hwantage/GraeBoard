@@ -50,9 +50,11 @@ export async function slideRoutes(ctx, path, method, body) {
     );
     return new Uint8Array(await ctx.request.arrayBuffer());
   };
-  const title = () => {
+  const title = (name = "x-slide-title") => {
+    const value = header(name);
+    if (value == null) return undefined;
     try {
-      return decodeURIComponent(header("x-slide-title") || "");
+      return decodeURIComponent(value);
     } catch {
       return "";
     }
@@ -106,6 +108,8 @@ export async function slideRoutes(ctx, path, method, body) {
     if (method === "PUT")
       return afterChange(
         service.save(teamId, id, {
+          title: title(),
+          baseTitle: title("x-slide-base-title"),
           baseRevision: Number(header("x-slide-base-revision")),
           bytes: await bytes(),
           requestId: header("x-slide-request-id"),

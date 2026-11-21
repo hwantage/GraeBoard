@@ -130,6 +130,22 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+input.slide-editor-title {
+  height: 26px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+}
+input.slide-editor-title:hover {
+  border-color: var(--line);
+}
+input.slide-editor-title:focus {
+  border-color: var(--accent);
+}
 .slide-editor-stage {
   position: relative;
   flex: 1;
