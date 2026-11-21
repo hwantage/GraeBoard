@@ -235,11 +235,14 @@ export async function checkSlideTarget({ adapter, teamId, backup }) {
 }
 
 export async function restoreSlides({ adapter, teamId, blobs, backup }) {
-  if ((await checkSlideTarget({ adapter, teamId, backup })) === "restored")
-    return;
+  const target = await checkSlideTarget({ adapter, teamId, backup });
   if (!blobs) throw new Error("Slide file store is required for this restore");
+  // Rows that already match say nothing about the bucket. Every object of the
+  // backup is compared with the target: a missing one is stored, an equal one
+  // is left as it is, and a different one refuses the restore.
   for (const [contentHash, bytes] of backup.blobs)
     await blobs.install(contentHash, bytes);
+  if (target === "restored") return;
   await adapter.transaction(
     async (tx) => {
       for (const [table, columns] of Object.entries(TABLES))

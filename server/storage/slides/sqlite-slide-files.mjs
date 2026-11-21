@@ -283,7 +283,8 @@ export class SqliteSlideFileRepository {
   }) {
     if (!this.get(teamId, fileId)) return null;
     this.#writeBlob(teamId, contentHash, bytes);
-    return this.#transaction((db) => {
+    let expired = [];
+    const result = this.#transaction((db) => {
       const file = this.#live(db, teamId, fileId);
       if (!file) return null;
       const earlier = db
@@ -308,15 +309,18 @@ export class SqliteSlideFileRepository {
         at,
         requestId,
       );
-      const expired = db
+      expired = db
         .prepare(
           "SELECT content_hash FROM slide_file_revisions WHERE file_id=? AND revision < ?",
         )
         .all(fileId, revision - SLIDE_KEPT_REVISIONS)
         .map((row) => row.content_hash);
-      this.#prune(db, teamId, expired);
       return { saved: true, file: meta(this.#live(db, teamId, fileId)) };
     });
+    // After the commit: a save that did not commit removes nothing. These
+    // calls are synchronous, so no other save runs between check and removal.
+    this.#prune(this.#open(), teamId, expired);
+    return result;
   }
   rename({ teamId, fileId, title, userId, at }) {
     return this.#transaction((db) => {

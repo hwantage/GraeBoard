@@ -273,6 +273,44 @@ test("같은 백업의 복원은 다시 실행해도 한 번만 반영된다", a
   );
 });
 
+test("행이 이미 복원돼 있어도 원본 객체를 확인해 빠진 것은 다시 넣고 다른 것은 거절한다", async (t) => {
+  const state = await source(t);
+  if (!state) return;
+  const backup = join(state.directory, "backup");
+  await state.backup(backup);
+  const target = await state.target("team_objects");
+  await restoreInto(state, backup, target);
+  const key = `slides/${state.teamId}/${sha(state.current)}.canvaslide`;
+
+  // The database kept the restored rows, but the bucket lost its objects
+  // (a replaced or emptied bucket). The same restore repairs it.
+  target.bucket.objects.clear();
+  await assert.rejects(target.repository.read(state.teamId, state.file.id));
+  await restoreInto(state, backup, target);
+  assert.equal(
+    Buffer.from(
+      (await target.repository.read(state.teamId, state.file.id)).bytes,
+    ).equals(state.current),
+    true,
+  );
+  assert.equal(target.bucket.objects.size, 3);
+
+  // An intact target is verified without being rewritten.
+  const puts = target.bucket.puts;
+  await restoreInto(state, backup, target);
+  assert.equal(target.bucket.puts, puts);
+
+  // An object that is not the backed-up content is never accepted or overwritten.
+  target.bucket.objects.set(key, new TextEncoder().encode("{}"));
+  await assert.rejects(restoreInto(state, backup, target), /mismatched/);
+  assert.equal(new TextDecoder().decode(target.bucket.objects.get(key)), "{}");
+  assert.equal(
+    (await restoreInto(state, backup, target, { dryRun: true })).verified,
+    true,
+    "a dry run does not read or write objects",
+  );
+});
+
 test("대상 슬라이드 저장소에 다른 자료가 있거나 저장소가 없으면 아무것도 바꾸지 않고 거절한다", async (t) => {
   const state = await source(t);
   if (!state) return;

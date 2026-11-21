@@ -435,6 +435,95 @@ test("외부 저장소는 보관 범위를 벗어난 내용만 R2에서 지우�
   assert.equal((await lead.bytes(teamId, file.id)).status, 500);
 });
 
+test("보관 범위를 벗어난 내용을 지우는 동안 같은 내용으로 만든 새 자료는 원본을 잃지 않는다", async (t) => {
+  const site = await externalSite(t);
+  if (!site) return;
+  const { pg, lead, bucket } = site;
+  await migrateSlideSchema(pg.pool);
+  const teamId = pg.teamId;
+  const reused = slide("다시 쓰일 내용");
+  const file = (await lead.upload(teamId, "자료", reused)).body;
+  for (let revision = 1; revision <= SLIDE_KEPT_REVISIONS; revision++)
+    assert.equal(
+      (await lead.save(teamId, file.id, revision, slide(`r${revision + 1}`)))
+        .status,
+      200,
+    );
+  const key = slideObjectKey(teamId, sha(reused));
+  assert.equal(bucket.objects.has(key), true);
+
+  // The physical delete of the expired content is held open, exactly where a
+  // slow object store would be, while the same bytes are saved as a new file.
+  const remove = bucket.delete.bind(bucket);
+  let started;
+  const reached = new Promise((resolve) => (started = resolve));
+  let release;
+  const gate = new Promise((resolve) => (release = resolve));
+  bucket.delete = async (target) => {
+    if (target === key) {
+      started();
+      await gate;
+    }
+    return remove(target);
+  };
+  const expiring = lead.save(
+    teamId,
+    file.id,
+    SLIDE_KEPT_REVISIONS + 1,
+    slide("만료시키는 저장"),
+  );
+  await reached;
+  const creating = lead.upload(teamId, "같은 내용의 새 자료", reused);
+  // Give the create every chance to finish before the delete does.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  release();
+  const [saved, created] = await Promise.all([expiring, creating]);
+  assert.equal(saved.status, 200, JSON.stringify(saved.body));
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const read = await lead.bytes(teamId, created.body.id);
+  assert.equal(read.status, 200, "the new file's original is still stored");
+  assert.equal(read.bytes.equals(reused), true);
+
+  // The same holds when the content comes back as a new revision.
+  bucket.delete = remove;
+  const other = (await lead.upload(teamId, "다른 자료", slide("처음"))).body;
+  let again;
+  const reachedAgain = new Promise((resolve) => (again = resolve));
+  let releaseAgain;
+  const gateAgain = new Promise((resolve) => (releaseAgain = resolve));
+  const firstKey = slideObjectKey(teamId, sha(slide("처음")));
+  for (let revision = 1; revision <= SLIDE_KEPT_REVISIONS; revision++)
+    await lead.save(teamId, other.id, revision, slide(`o${revision + 1}`));
+  bucket.delete = async (target) => {
+    if (target === firstKey) {
+      again();
+      await gateAgain;
+    }
+    return remove(target);
+  };
+  const expiringAgain = lead.save(
+    teamId,
+    other.id,
+    SLIDE_KEPT_REVISIONS + 1,
+    slide("만료시키는 저장 2"),
+  );
+  await reachedAgain;
+  const reverting = lead.save(
+    teamId,
+    file.id,
+    SLIDE_KEPT_REVISIONS + 2,
+    slide("처음"),
+  );
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  releaseAgain();
+  const [, reverted] = await Promise.all([expiringAgain, reverting]);
+  assert.equal(reverted.status, 200, JSON.stringify(reverted.body));
+  assert.equal(
+    (await lead.bytes(teamId, file.id)).bytes.equals(slide("처음")),
+    true,
+  );
+});
+
 test("슬라이드 도입 전 릴리스의 외부 코드는 슬라이드 스키마가 있는 DB에서 업무를 그대로 읽고 쓴다", async (t) => {
   const site = await externalSite(t);
   if (!site) return;

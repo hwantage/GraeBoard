@@ -42,8 +42,9 @@ const replay = (file, revision, contentHash) => {
 };
 
 // Slide files of the external site: metadata in the graeboard_slides schema of
-// the team database and immutable bytes in the team's R2 bucket. No database
-// transaction stays open while an R2 request is awaited.
+// the team database and immutable bytes in the team's R2 bucket. Bytes are
+// uploaded before the transaction; inside it only an existence check and, when
+// a concurrent delete won, one repeated upload touch R2.
 export class PostgresSlideFileRepository {
   constructor({ pool, bucket, teamId }) {
     this.pool = pool;
@@ -122,23 +123,30 @@ export class PostgresSlideFileRepository {
       )
     ).rows[0];
   }
-  // Removes bytes no kept revision of any file of the team refers to. Runs
-  // after the commit; a failure leaves an unreferenced object, never a
-  // referenced one missing.
+  // Reusing stored content and deleting it are serialized by the team lock.
+  // A save checks, while it holds the lock, that the object its new row will
+  // refer to is still there, and stores it again when a delete got there
+  // first; a delete happens only while holding the same lock, after no kept
+  // revision refers to the content. Whichever comes second sees the other.
+  async #ensureBlob(contentHash, bytes) {
+    if (!(await this.blobs.has(contentHash)))
+      await this.blobs.write(contentHash, bytes);
+  }
+  // Removes bytes no kept revision of any file of the team refers to. A
+  // failure or a restart leaves an unreferenced object, never a referenced
+  // one missing.
   async #prune(hashes) {
-    for (const hash of new Set(hashes)) {
-      const kept = await this.#read(
-        async (client) =>
-          (
-            await client.query(
-              `SELECT 1 FROM ${S}.slide_file_revisions r JOIN ${S}.slide_files f ON f.id=r.file_id
-               WHERE f.team_id=$1 AND r.content_hash=$2 AND r.revision >= f.revision-$3 LIMIT 1`,
-              [this.teamId, hash, SLIDE_KEPT_REVISIONS],
-            )
-          ).rowCount,
-      );
-      if (!kept) await this.blobs.remove(hash).catch(() => {});
-    }
+    for (const hash of new Set(hashes))
+      await this.#transaction(async (client) => {
+        const kept = (
+          await client.query(
+            `SELECT 1 FROM ${S}.slide_file_revisions r JOIN ${S}.slide_files f ON f.id=r.file_id
+             WHERE f.team_id=$1 AND r.content_hash=$2 AND r.revision >= f.revision-$3 LIMIT 1`,
+            [this.teamId, hash, SLIDE_KEPT_REVISIONS],
+          )
+        ).rowCount;
+        if (!kept) await this.blobs.remove(hash);
+      }).catch(() => {});
   }
   async list(teamId) {
     this.#team(teamId);
@@ -202,6 +210,7 @@ export class PostgresSlideFileRepository {
       // Two attempts of one request can both pass the first check.
       const raced = await this.#created(client, requestId, contentHash);
       if (raced) return raced;
+      await this.#ensureBlob(contentHash, bytes);
       await client.query(
         `INSERT INTO ${S}.slide_files
          (id,team_id,title,revision,byte_length,content_hash,created_by,created_at,updated_by,updated_at,create_request_id)
@@ -250,6 +259,7 @@ export class PostgresSlideFileRepository {
         return { saved: true, file: replay(file, earlier, contentHash) };
       if (file.revision !== baseRevision)
         return { saved: false, file: meta(file) };
+      await this.#ensureBlob(contentHash, bytes);
       const revision = file.revision + 1;
       await client.query(
         `UPDATE ${S}.slide_files SET revision=$1,byte_length=$2,content_hash=$3,updated_by=$4,updated_at=$5 WHERE id=$6`,
