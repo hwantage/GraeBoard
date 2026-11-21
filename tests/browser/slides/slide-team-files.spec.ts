@@ -135,6 +135,10 @@ test("빈 팀 자료 목록에 CanvaSlide 가오리를 표시한다", async ({ p
   );
   await page.goto("/slides");
   const empty = page.getByRole("region", { name: "팀 자료 목록" });
+  await empty.getByRole("button", { name: "목록형 보기" }).click();
+  await expect(
+    empty.getByRole("button", { name: "목록형 보기" }),
+  ).toHaveAttribute("aria-pressed", "true");
   await expect(empty.getByText("아직 팀 자료가 없습니다")).toBeVisible();
   const ray = empty.locator(".empty img");
   await expect(ray).toHaveAttribute("src", /canvaslide-ray/);
@@ -143,6 +147,83 @@ test("빈 팀 자료 목록에 CanvaSlide 가오리를 표시한다", async ({ p
   await expect(
     empty.getByText("팀원이 자료를 저장하면 여기에 표시됩니다."),
   ).toBeVisible();
+});
+
+test("카드형과 목록형을 전환하고 상세에서 돌아오거나 다시 접속해도 보기 방식을 유지한다", async ({
+  page,
+}) => {
+  const bytes = example("flowchart.canvaslide");
+  const first = await upload(
+    page.request,
+    teamId,
+    `분기별 팀 발표 ${"긴 제목 ".repeat(15)}${randomUUID().slice(0, 8)}`,
+    bytes,
+  );
+  const latest = await upload(
+    page.request,
+    teamId,
+    `최신 발표 ${randomUUID().slice(0, 8)}`,
+    bytes,
+  );
+  await page.goto("/slides");
+  const toggle = page.getByRole("group", { name: "자료 보기 방식" });
+  const cards = toggle.getByRole("button", { name: "카드형 보기" });
+  const list = toggle.getByRole("button", { name: "목록형 보기" });
+  await expect(cards).toHaveAttribute("aria-pressed", "true");
+  const create = page.getByRole("button", { name: "새 팀 자료" });
+  const table = page.getByRole("table", { name: "팀 자료" });
+  await list.click();
+  await expect(list).toHaveAttribute("aria-pressed", "true");
+  await expect(cards).toHaveAttribute("aria-pressed", "false");
+  await expect(table.getByRole("columnheader")).toHaveText([
+    "제목",
+    "생성일",
+    "수정일",
+    "크기",
+  ]);
+  const rows = table.locator("tbody tr");
+  await expect(rows.nth(0).getByRole("button")).toHaveText(latest.title);
+  const row = rows.nth(1);
+  await expect(row.getByRole("button")).toHaveText(first.title);
+  await expect(row.locator("time").first()).toHaveAttribute(
+    "datetime",
+    first.createdAt,
+  );
+  await expect(row.locator("time").last()).toHaveAttribute(
+    "datetime",
+    first.updatedAt,
+  );
+  await expect(row.getByRole("cell").last()).toHaveText(
+    `${Math.round(bytes.length / 1024)}KB`,
+  );
+  await expect(row.getByRole("img", { name: "새 자료" })).toBeVisible();
+  for (const width of [320, 390, 768]) {
+    await page.setViewportSize({ width, height: 800 });
+    const a = (await create.boundingBox())!;
+    const b = (await toggle.boundingBox())!;
+    expect(b.x).toBeGreaterThanOrEqual(a.x + a.width);
+    expect(Math.abs(b.y + b.height / 2 - (a.y + a.height / 2))).toBeLessThan(2);
+    await expect(
+      table.locator("time").first().locator("span:visible"),
+    ).toHaveCount(1);
+    expect(
+      await table.evaluate(
+        (el) =>
+          el.getBoundingClientRect().right <= innerWidth &&
+          el.scrollWidth <= el.clientWidth + 1,
+      ),
+    ).toBe(true);
+  }
+  await row.getByRole("button").focus();
+  await page.keyboard.press("Enter");
+  await expect(titleInput(page)).toHaveValue(first.title);
+  await page.getByRole("button", { name: "팀 자료 목록" }).click();
+  await expect(row.getByRole("button")).toHaveText(first.title);
+  await page.reload();
+  await expect(table).toBeVisible();
+  await cards.click();
+  await expect(fileCard(page, first.title)).toBeVisible();
+  await expect(table).toHaveCount(0);
 });
 
 test("CanvaSlide 제목 옆에서 새 자료를 만들고 카드의 두 줄 제목과 썸네일 바깥 툴팁을 표시한다", async ({

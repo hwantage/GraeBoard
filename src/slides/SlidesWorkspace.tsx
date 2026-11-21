@@ -26,7 +26,7 @@ import SlideEditorFrame, {
 } from "./SlideEditorFrame";
 import { SlideThumbnails } from "./slide-thumbnails";
 import SlideFileActions from "./SlideFileActions";
-import SlideFileList from "./SlideFileList";
+import SlideFileList, { type SlideListView } from "./SlideFileList";
 import "./slides.css";
 
 export type SlidesWorkspaceHandle = {
@@ -74,6 +74,22 @@ export default function SlidesWorkspace({
   const [list, setList] = useState<SlideFiles | null>(null);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
+  const viewKey = `graeboard:slides:view:${user.id}`;
+  const [view, setView] = useState<SlideListView>(() => {
+    try {
+      return localStorage.getItem(viewKey) === "table" ? "table" : "cards";
+    } catch {
+      return "cards";
+    }
+  });
+  function changeView(next: SlideListView) {
+    setView(next);
+    try {
+      localStorage.setItem(viewKey, next);
+    } catch {
+      // The current view still works when browser storage is unavailable.
+    }
+  }
   const [start, setStart] = useState<SlideEditorStart | null>(() => {
     const { team, share, file } = readAddress();
     if (team && team !== teamId) return null;
@@ -237,7 +253,7 @@ export default function SlidesWorkspace({
       <ErrorNote error={error} />
       {!editor && (
         <p className="slide-notice" role="status">
-          이 서버에 CanvaSlide 편집기 배포본이 설치되지 않았습니다. 카드를 열어
+          이 서버에 CanvaSlide 편집기 배포본이 설치되지 않았습니다. 자료를 열어
           저장된 파일을 내려받을 수 있습니다.
         </p>
       )}
@@ -245,6 +261,8 @@ export default function SlidesWorkspace({
         thumbnails={thumbnails}
         teamId={teamId}
         files={list.files}
+        view={view}
+        onViewChange={changeView}
         canWrite={list.canWrite && !!editor}
         onOpen={(file) => open({ kind: "file", fileId: file.id })}
         onNew={openNew}

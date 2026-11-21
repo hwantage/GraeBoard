@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { Plus, Upload } from "lucide-react";
+import { LayoutGrid, List, Plus, Upload } from "lucide-react";
 import ray from "../../assets/character/canvaslide-ray-384.png";
 import { showTouchTooltip } from "../ui/Tooltip";
 import { useRecentCreation } from "../sheet/NewTaskMark";
@@ -28,10 +28,18 @@ const dateTime = new Intl.DateTimeFormat("ko-KR", {
   timeStyle: "short",
   hour12: false,
 });
+const date = new Intl.DateTimeFormat("ko-KR", {
+  timeZone: "Asia/Seoul",
+  dateStyle: "short",
+});
+
+export type SlideListView = "cards" | "table";
 
 export default function SlideFileList({
   teamId,
   files,
+  view,
+  onViewChange,
   thumbnails,
   canWrite,
   onOpen,
@@ -42,6 +50,8 @@ export default function SlideFileList({
 }: {
   teamId: string;
   files: SlideFile[];
+  view: SlideListView;
+  onViewChange: (view: SlideListView) => void;
   thumbnails: SlideThumbnails | null;
   canWrite: boolean;
   onOpen: (file: SlideFile) => void;
@@ -98,6 +108,28 @@ export default function SlideFileList({
               </Button>
             </div>
           )}
+          <div
+            className="heading-actions slide-view-switch"
+            role="group"
+            aria-label="자료 보기 방식"
+          >
+            <Button
+              title="카드형 보기"
+              active={view === "cards"}
+              aria-pressed={view === "cards"}
+              onClick={() => onViewChange("cards")}
+            >
+              <LayoutGrid size={15} aria-hidden="true" />
+            </Button>
+            <Button
+              title="목록형 보기"
+              active={view === "table"}
+              aria-pressed={view === "table"}
+              onClick={() => onViewChange("table")}
+            >
+              <List size={15} aria-hidden="true" />
+            </Button>
+          </div>
         </div>
         {canWrite && (
           <div className="heading-actions">
@@ -137,6 +169,42 @@ export default function SlideFileList({
                 : "팀원이 자료를 저장하면 여기에 표시됩니다."
             }
           />
+        ) : view === "table" ? (
+          <table className="settings-table slide-table" aria-label="팀 자료">
+            <thead>
+              <tr>
+                <th scope="col">제목</th>
+                <th scope="col">생성일</th>
+                <th scope="col">수정일</th>
+                <th scope="col">크기</th>
+              </tr>
+            </thead>
+            <tbody>
+              {files.map((file) => (
+                <tr key={file.id}>
+                  <td>
+                    <div className="slide-table-title">
+                      <button
+                        type="button"
+                        data-tooltip={file.title}
+                        onClick={() => onOpen(file)}
+                      >
+                        {file.title}
+                      </button>
+                      <SlideNewMark createdAt={file.createdAt} />
+                    </div>
+                  </td>
+                  <td>
+                    <SlideDate value={file.createdAt} />
+                  </td>
+                  <td>
+                    <SlideDate value={file.updatedAt} />
+                  </td>
+                  <td>{size(file.byteLength)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         ) : (
           <ul className="slide-card-grid" aria-label="팀 자료">
             {files.map((file) => (
@@ -178,10 +246,21 @@ export default function SlideFileList({
   );
 }
 
+function SlideDate({ value }: { value: string }) {
+  const stamp = new Date(value);
+  const full = dateTime.format(stamp);
+  return (
+    <time dateTime={value} title={full}>
+      <span className="slide-date-time">{full}</span>
+      <span className="slide-date-short">{date.format(stamp)}</span>
+    </time>
+  );
+}
+
 function SlideNewMark({ createdAt }: { createdAt: string }) {
   const isNew = useRecentCreation(createdAt);
   return isNew ? (
-    <span className="slide-card-new" role="img" aria-label="새 자료">
+    <span className="slide-new-mark" role="img" aria-label="새 자료">
       NEW
     </span>
   ) : null;
