@@ -6,7 +6,7 @@ import {
   useState,
   type Ref,
 } from "react";
-import { ArrowLeft, Copy, FilePlus2, Save } from "lucide-react";
+import { ArrowLeft, Copy, Save } from "lucide-react";
 import SlideFileActions from "./SlideFileActions";
 import SlideTitleDialog from "./SlideTitleDialog";
 import { ApiError } from "../platform/api";
@@ -566,16 +566,6 @@ export default function SlideEditorFrame({
           </strong>
         )}
         <div className="heading-actions">
-          {canWrite && (
-            <Button
-              title="새 팀 자료"
-              disabled={busy}
-              onClick={() => void newFile()}
-            >
-              <FilePlus2 size={15} />
-              <span>새 자료</span>
-            </Button>
-          )}
           <Button
             title="저장 (Ctrl/Cmd+S)"
             aria-busy={!ready || saving || writingTeamFile}

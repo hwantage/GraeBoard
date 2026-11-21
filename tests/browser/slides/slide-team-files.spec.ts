@@ -377,9 +377,9 @@ test("첫 프레임 사진을 썸네일에 그리고 다음 열람자는 원본�
   const slot = (await card(page)
     .locator(".slide-card-thumbnail")
     .boundingBox())!;
-  expect(picture.height).toBeLessThanOrEqual(slot.height);
-  expect(picture.width).toBeLessThanOrEqual(slot.width);
-  await expect(img).toHaveCSS("object-fit", "contain");
+  expect(picture).toEqual(slot);
+  await expect(img).toHaveCSS("object-fit", "cover");
+  await expect(img).toHaveCSS("object-position", "50% 50%");
   const pixels = await img.evaluate(async (el: HTMLImageElement) => {
     await el.decode();
     const canvas = document.createElement("canvas");
@@ -725,7 +725,7 @@ test("새 자료는 이름 없이 편집하고 첫 저장 때만 팀 파일을 �
         exact: true,
       }),
     ).toBeVisible();
-    await expect(newButton).toBeInViewport();
+    await expect(newButton).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "다른 이름으로 저장" }),
     ).toBeInViewport();
@@ -741,6 +741,7 @@ test("새 자료는 이름 없이 편집하고 첫 저장 때만 팀 파일을 �
       editor(page).getByRole("button", { name: /^Undo/ }),
     ).toBeVisible();
   }
+  await listButton.click();
   await newButton.click();
   await expect(titleInput(page)).toHaveValue("");
   await expect(saveButton(page)).toBeDisabled();
