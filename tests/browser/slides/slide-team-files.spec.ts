@@ -886,11 +886,26 @@ test("상세에서 사본을 삭제할 때 취소와 실패는 편집을 유지�
   ).toBeVisible();
   await expect(remove.locator("svg.lucide-trash-2")).toBeVisible();
   const confirm = page.getByRole("dialog", { name: "자료 삭제" });
-  for (const width of [320, 768]) {
+  const bar = page.locator(".slide-editor-bar");
+  const buttons = bar.getByRole("button");
+  await expect(buttons).toHaveCount(5);
+  for (const width of [320, 390, 600, 768]) {
     await page.setViewportSize({ width, height: 800 });
-    await expect(remove).toBeInViewport();
-    const box = (await remove.boundingBox())!;
-    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    await expect(bar.locator("button > span:visible")).toHaveCount(
+      width <= 600 ? 0 : 5,
+    );
+    await expect(bar.locator("button > svg:visible")).toHaveCount(5);
+    const title = (await titleInput(page).boundingBox())!;
+    expect(title.width).toBeGreaterThan(70);
+    for (const button of await buttons.all()) {
+      await expect(button).toHaveAccessibleName(/\S/);
+      const box = (await button.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+      expect(
+        Math.abs(box.y + box.height / 2 - (title.y + title.height / 2)),
+      ).toBeLessThan(1);
+    }
   }
   await remove.click();
   await expect(confirm).toContainText(copyName);
@@ -957,10 +972,14 @@ test("편집기 배포본이 없는 서버에서도 자료 상세에서 저장�
   await page.route("**/tools/canvaslide/current.json", (r) =>
     r.fulfill({ status: 404 }),
   );
+  await page.setViewportSize({ width: 320, height: 800 });
   await page.goto("/slides");
   await fileCard(page, file.title).getByRole("button").click();
   await expect(page).toHaveURL(new RegExp(file.id));
   await expect(page.locator("iframe.slide-editor-frame")).toHaveCount(0);
+  const back = page.getByRole("button", { name: "팀 자료 목록" });
+  await expect(back.locator("svg")).toBeVisible();
+  await expect(back.locator("span")).toBeHidden();
   const exported = page.waitForEvent("download");
   await page
     .getByRole("button", { name: "서버에 저장된 파일 내려받기" })

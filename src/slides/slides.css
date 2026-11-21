@@ -166,13 +166,19 @@ input.slide-editor-title:focus {
 }
 @media (max-width: 600px) {
   .slide-editor-bar {
-    flex-wrap: wrap;
     gap: 6px;
+    padding: 6px 8px;
   }
-  .slide-editor-bar .heading-actions {
-    flex-basis: 100%;
-    flex-wrap: wrap;
-    justify-content: flex-end;
+  .slide-editor-bar > .button,
+  .slide-editor-bar > .heading-actions > .button {
+    flex: none;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+  }
+  .slide-editor-bar > .button > span,
+  .slide-editor-bar > .heading-actions > .button > span {
+    display: none;
   }
 }
 .slide-editor-stage {
