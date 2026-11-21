@@ -1,6 +1,12 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
+const touchTooltipEvent = "graeboard-tooltip-hold";
+
+export function showTouchTooltip(element: HTMLElement) {
+  element.dispatchEvent(new Event(touchTooltipEvent, { bubbles: true }));
+}
+
 // One delegated tooltip for period controls, formatting toolbars and dialog help.
 export default function Tooltip() {
   const [target, setTarget] = useState<HTMLElement | null>(null);
@@ -9,6 +15,7 @@ export default function Tooltip() {
   const id = useId();
   const text = target?.dataset.tooltip;
   useEffect(() => {
+    let held: HTMLElement | null = null;
     const find = (node: EventTarget | null) =>
       node instanceof Element
         ? node.closest<HTMLElement>("[data-tooltip]")
@@ -20,16 +27,29 @@ export default function Tooltip() {
       )
         return;
       const next = find(event.target);
+      held = event.type === touchTooltipEvent ? next : null;
       setTarget(next?.dataset.tooltip ? next : null);
     };
     const leave = (event: Event) => {
+      // Lifting the finger after a long press also emits pointerout.
+      if (
+        held &&
+        event instanceof PointerEvent &&
+        event.pointerType === "touch" &&
+        find(event.target) === held
+      )
+        return;
       const next = find((event as FocusEvent).relatedTarget);
       setTarget(next?.dataset.tooltip ? next : null);
     };
-    const hide = () => setTarget(null);
+    const hide = () => {
+      held = null;
+      setTarget(null);
+    };
     const key = (event: KeyboardEvent) => {
       if (event.key === "Escape") hide();
     };
+    document.addEventListener(touchTooltipEvent, show, true);
     document.addEventListener("pointerover", show, true);
     document.addEventListener("pointerout", leave, true);
     document.addEventListener("focusin", show, true);
@@ -40,6 +60,7 @@ export default function Tooltip() {
     window.addEventListener("resize", hide);
     window.addEventListener("blur", hide);
     return () => {
+      document.removeEventListener(touchTooltipEvent, show, true);
       document.removeEventListener("pointerover", show, true);
       document.removeEventListener("pointerout", leave, true);
       document.removeEventListener("focusin", show, true);

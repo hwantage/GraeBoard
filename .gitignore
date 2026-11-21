@@ -52,3 +52,6 @@ docs/주간업무일지_관리시스템_RFP_v1.0.docx
 *.log
 .DS_Store
 .codebase-memory/
+
+# Assembled CanvaSlide editor builds (npm run build:canvaslide)
+dist-canvaslide/

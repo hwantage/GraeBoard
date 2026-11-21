@@ -6,6 +6,10 @@ import {
 } from "../shared/sync/sync-error-message.js";
 import { syncSetupKeyStatus } from "./control/setup-keys.mjs";
 import { deploymentSite } from "../shared/site/site-mode.js";
+import {
+  APP_POLICY,
+  slideEditorAssetResponse,
+} from "../shared/slides/slide-editor-policy.js";
 import { pack, unpack } from "../shared/formatting/compact.js";
 import { assertOrigin, verifyAccess, assert } from "./control/access.mjs";
 import {
@@ -24,6 +28,7 @@ import {
   browserRoutes,
 } from "./sheet-clones/sheet-clones.mjs";
 import { calendarRoutes } from "./calendar/calendar.mjs";
+import { slideRoutes } from "./slides/slide-files.mjs";
 import { transferRoutes } from "./transfer/transfer.mjs";
 import { recoveryRoutes } from "./sync/recovery.mjs";
 import { profileSwitchRoutes } from "./sync/profile-switch.mjs";
@@ -173,13 +178,14 @@ export function createWorker({
         if (!url.pathname.startsWith("/api/")) {
           assert(env.ASSETS, 503, "정적 화면을 빌드하세요.");
           const response = await env.ASSETS.fetch(original);
+          const editor = slideEditorAssetResponse(url.pathname, response, {
+            shared: false,
+          });
+          if (editor) return editor;
           const headers = new Headers(response.headers);
           headers.set("X-Content-Type-Options", "nosniff");
           headers.set("X-Frame-Options", "DENY");
-          headers.set(
-            "Content-Security-Policy",
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'",
-          );
+          headers.set("Content-Security-Policy", APP_POLICY);
           return new Response(response.body, {
             status: response.status,
             headers,
@@ -301,6 +307,7 @@ export function createWorker({
           filterRoutes,
           browserRoutes,
           calendarRoutes,
+          slideRoutes,
           transferRoutes,
         ];
         for (const route of routes) {

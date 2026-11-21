@@ -32,6 +32,7 @@ const syncDatabase = (env, profile) =>
 import { profiles, profileFor } from "../../shared/sync/sync-profiles.js";
 import { assert } from "../control/access.mjs";
 import { refreshDirectory } from "./directory.mjs";
+import { syncTeamSlides } from "./sync-slides.mjs";
 import { isExcluded } from "../../server/sync/core/retention.mjs";
 
 export const excluded = isExcluded;
@@ -399,6 +400,18 @@ export async function scheduled(env) {
         error.status || "sync",
       );
     }
+    // Slide files use their own branch and state; a failure on either side
+    // does not stop the other.
+    if (team.status === "active")
+      try {
+        await syncTeamSlides(env, profileFor(env, team.profile_id, team.id));
+      } catch (error) {
+        console.error(
+          "GraeBoard scheduled slide synchronization failed",
+          team.id,
+          error.status || "slides",
+        );
+      }
   }
 }
 export async function importTeam(ctx, body) {

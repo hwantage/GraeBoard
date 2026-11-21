@@ -40,6 +40,14 @@
       "reason": "Development, validation, operations and deployment CLIs; scripts/admin"
     },
     {
+      "path": "scripts/canvaslide",
+      "reason": "Assembles the pinned CanvaSlide web editor with GraeBoard's build adapter"
+    },
+    {
+      "path": "scripts/canvaslide/frame",
+      "reason": "GraeBoard modules bundled into the CanvaSlide editor frame by the build adapter"
+    },
+    {
       "path": "scripts/deploy",
       "reason": "Development, validation, operations and deployment CLIs; scripts/deploy"
     },
@@ -112,6 +120,10 @@
       "reason": "Internal Node host, business services and synchronization; server/sheet-clones"
     },
     {
+      "path": "server/slides",
+      "reason": "Internal Node slide file routes and assembled editor static serving"
+    },
+    {
       "path": "server/storage",
       "reason": "Internal Node host, business services and synchronization; server/storage"
     },
@@ -138,6 +150,10 @@
     {
       "path": "server/storage/sheet-clones",
       "reason": "Internal Node host, business services and synchronization; server/storage/sheet-clones"
+    },
+    {
+      "path": "server/storage/slides",
+      "reason": "Team slide file service and repositories shared with the external API"
     },
     {
       "path": "server/storage/tasks",
@@ -200,6 +216,10 @@
       "reason": "Shared domain contracts with per-module runtime restrictions; shared/site"
     },
     {
+      "path": "shared/slides",
+      "reason": "Slide file rules and editor frame protocol shared by browser, frame and servers"
+    },
+    {
       "path": "shared/storage",
       "reason": "Shared domain contracts with per-module runtime restrictions; shared/storage"
     },
@@ -250,6 +270,10 @@
     {
       "path": "src/sheet",
       "reason": "Browser UI and shared browser infrastructure; src/sheet"
+    },
+    {
+      "path": "src/slides",
+      "reason": "Slides screen: team file list, editor frame and its save/leave flows"
     },
     {
       "path": "src/sync",
@@ -308,6 +332,10 @@
       "reason": "Automated regressions and isolated fixtures; tests/browser/sheet-clones"
     },
     {
+      "path": "tests/browser/slides",
+      "reason": "Cross-engine team slide file flows through the assembled CanvaSlide editor"
+    },
+    {
       "path": "tests/browser/support",
       "reason": "Automated regressions and isolated fixtures; tests/browser/support"
     },
@@ -350,6 +378,10 @@
     {
       "path": "tests/site",
       "reason": "Automated regressions and isolated fixtures; tests/site"
+    },
+    {
+      "path": "tests/slides",
+      "reason": "Team slide file service, routes and editor build adapter contracts"
     },
     {
       "path": "tests/support",
@@ -412,6 +444,10 @@
       "reason": "External API, PostgreSQL repositories and gateway adapters; worker/sheet-clones"
     },
     {
+      "path": "worker/slides",
+      "reason": "External slide file routes over the shared slide service"
+    },
+    {
       "path": "worker/storage",
       "reason": "External API, PostgreSQL repositories and gateway adapters; worker/storage"
     },
@@ -442,6 +478,10 @@
     {
       "path": "worker/storage/sheet-clones",
       "reason": "External API, PostgreSQL repositories and gateway adapters; worker/storage/sheet-clones"
+    },
+    {
+      "path": "worker/storage/slides",
+      "reason": "PostgreSQL slide file repository and R2 slide bytes"
     },
     {
       "path": "worker/storage/tasks",
