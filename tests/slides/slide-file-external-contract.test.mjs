@@ -13,6 +13,7 @@ import {
   slideSchemaMigrations,
 } from "../../server/migrations/postgres-slides.mjs";
 import { SLIDE_KEPT_REVISIONS } from "../../worker/storage/slides/postgres-slide-files.mjs";
+import { slideRoutes } from "../../worker/slides/slide-files.mjs";
 import { slideObjectKey } from "../../worker/storage/slides/r2-slide-blobs.mjs";
 import { postgresHistoryVersion } from "../../shared/storage/postgres-schema-version.js";
 import { SLIDE_SCHEMA_CHECKSUMS } from "../../shared/slides/slide-store-version.js";
@@ -160,6 +161,54 @@ const createTask = (client, teamId, title) =>
     method: "POST",
     json: { teamId, year: 2026, fields: { title } },
   });
+
+test("외부 요청은 자료가 저장된 뒤에만 동기화를 예약한다", async (t) => {
+  const site = await externalSite(t);
+  if (!site) return;
+  const { pg, bucket } = site;
+  await migrateSlideSchema(pg.pool);
+  await pg.pool.query(
+    "UPDATE graeboard.team_sync_links SET mode='paused' WHERE team_id=$1",
+    [pg.teamId],
+  );
+  const path = `/teams/${pg.teamId}/slides`;
+  const scheduled = [];
+  const request = async (contentType) => {
+    const ctx = pg.makeContext(
+      pg.user,
+      new Request("https://example.test/api" + path, {
+        method: "POST",
+        headers: {
+          "content-type": contentType,
+          "x-slide-request-id": randomUUID(),
+          "x-slide-title": "sample",
+        },
+        body: slide("sample"),
+      }),
+    );
+    ctx.execution = {
+      waitUntil(promise) {
+        scheduled.push({
+          promise,
+          blobs: bucket.objects.size,
+          visible: pg.pool.query(
+            "SELECT revision FROM graeboard_slides.slide_files WHERE team_id=$1",
+            [pg.teamId],
+          ),
+        });
+      },
+    };
+    return slideRoutes(ctx, path, "POST", {});
+  };
+  const created = await request("application/octet-stream");
+  assert.equal(created.status, 201);
+  await Promise.all(scheduled.map(({ promise }) => promise));
+  assert.equal(scheduled.length, 1);
+  assert.equal(scheduled[0].blobs, 1);
+  assert.deepEqual((await scheduled[0].visible).rows, [{ revision: 1 }]);
+  await assert.rejects(request("text/plain"), (error) => error.status === 415);
+  assert.equal(scheduled.length, 1);
+});
 
 test("슬라이드 스키마가 없으면 업무는 그대로 동작하고 슬라이드 요청만 거절한다", async (t) => {
   const site = await externalSite(t);

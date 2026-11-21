@@ -24,13 +24,14 @@ export async function slideRoutes(ctx, path, method, body) {
   // Team membership and the active team are checked before the store opens.
   const team = await ctx.team(teamId);
   const profile = await ctx.profile(team.id);
-  // A stored change is offered to the other site after the response.
-  if (method !== "GET" && kind === "slides" && profile.repository)
-    ctx.execution?.waitUntil(
-      Promise.resolve()
-        .then(() => syncTeamSlides(ctx.env, profile))
-        .catch(() => {}),
-    );
+  const afterChange = async (write) => {
+    const result = await write;
+    if (profile.repository)
+      ctx.execution?.waitUntil(
+        syncTeamSlides(ctx.env, profile).catch(() => {}),
+      );
+    return result;
+  };
   const service = new SlideFileService(
     new PostgresSlideFileRepository({
       pool: databaseFor(ctx.env, profile).pool,
@@ -78,11 +79,13 @@ export async function slideRoutes(ctx, path, method, body) {
     if (method === "GET") return service.list(teamId);
     if (method === "POST")
       return created(
-        await service.create(teamId, {
-          title: title(),
-          bytes: await bytes(),
-          requestId: header("x-slide-request-id"),
-        }),
+        await afterChange(
+          service.create(teamId, {
+            title: title(),
+            bytes: await bytes(),
+            requestId: header("x-slide-request-id"),
+          }),
+        ),
       );
     return undefined;
   }
@@ -101,25 +104,30 @@ export async function slideRoutes(ctx, path, method, body) {
       });
     }
     if (method === "PUT")
-      return service.save(teamId, id, {
-        baseRevision: Number(header("x-slide-base-revision")),
-        bytes: await bytes(),
-        requestId: header("x-slide-request-id"),
-      });
+      return afterChange(
+        service.save(teamId, id, {
+          baseRevision: Number(header("x-slide-base-revision")),
+          bytes: await bytes(),
+          requestId: header("x-slide-request-id"),
+        }),
+      );
     return undefined;
   }
   if (action === "copy" && method === "POST")
     return created(
-      await service.copy(teamId, id, {
-        title: body.title,
-        requestId: body.requestId,
-      }),
+      await afterChange(
+        service.copy(teamId, id, {
+          title: body.title,
+          requestId: body.requestId,
+        }),
+      ),
     );
   if (action) return undefined;
   if (method === "GET") return service.get(teamId, id);
-  if (method === "PATCH") return service.rename(teamId, id, body.title);
+  if (method === "PATCH")
+    return afterChange(service.rename(teamId, id, body.title));
   if (method === "DELETE") {
-    await service.remove(teamId, id);
+    await afterChange(service.remove(teamId, id));
     return {};
   }
   return undefined;
