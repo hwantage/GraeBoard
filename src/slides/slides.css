@@ -34,66 +34,39 @@
 }
 .slide-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 172px), 1fr));
   align-content: start;
-  gap: 12px;
+  gap: 8px;
   margin: 0;
-  padding: 12px;
+  padding: 8px;
   list-style: none;
 }
+@media (max-width: 520px) {
+  .slide-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 .slide-file-card {
+  --slide-caption-height: 30px;
   position: relative;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) var(--slide-caption-height);
   min-width: 0;
-  padding: 14px 16px 10px;
+  height: 136px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 6px;
   background: var(--surface, #fff);
 }
-.slide-file-card:has(.slide-open:is(:hover, :focus-visible)) {
+.slide-file-card:has(.slide-card-info) {
   border-color: var(--accent);
-}
-.slide-new-card {
-  display: flex;
-  min-height: 214px;
-}
-.slide-new-card > button {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 9px;
-  border: 1px dashed var(--accent-border);
-  border-radius: 8px;
-  background: var(--accent-surface);
-  color: var(--accent-strong);
-  font-weight: 700;
-  cursor: pointer;
-}
-.slide-new-card > button:is(:hover, :focus-visible) {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-.slide-new-icon {
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  background: var(--accent-strong);
-  color: #fff;
 }
 .slide-card-thumbnail {
   display: grid;
   grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
-  height: 132px;
-  margin: -14px -16px 10px;
-  border-radius: 7px 7px 0 0;
-  border-bottom: 1px solid var(--line);
   overflow: hidden;
+  border-bottom: 1px solid var(--line);
+  border-radius: 5px 5px 0 0;
   background: var(--accent-surface);
   color: var(--accent-muted);
 }
@@ -104,20 +77,27 @@
   object-fit: contain;
 }
 .slide-card-heading {
-  line-height: 1.4;
-  overflow-wrap: anywhere;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 8px;
 }
 .slide-open {
+  min-width: 0;
+  overflow: hidden;
   padding: 0;
   border: 0;
   background: none;
   color: inherit;
   font: inherit;
-  font-weight: 700;
+  font-weight: 600;
   text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   cursor: pointer;
-  overflow-wrap: anywhere;
-  max-width: 100%;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 .slide-open::after {
   position: absolute;
@@ -126,41 +106,44 @@
   content: "";
 }
 .slide-card-heading .task-new-mark {
-  margin-inline-start: 5px;
-  vertical-align: super;
+  flex: none;
+}
+.slide-card-info {
+  position: absolute;
+  inset: 0 0 var(--slide-caption-height);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-radius: 5px 5px 0 0;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface, #fff) 94%, transparent);
+  pointer-events: none;
 }
 .slide-card-details {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 4px 12px;
-  margin: 10px 0 12px;
-  font-size: 12px;
+  gap: 2px 6px;
+  margin: 0;
+  font-size: 11px;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
 }
-.slide-card-details dt,
-.slide-card-size {
+.slide-card-details dt {
   color: var(--muted);
 }
 .slide-card-details dd {
   margin: 0;
-  overflow-wrap: anywhere;
 }
-.slide-card-footer,
 .slide-card-actions {
   display: flex;
-  align-items: center;
-  flex-wrap: wrap;
+  align-self: flex-end;
+  gap: 3px;
 }
-.slide-card-footer {
-  justify-content: space-between;
-  gap: 6px;
-  margin-top: auto;
-  padding-top: 8px;
-  border-top: 1px solid var(--line);
-  font-size: 12px;
-}
-.slide-card-actions {
-  position: relative;
-  gap: 4px;
+.slide-file-card .slide-card-actions .button {
+  width: 26px;
+  padding-inline: 0;
+  pointer-events: auto;
 }
 .slide-form label {
   display: grid;

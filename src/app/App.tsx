@@ -2386,7 +2386,6 @@ function Workspace({
             ref={slidesRef}
             teamId={teamId}
             user={user}
-            people={boot.users}
             teams={boot.teams}
             onSelectTeam={(id) => void navigateWorkspace(() => setTeamId(id))}
             onNotify={(message) => {

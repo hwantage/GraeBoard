@@ -1,8 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Copy, Download, Plus, Pencil, Trash2, Upload } from "lucide-react";
 import { saveFile } from "../platform/api";
 import { useRecentCreation } from "../sheet/NewTaskMark";
-import type { User } from "../types";
+import { useTouchPress } from "../ui/useTouchPress";
 import { Button } from "../ui/Button";
 import SlideCardThumbnail from "./SlideCardThumbnail";
 import type { SlideThumbnails } from "./slide-thumbnails";
@@ -34,19 +34,18 @@ const size = (bytes: number) =>
   bytes >= 1024 * 1024
     ? `${(bytes / 1024 / 1024).toFixed(1)}MB`
     : `${Math.max(1, Math.round(bytes / 1024))}KB`;
-const time = (value: string) =>
-  new Date(value).toLocaleString("ko-KR", {
-    timeZone: "Asia/Seoul",
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+const dateTime = new Intl.DateTimeFormat("ko-KR", {
+  timeZone: "Asia/Seoul",
+  dateStyle: "short",
+  timeStyle: "short",
+  hour12: false,
+});
 
 export default function SlideFileList({
   teamId,
   files,
   thumbnails,
   canWrite,
-  people,
   onOpen,
   onNew,
   onChanged,
@@ -57,7 +56,6 @@ export default function SlideFileList({
   files: SlideFile[];
   thumbnails: SlideThumbnails | null;
   canWrite: boolean;
-  people: User[];
   onOpen: (file: SlideFile) => void;
   onNew: () => void;
   onChanged: () => void;
@@ -67,8 +65,30 @@ export default function SlideFileList({
   const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [busy, setBusy] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
-  const name = (id: string) =>
-    people.find((person) => person.id === id)?.name || "알 수 없음";
+  const touch = useTouchPress();
+  const [inspected, setInspected] = useState<string | null>(null);
+  const inspectedCard = useRef<HTMLLIElement>(null);
+
+  useEffect(() => {
+    if (!inspected) return;
+    const outside = (event: PointerEvent) => {
+      if (!inspectedCard.current?.contains(event.target as Node))
+        setInspected(null);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      const card = inspectedCard.current;
+      if (card?.contains(document.activeElement))
+        card.querySelector<HTMLButtonElement>(".slide-open")?.focus();
+      setInspected(null);
+    };
+    document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("keydown", escape);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [inspected]);
 
   async function run(work: () => Promise<unknown>, done: string) {
     if (busy) return;
@@ -120,6 +140,19 @@ export default function SlideFileList({
       <header className="page-heading slide-list-heading">
         <div className="heading-line">
           <h1>CanvaSlide</h1>
+          {canWrite && (
+            <div className="heading-actions">
+              <Button
+                className="primary"
+                title="새 팀 자료"
+                disabled={busy}
+                onClick={onNew}
+              >
+                <Plus size={15} />
+                <span>새 자료</span>
+              </Button>
+            </div>
+          )}
         </div>
         {canWrite && (
           <div className="heading-actions">
@@ -147,30 +180,44 @@ export default function SlideFileList({
         )}
       </header>
       <div className="board slides-board slide-list-body">
-        {files.length === 0 && !canWrite ? (
+        {files.length === 0 ? (
           <Empty
             title="아직 팀 자료가 없습니다"
-            description="팀원이 자료를 저장하면 여기에 표시됩니다."
+            description={
+              canWrite
+                ? "새 자료를 만들거나 이 기기의 CanvaSlide 파일을 가져오세요."
+                : "팀원이 자료를 저장하면 여기에 표시됩니다."
+            }
           />
         ) : (
           <ul className="slide-card-grid" aria-label="팀 자료">
-            {canWrite && (
-              <li className="slide-new-card">
-                <button
-                  type="button"
-                  aria-label="새 팀 자료"
-                  disabled={busy}
-                  onClick={onNew}
-                >
-                  <span className="slide-new-icon">
-                    <Plus aria-hidden="true" size={24} />
-                  </span>
-                  새 자료
-                </button>
-              </li>
-            )}
             {files.map((file) => (
-              <li key={file.id} className="slide-file-card">
+              <li
+                key={file.id}
+                className="slide-file-card"
+                ref={inspected === file.id ? inspectedCard : undefined}
+                onPointerEnter={(event) => {
+                  if (event.pointerType !== "touch") setInspected(file.id);
+                }}
+                onPointerLeave={(event) => {
+                  if (
+                    event.pointerType !== "touch" &&
+                    !event.currentTarget.querySelector(":focus-visible")
+                  )
+                    setInspected((id) => (id === file.id ? null : id));
+                }}
+                onFocus={(event) => {
+                  if (event.target.matches(":focus-visible"))
+                    setInspected(file.id);
+                }}
+                onBlur={(event) => {
+                  if (
+                    !event.currentTarget.contains(event.relatedTarget) &&
+                    !event.currentTarget.matches(":hover")
+                  )
+                    setInspected((id) => (id === file.id ? null : id));
+                }}
+              >
                 <SlideCardThumbnail
                   key={file.contentHash}
                   file={file}
@@ -181,63 +228,76 @@ export default function SlideFileList({
                   <button
                     type="button"
                     className="slide-open"
+                    title={file.title}
+                    onPointerDown={(event) =>
+                      touch.start(event, {
+                        onLongPress: () => setInspected(file.id),
+                      })
+                    }
+                    onClickCapture={touch.onClickCapture}
+                    onContextMenu={(event) => {
+                      if (touch.isTouch.current) event.preventDefault();
+                    }}
                     onClick={() => onOpen(file)}
                   >
                     {file.title}
                   </button>
-                  <SlideNewMark createdAt={file.createdAt} />
+                  {inspected === file.id && (
+                    <SlideNewMark createdAt={file.createdAt} />
+                  )}
                 </div>
-                <dl className="slide-card-details">
-                  <dt>생성 일시</dt>
-                  <dd>
-                    <time dateTime={file.createdAt}>
-                      {time(file.createdAt)}
-                    </time>
-                  </dd>
-                  <dt>마지막 저장</dt>
-                  <dd>
-                    <time dateTime={file.updatedAt}>
-                      {time(file.updatedAt)}
-                    </time>
-                  </dd>
-                  <dt>저장한 사람</dt>
-                  <dd>{name(file.updatedBy)}</dd>
-                </dl>
-                <div className="slide-card-footer">
-                  <span className="slide-card-size">
-                    {size(file.byteLength)}
-                  </span>
-                  <div className="slide-card-actions">
-                    <Button
-                      tooltip="내려받기"
-                      onClick={() => void download(file)}
-                    >
-                      <Download size={15} />
-                    </Button>
-                    {canWrite && (
-                      <>
-                        <Button
-                          tooltip="이름 변경"
-                          onClick={() => setPrompt({ kind: "rename", file })}
-                        >
-                          <Pencil size={15} />
-                        </Button>
-                        <Button
-                          tooltip="사본 만들기"
-                          onClick={() => setPrompt({ kind: "copy", file })}
-                        >
-                          <Copy size={15} />
-                        </Button>
-                        <Button
-                          tooltip="삭제"
-                          onClick={() => setPrompt({ kind: "delete", file })}
-                        >
-                          <Trash2 size={15} />
-                        </Button>
-                      </>
-                    )}
+                {inspected === file.id && (
+                  <div className="slide-card-info">
+                    <dl className="slide-card-details">
+                      <dt>생성</dt>
+                      <dd>
+                        <time dateTime={file.createdAt}>
+                          {dateTime.format(new Date(file.createdAt))}
+                        </time>
+                      </dd>
+                      <dt>수정</dt>
+                      <dd>
+                        <time dateTime={file.updatedAt}>
+                          {dateTime.format(new Date(file.updatedAt))}
+                        </time>
+                      </dd>
+                      <dt>크기</dt>
+                      <dd className="slide-card-size">
+                        {size(file.byteLength)}
+                      </dd>
+                    </dl>
+                    <div className="slide-card-actions">
+                      <Button
+                        tooltip="내려받기"
+                        onClick={() => void download(file)}
+                      >
+                        <Download size={15} />
+                      </Button>
+                      {canWrite && (
+                        <>
+                          <Button
+                            tooltip="이름 변경"
+                            onClick={() => setPrompt({ kind: "rename", file })}
+                          >
+                            <Pencil size={15} />
+                          </Button>
+                          <Button
+                            tooltip="사본 만들기"
+                            onClick={() => setPrompt({ kind: "copy", file })}
+                          >
+                            <Copy size={15} />
+                          </Button>
+                          <Button
+                            tooltip="삭제"
+                            onClick={() => setPrompt({ kind: "delete", file })}
+                          >
+                            <Trash2 size={15} />
+                          </Button>
+                        </>
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
               </li>
             ))}
           </ul>
