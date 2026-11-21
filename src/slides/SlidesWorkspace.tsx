@@ -183,12 +183,6 @@ export default function SlidesWorkspace({
           내려받기만 사용할 수 있습니다.
         </p>
       )}
-      {!list.durable && (
-        <p className="slide-notice" role="status">
-          이 서버는 슬라이드 자료를 임시 메모리에 보관합니다. 서버를 다시
-          시작하면 자료가 사라지므로 필요한 자료는 내려받아 두세요.
-        </p>
-      )}
       <SlideFileList
         teamId={teamId}
         files={list.files}

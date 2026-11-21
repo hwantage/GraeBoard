@@ -28,6 +28,9 @@ export function installHttpBoundary(app) {
           fontSrc: ["'self'"],
           imgSrc: ["'self'", "data:"],
           connectSrc: ["'self'"],
+          // The slide editor runs in a same-origin frame. Firefox and WebKit
+          // treat a file it downloads from a blob URL as a frame navigation.
+          frameSrc: ["'self'", "blob:"],
           frameAncestors: ["'none'"],
           upgradeInsecureRequests: null,
         },

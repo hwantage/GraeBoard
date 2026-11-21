@@ -15,8 +15,6 @@ export type SlideFile = {
 export type SlideFileList = {
   files: SlideFile[];
   canWrite: boolean;
-  // False while the server keeps files in memory only.
-  durable: boolean;
 };
 export type SlideEditorBuild = {
   buildId: string;

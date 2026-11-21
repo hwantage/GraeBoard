@@ -57,11 +57,7 @@ export class SlideFileService {
   }
   async list(teamId) {
     const canWrite = await this.#read(teamId);
-    return {
-      files: await this.repository.list(teamId),
-      canWrite,
-      durable: this.repository.durable === true,
-    };
+    return { files: await this.repository.list(teamId), canWrite };
   }
   async get(teamId, fileId) {
     await this.#read(teamId);

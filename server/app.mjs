@@ -33,7 +33,7 @@ import {
 import { installCalendarRoutes } from "./calendar/calendar.mjs";
 import { installSlideFileRoutes } from "./slides/slide-file-routes.mjs";
 import { installSlideEditorStatic } from "./slides/slide-editor-static.mjs";
-import { MemorySlideFileRepository } from "./storage/slides/memory-slide-files.mjs";
+import { SqliteSlideFileRepository } from "./storage/slides/sqlite-slide-files.mjs";
 import { installDocumentBrowserRoutes } from "./documents/document-browser.mjs";
 
 import { installFilterRoutes } from "./sheet/filters.mjs";
@@ -62,13 +62,16 @@ export function createApp({
   cellEventOptions,
   syncOptions = {},
   documentImagesDir = documentImagesDirectory(),
-  slideFileRepository = new MemorySlideFileRepository(),
+  slideFilesDir,
   slideEditorDir,
 } = {}) {
   const site = deploymentSite(process.env, "internal");
   db ??= openDatabase();
   const app = express();
   installRetentionContext(app);
+  const slideFileRepository = new SqliteSlideFileRepository({
+    directory: slideFilesDir,
+  });
   const cachedTasks = createTaskCache(db);
   const cellEvents = createCellEvents(db, cellEventOptions);
   app.locals.db = db;
@@ -121,6 +124,7 @@ export function createApp({
     cachedTasks,
     syncProfiles: () => sync.profiles,
     removeTeamSyncLog: (teamId) => sync.log.removeTeam(teamId),
+    removeTeamSlideFiles: (teamId) => slideFileRepository.removeTeam(teamId),
   });
   app.locals.controlRepository = controlsRepository;
   const sync = createNodeSync({

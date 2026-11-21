@@ -69,6 +69,7 @@ async function shutdown() {
   await Promise.all([closed, app.locals.sync.close()]);
   clearTimeout(deadline);
   app.locals.db.close();
+  app.locals.slideFileRepository.close();
   process.exit(0);
 }
 for (const signal of ["SIGINT", "SIGTERM"])

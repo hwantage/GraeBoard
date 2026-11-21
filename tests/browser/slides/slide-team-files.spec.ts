@@ -127,17 +127,19 @@ test("팀 자료를 열어 편집하고 Ctrl/Cmd+S로 저장하면 다른 팀원
   context,
 }) => {
   const original = example("flowchart.canvaslide");
+  // The test server keeps files across browser projects.
+  const title = `주간회의 ${randomUUID().slice(0, 8)}`;
   await page.goto("/slides");
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: /팀 자료로 가져오기/ }).click();
   await (
     await chooser
   ).setFiles({
-    name: "주간회의.canvaslide",
+    name: `${title}.canvaslide`,
     mimeType: "application/json",
     buffer: original,
   });
-  await page.getByRole("button", { name: "주간회의", exact: true }).click();
+  await page.getByRole("button", { name: title, exact: true }).click();
   await expect(editor(page).locator("[data-element-id]").first()).toBeVisible();
   const fileId = new URL(page.url()).searchParams.get("file")!;
   expect((await meta(page.request, teamId, fileId)).revision).toBe(1);
@@ -354,4 +356,212 @@ test("열람자는 읽기만 하고, 팀 밖 사용자는 원본을 받을 수 �
   ).toBe(403);
   await outsider.close();
   expect((await meta(page.request, teamId, file.id)).revision).toBe(1);
+});
+
+async function selectAllAndNudge(page: Page) {
+  const mod = await page.evaluate(() =>
+    /Mac/.test(navigator.userAgent) ? "Meta" : "Control",
+  );
+  await editor(page).getByTestId("canvas-viewport").click();
+  await page.keyboard.press(`${mod}+a`);
+  await page.keyboard.press("ArrowRight");
+  await expect(dirtyTag(page)).toHaveText("저장 안 됨");
+}
+
+test("이미지가 든 대표 자료(5.9MB)를 저장하고 내려받아 독립 편집기에서 다시 연다", async ({
+  page,
+}) => {
+  test.setTimeout(90000);
+  await page.addInitScript(() => {
+    delete (window as any).showSaveFilePicker;
+    delete (window as any).showOpenFilePicker;
+  });
+  const original = example("freefall.canvaslide");
+  expect(original.byteLength).toBeGreaterThan(5 * 1024 * 1024);
+  const file = await upload(page.request, teamId, "freefall", original);
+  await page.goto(`/slides?file=${file.id}`);
+  await expect(editor(page).locator("[data-element-id]").first()).toBeVisible();
+  await expect(dirtyTag(page)).toHaveText("저장됨");
+  await selectAllAndNudge(page);
+  await saveShortcut(page);
+  await expect(dirtyTag(page)).toHaveText("저장됨", { timeout: 30000 });
+  const saved = await meta(page.request, teamId, file.id);
+  expect(saved.revision).toBe(2);
+  const stored = await (await content(page.request, teamId, file.id)).body();
+  expect(stored.byteLength).toBe(saved.byteLength);
+
+  // The downloaded file opens in the editor running on its own, outside GraeBoard's frame.
+  await page.goto(`/tools/canvaslide/${current.buildId}/`);
+  await expect(page).toHaveTitle(/ — CanvaSlide$/);
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: /^Open/ }).click();
+  await (
+    await chooser
+  ).setFiles({
+    name: "freefall.canvaslide",
+    mimeType: "application/json",
+    buffer: stored,
+  });
+  await expect(page.locator("[data-element-id]").first()).toBeVisible();
+  await expect(page).toHaveTitle("freefall — CanvaSlide");
+});
+
+test("공유는 그래보드의 임시 스냅샷으로 만들어지고 팀원만 연다", async ({
+  page,
+  context,
+  browserName,
+}) => {
+  if (browserName === "chromium")
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const file = await upload(
+    page.request,
+    teamId,
+    "공유 자료",
+    example("flowchart.canvaslide"),
+  );
+  const foreign: string[] = [];
+  const origin = new URL(test.info().project.use.baseURL!).origin;
+  page.on("request", (request) => {
+    if (new URL(request.url()).origin !== origin) foreign.push(request.url());
+  });
+  await openTeamFile(page, file.id);
+  const created = page.waitForResponse(
+    (response) =>
+      response.url().includes("/slide-shares") &&
+      response.request().method() === "POST",
+  );
+  await editor(page)
+    .getByRole("button", { name: "Share", exact: true })
+    .click();
+  await editor(page)
+    .getByRole("dialog")
+    .getByRole("button", { name: /copy/i })
+    .first()
+    .click();
+  expect((await created).status()).toBe(201);
+  const link = await editor(page).locator("#cloud-share-url").inputValue();
+  const url = new URL(link);
+  expect(url.origin).toBe(origin);
+  expect(url.pathname).toBe("/slides");
+  expect(url.searchParams.get("team")).toBe(teamId);
+  // The team file never went to another origin.
+  expect(foreign).toEqual([]);
+  // Sharing is a snapshot: the team original keeps its revision.
+  expect((await meta(page.request, teamId, file.id)).revision).toBe(1);
+
+  const member = await peerSession(page, context, "viewer");
+  const memberPage = await member.newPage();
+  await memberPage.goto(url.pathname + url.search);
+  await expect(
+    editor(memberPage).getByTestId("presentation-stage"),
+  ).toBeVisible();
+  await expect(
+    editor(memberPage).getByText("Order received").first(),
+  ).toBeVisible();
+  await member.close();
+
+  const outsider = await peerSession(page, context, null);
+  expect(
+    (
+      await outsider.request.get(
+        `/api/teams/${teamId}/slide-shares/${url.searchParams.get("share")}`,
+      )
+    ).status(),
+  ).toBe(403);
+  await outsider.close();
+});
+
+test("복구본은 계정과 팀 범위로 나뉘어 다른 계정에는 보이지 않는다", async ({
+  page,
+  context,
+}) => {
+  test.setTimeout(90000);
+  const user = (await json(await page.request.get("/api/bootstrap"))).user;
+  const file = await upload(
+    page.request,
+    teamId,
+    "복구 자료",
+    example("flowchart.canvaslide"),
+  );
+  await openTeamFile(page, file.id);
+  await nudge(page);
+  const frame = page.frame({ url: /\/tools\/canvaslide\// })!;
+  const scope = `canvaslide-recovery.${user.id}.${teamId}`;
+  // The editor writes its recovery copy after edits settle.
+  await expect
+    .poll(
+      () =>
+        frame.evaluate(
+          (name) =>
+            new Promise<number>((resolve) => {
+              const open = indexedDB.open(name);
+              open.onerror = () => resolve(-1);
+              open.onsuccess = () => {
+                const db = open.result;
+                if (!db.objectStoreNames.contains("snapshots")) {
+                  db.close();
+                  return resolve(0);
+                }
+                const count = db
+                  .transaction("snapshots")
+                  .objectStore("snapshots")
+                  .count();
+                count.onsuccess = () => {
+                  db.close();
+                  resolve(count.result);
+                };
+              };
+            }),
+          scope,
+        ),
+      { timeout: 45000 },
+    )
+    .toBe(1);
+  await page.close();
+
+  // Another account on the same browser profile gets no offer for that work.
+  const peerName = `slides-${randomUUID()}@example.com`;
+  const admin = await context.newPage();
+  expect(
+    (
+      await admin.request.post("/api/admin/users", {
+        headers,
+        data: {
+          username: peerName,
+          password: "local-peer-password",
+          name: "같은 브라우저의 다른 계정",
+          memberships: [{ teamId, role: "member" }],
+        },
+      })
+    ).ok(),
+  ).toBe(true);
+  await login(admin.request, peerName, "local-peer-password");
+  await admin.goto("/slides");
+  await admin
+    .getByRole("button", { name: "팀에 저장하지 않고 편집기 열기" })
+    .click();
+  await expect(editor(admin).getByTestId("canvas-viewport")).toBeVisible();
+  await admin.waitForTimeout(1500);
+  await expect(
+    editor(admin).getByRole("dialog", { name: "Recover unsaved work" }),
+  ).toHaveCount(0);
+
+  // The author gets it back, still bound to the team file and its revision.
+  await login(admin.request, "test@somansa.com", "1234");
+  await admin.goto("/slides");
+  await admin
+    .getByRole("button", { name: "팀에 저장하지 않고 편집기 열기" })
+    .click();
+  const offer = editor(admin).getByRole("dialog", {
+    name: "Recover unsaved work",
+  });
+  await expect(offer).toBeVisible();
+  await offer.getByRole("button", { name: "Restore" }).click();
+  await expect(admin.locator('[data-slide-target="team"]')).toHaveText(
+    "팀 자료",
+  );
+  await expect(dirtyTag(admin)).toHaveText("저장 안 됨");
+  await saveShortcut(admin);
+  await expect(dirtyTag(admin)).toHaveText("저장됨");
+  expect((await meta(admin.request, teamId, file.id)).revision).toBe(2);
 });
