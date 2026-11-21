@@ -1,7 +1,20 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { postgresBusinessFixture } from "../support/business-storage-fixture.mjs";
 import { githubEmulator } from "../support/worker-github-fixture.mjs";
-import { slideSyncContract } from "../support/slide-sync-fixture.mjs";
+import {
+  sha,
+  slide,
+  slideSyncContract,
+} from "../support/slide-sync-fixture.mjs";
+import { SLIDE_BRANCH } from "../../server/sync/core/slide-file-branch.mjs";
+import { syncTeamSlides } from "../../worker/sync/sync-slides.mjs";
+import { MAX_SLIDE_FILE_BYTES } from "../../shared/slides/slide-file-rules.js";
 import { migrateSlideSchema } from "../../server/migrations/postgres-slides.mjs";
 import { GitHubApiTransport } from "../../server/sync/core/github-api.mjs";
 import { SqliteSlideFileRepository } from "../../server/storage/slides/sqlite-slide-files.mjs";
@@ -57,3 +70,85 @@ slideSyncContract(
     };
   },
 );
+
+test("외부 서버의 예약 실행은 연결이 활성일 때만, 한 번에 조각 4개까지 옮긴다", async (t) => {
+  const pg = await postgresBusinessFixture(t);
+  if (!pg) return;
+  const directory = mkdtempSync(join(tmpdir(), "slide-sync-edge-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const remote = join(directory, "remote.git");
+  execFileSync("git", ["init", "--bare", "-q", remote]);
+  const bucket = memoryBucket();
+  pg.env.BUCKET = bucket;
+  const profile = JSON.parse(pg.env.SYNC_PROFILES)[0];
+  const transport = () =>
+    new GitHubApiTransport({
+      repository: "fixture/team",
+      token: "fixture-secret",
+      fetch: githubEmulator(remote).fetch,
+    });
+  const mode = (value) =>
+    pg.pool.query("UPDATE graeboard.team_sync_links SET mode=$1", [value]);
+  const repository = new PostgresSlideFileRepository({
+    pool: pg.pool,
+    bucket,
+    teamId: pg.teamId,
+  });
+  const large = slide("large", MAX_SLIDE_FILE_BYTES);
+
+  // No slide store yet: nothing to do, and nothing fails.
+  await mode("active");
+  assert.equal(
+    await syncTeamSlides(pg.env, profile, { transport: transport() }),
+    null,
+  );
+  await migrateSlideSchema(pg.pool);
+  await repository.create({
+    id: randomUUID(),
+    teamId: pg.teamId,
+    title: "큰 자료",
+    bytes: large,
+    contentHash: sha(large),
+    requestId: randomUUID(),
+    userId: pg.user.id,
+    at: new Date().toISOString(),
+  });
+  await mode("paused");
+  assert.equal(
+    await syncTeamSlides(pg.env, profile, { transport: transport() }),
+    null,
+  );
+  assert.throws(() =>
+    execFileSync("git", ["-C", remote, "rev-parse", "--verify", SLIDE_BRANCH], {
+      stdio: "pipe",
+    }),
+  );
+
+  await mode("active");
+  const chunks = () =>
+    execFileSync("git", [
+      "-C",
+      remote,
+      "ls-tree",
+      "-r",
+      "--name-only",
+      SLIDE_BRANCH,
+    ])
+      .toString()
+      .split("\n")
+      .filter((path) => path.startsWith("chunks/")).length;
+  const first = await syncTeamSlides(pg.env, profile, {
+    transport: transport(),
+  });
+  assert.deepEqual([first.pending, first.published, chunks()], [1, 0, 4]);
+  const second = await syncTeamSlides(pg.env, profile, {
+    transport: transport(),
+  });
+  assert.deepEqual([second.pending, second.published, chunks()], [0, 1, 7]);
+  // The task link was only read.
+  assert.equal(
+    (await pg.pool.query("SELECT mode FROM graeboard.team_sync_links")).rows[0]
+      .mode,
+    "active",
+  );
+});

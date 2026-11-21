@@ -1,6 +1,7 @@
 import { SlideFileService } from "../../server/storage/slides/slide-file-service.mjs";
 import { PostgresSlideFileRepository } from "../storage/slides/postgres-slide-files.mjs";
 import { databaseFor } from "../storage/data.mjs";
+import { syncTeamSlides } from "../sync/sync-slides.mjs";
 import { slideDownloadName } from "../../shared/slides/slide-file-rules.js";
 import { assert } from "../control/access.mjs";
 
@@ -23,6 +24,13 @@ export async function slideRoutes(ctx, path, method, body) {
   // Team membership and the active team are checked before the store opens.
   const team = await ctx.team(teamId);
   const profile = await ctx.profile(team.id);
+  // A stored change is offered to the other site after the response.
+  if (method !== "GET" && kind === "slides" && profile.repository)
+    ctx.execution?.waitUntil(
+      Promise.resolve()
+        .then(() => syncTeamSlides(ctx.env, profile))
+        .catch(() => {}),
+    );
   const service = new SlideFileService(
     new PostgresSlideFileRepository({
       pool: databaseFor(ctx.env, profile).pool,

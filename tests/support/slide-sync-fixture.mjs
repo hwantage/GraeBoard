@@ -303,6 +303,22 @@ export function slideSyncContract(name, makeStores) {
       ].sort(),
     );
 
+    // Renamed differently on both sides: the name published first is kept.
+    await inside.rename(renamed.id, "사내가 붙인 이름");
+    await outside.rename(renamed.id, "외부가 붙인 이름");
+    assert.equal((await inside.sync()).published, 1);
+    await settle(outside, inside);
+    assert.deepEqual(await inside.list(), await outside.list());
+    assert.equal(
+      (await outside.store.get(teamId, renamed.id)).title,
+      "사내가 붙인 이름",
+    );
+    assert.equal(
+      (await inside.list()).length,
+      2,
+      "a rename never makes a copy",
+    );
+
     // Edited inside, deleted outside, and this time the delete is published first.
     await inside.save(kept.id, slide("사내의 수정"));
     await outside.remove(kept.id);

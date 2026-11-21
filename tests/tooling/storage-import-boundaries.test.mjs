@@ -26,6 +26,9 @@ const portableSync = new Set(
     "setup-keys",
     "branch-publication",
     "maintenance",
+    // Slide file branch: transports and store are passed in; no file, SQLite
+    // or process dependency of its own.
+    "slide-file-branch",
   ].map((name) => `server/sync/core/${name}.mjs`),
 );
 function files(directory) {

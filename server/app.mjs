@@ -33,6 +33,7 @@ import {
 import { installCalendarRoutes } from "./calendar/calendar.mjs";
 import { installSlideFileRoutes } from "./slides/slide-file-routes.mjs";
 import { installSlideEditorStatic } from "./slides/slide-editor-static.mjs";
+import { createSlideFileSync } from "./slides/slide-file-sync.mjs";
 import { SqliteSlideFileRepository } from "./storage/slides/sqlite-slide-files.mjs";
 import { installDocumentBrowserRoutes } from "./documents/document-browser.mjs";
 
@@ -138,8 +139,20 @@ export function createApp({
   app.locals.sync = sync;
   const documentPreparation = createDocumentImagePreparation();
   app.locals.documentPreparation = documentPreparation;
+  const slideFileSync = createSlideFileSync({
+    db,
+    sync,
+    repository: slideFileRepository,
+  });
+  app.locals.slideFileSync = slideFileSync;
+  slideFileSync.start();
   const closeSync = sync.close.bind(sync);
-  sync.close = () => Promise.all([closeSync(), documentPreparation.close()]);
+  sync.close = () =>
+    Promise.all([
+      closeSync(),
+      documentPreparation.close(),
+      slideFileSync.close(),
+    ]);
   app.use("/api", (req, res, next) =>
     sync.capture.withActor(req.user?.id, next),
   );
@@ -241,6 +254,7 @@ export function createApp({
   installSlideFileRoutes(app, {
     repository: slideFileRepository,
     teamAccess,
+    onChange: (teamId) => slideFileSync.schedule(teamId),
   });
   installSlideEditorStatic(app, { directory: slideEditorDir });
   installEventStreams(app);
