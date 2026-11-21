@@ -51,7 +51,6 @@ npm run build
 | `GRAEBOARD_LINK_TITLE_PRIVATE_HOSTS` | 없음(사설망 차단) | 링크 제목 조회에서 사설 IP를 허용할 호스트·접미사(쉼표 구분), 예: `somansa.com` |
 | `DOCUMENT_IMAGES_DIR` | `data/document-images`    | 문서 이미지 저장 경로. 절대 경로 또는 실행 디렉터리 기준 상대 경로 |
 | `SLIDE_FILES_DIR`     | `data/slide-files`        | 슬라이드 팀 자료 저장 경로(`slide-files.sqlite`와 `blobs/`). `DB_PATH`의 DB와 별개이며 릴리스 디렉터리 밖의 절대 경로 권장 |
-| `CANVASLIDE_DIST_DIR` | `dist-canvaslide`         | 조립한 CanvaSlide 편집기 배포본 경로([슬라이드 편집기와 팀 자료](#슬라이드-편집기와-팀-자료)) |
 | `NODE_ENV`            | 미지정                    | 운영에서는 `production`                                            |
 | `GRAEBOARD_SITE` | Node: `internal`, Edge: `external` | 내부·외부 배포 역할. 실제 호스트와 다른 값이면 실행 거절 |
 | `SETUP_TOKEN`         | 없음                      | 내부 빈 DB의 최초 관리자 생성용 설정 키                                 |
@@ -180,24 +179,67 @@ SQLite의 삭제 공간은 이후 쓰기에 재사용되지만 파일 크기는 
 
 ## 슬라이드 편집기와 팀 자료
 
-**슬라이드** 화면은 고정한 CanvaSlide 웹 편집기를 그래보드의 같은 출처 프레임에서 실행합니다. 편집기 소스는 이 저장소에 없으며, `scripts/canvaslide/canvaslide-upstream.json`에 고정한 전체 커밋을 임시 작업 폴더로 읽어 그래보드의 빌드 어댑터와 함께 조립합니다.
+**슬라이드** 화면은 고정한 CanvaSlide 웹 편집기를 그래보드의 같은 출처 프레임에서 실행합니다. 편집기 소스는 이 저장소에 없습니다. `scripts/canvaslide/canvaslide-upstream.json`이 원본 커밋(전체 SHA)과, 그 커밋을 그래보드 어댑터와 조립해 검사한 **보관 배포본**(빌드 ID·주소·크기·SHA-256)을 고정합니다.
+
+### 평소 빌드
 
 ```sh
-npm run build:canvaslide
+npm run build
 ```
 
-- 필요한 것: Git, 고정 파일의 `pnpm` 버전, CanvaSlide 저장소(GitHub)와 npm 레지스트리 접속. 네트워크가 제한된 서버에서는 접속 가능한 장비에서 같은 릴리스로 조립한 `dist-canvaslide/`를 그대로 옮깁니다. 원본 저장소가 로컬에 있으면 `CANVASLIDE_SOURCE=/경로/CanvaSlide`로 지정합니다(읽기만 하며 원본 작업 폴더는 바꾸지 않습니다).
-- 결과: `dist-canvaslide/<빌드 ID>/`와 `dist-canvaslide/current.json`. 빌드 ID는 원본 커밋 앞 12자리와 어댑터 내용 해시 12자리이며, 원본이나 그래보드 어댑터 중 하나만 바뀌어도 새 ID와 새 정적 경로가 됩니다. `graeboard-build.json`에 원본 커밋, 어댑터 해시, 파일별 SHA-256을 기록합니다.
-- 제공: 사내 서버는 `CANVASLIDE_DIST_DIR`을 요청마다 읽어 `/tools/canvaslide/current.json`과 `/tools/canvaslide/<빌드 ID>/`로 제공합니다. 새 빌드는 재시작 없이 반영되고, 이전 빌드 폴더를 남겨 두면 열려 있던 탭과 되돌리기에 쓸 수 있습니다. 배포본이 없으면 슬라이드 화면은 목록·내려받기만 제공하고 편집기를 열지 않습니다.
-- 원본이 연결 지점의 이름·문구를 바꾸면 조립이 `CanvaSlide source changed` 오류로 실패합니다. 이때는 기존 배포본을 계속 제공하고 그래보드 어댑터(`scripts/canvaslide/`)를 고친 뒤 고정 커밋을 올립니다.
+`npm run build`의 마지막 단계(`scripts/canvaslide/prepare-canvaslide-dist.mjs`)가 편집기를 `dist/tools/canvaslide/<빌드 ID>/`와 `current.json`으로 설치합니다. 사내 서버와 외부 gateway는 이 경로를 그대로 제공하므로 별도 명령이나 환경 변수는 없습니다. 이 단계는 원본 편집기를 빌드하지 않으며 pnpm·CanvaSlide 저장소가 필요 없습니다.
 
-팀 자료는 `SLIDE_FILES_DIR` 아래 독립 저장소에 둡니다([데이터 형식](DATA_FORMAT.md#슬라이드-팀-자료)). 기존 `DB_PATH` DB의 형식(v34)과 migration은 바뀌지 않으며, 처음 자료를 저장할 때 `slide-files.sqlite`를 자동으로 만듭니다. 지원하지 않는 버전이나 이력이 다른 저장소는 데이터를 그대로 두고 서버 시작을 거절합니다. 이전 릴리스로 되돌리면 이 폴더는 읽히지 않을 뿐 그대로 남습니다. 팀을 영구 삭제하면 그 팀의 슬라이드 자료와 파일도 함께 삭제합니다.
+1. `dist-canvaslide/<빌드 ID>/`가 이미 있으면(직접 조립한 경우) 그것을 씁니다.
+2. 없으면 고정 파일의 주소(그래보드 저장소 `canvaslide-editor` 브랜치의 `bundles/<빌드 ID>.tar.gz`)에서 보관 배포본을 받아 크기와 SHA-256을 확인하고 풉니다.
+3. 어느 쪽이든 명세(`graeboard-build.json`)의 파일 목록·크기·해시, 편집기 화면이 이 빌드 경로를 가리키는지, 편집기 스크립트에 그래보드 연결 모듈이 들어 있는지를 확인한 뒤 설치하고, 설치한 폴더를 한 번 더 확인합니다.
+
+배포본이 없거나 받지 못했거나 하나라도 다르면 **빌드가 실패**합니다. 편집기 없는 앱만 배포되는 일을 막기 위한 것이므로 실패를 건너뛰지 않습니다. 기존 팀 사이트 배포 workflow는 이미 `npm run build`를 실행하므로 workflow 정의를 바꾸지 않아도 새 소스에서 같은 검증을 거칩니다.
+
+- 네트워크가 제한된 서버: 접속 가능한 장비에서 받은 `<빌드 ID>.tar.gz`를 옮긴 뒤 `CANVASLIDE_BUNDLE_FILE=/경로/<빌드 ID>.tar.gz npm run build`로 실행합니다. 크기·SHA-256 검증은 같습니다. 사내 미러를 쓰면 `CANVASLIDE_BUNDLE_URL`로 주소만 바꿉니다.
+- 되돌리기: 이전 릴리스를 다시 빌드하면 그 릴리스가 고정한 배포본을 같은 방식으로 받습니다. 보관 브랜치의 배포본은 지우지 않습니다. 팀 자료는 배포 폴더 밖(`SLIDE_FILES_DIR`, 외부는 DB·R2)에 있어 영향받지 않습니다.
+
+### 편집기 버전 갱신
+
+원본 그래보드 저장소의 workflow **CanvaSlide 편집기 갱신**(`.github/workflows/canvaslide-editor-update.yml`, 매일 1회·수동 실행)이 다음을 수행합니다. Fork에서는 실행되지 않고(`github.repository` 검사), CanvaSlide 쪽에는 아무것도 쓰지 않습니다.
+
+1. CanvaSlide `main`의 최신 커밋이 고정 커밋의 후손이고 원본 자체 검사를 모두 통과했을 때만 진행합니다. 늦게 끝난 실행이 고정 커밋을 뒤로 돌리지 않으며, 같은 커밋에 대한 PR·브랜치가 이미 있으면(닫힌 PR 포함) 다시 만들지 않습니다.
+2. `npm run build:canvaslide`로 원본의 lockfile·pnpm 버전으로 조립합니다. 원본 형 검사와 그래보드 연결 지점 검사가 포함되어, 원본이 연결 지점을 바꾸면 여기서 실패합니다. 이어 `npm run build:canvaslide:pack`으로 배포본을 묶어 고정 파일에 기록하고 `tests/slides`와 슬라이드 브라우저 검사를 실행합니다.
+3. 통과하면 배포본을 `canvaslide-editor` 브랜치에 추가하고(임시 Actions 보관물에 의존하지 않음) 주소에서 같은 SHA-256이 나오는지 확인한 뒤 버전 갱신 PR을 엽니다. 어느 단계든 실패하면 아무것도 게시하지 않고 기존 고정 버전이 그대로 남습니다.
+
+어댑터(`scripts/canvaslide/canvaslide-adapter-plugin.mjs`, `frame/`, `shared/slides/slide-frame-protocol.js`)를 고치면 빌드 ID가 바뀝니다. 같은 두 명령으로 다시 조립·묶은 뒤 배포본을 보관 브랜치에 올려야 하며, 고정 파일이 현재 소스의 빌드를 가리키지 않으면 `tests/slides/canvaslide-dist-pipeline.test.mjs`와 `npm run build`가 실패합니다. 수동 조립에는 Git, 고정 파일의 pnpm 버전, CanvaSlide 저장소와 npm 레지스트리 접속이 필요하고, 원본 저장소가 로컬에 있으면 `CANVASLIDE_SOURCE=/경로/CanvaSlide`로 지정합니다(읽기만 합니다).
+
+### 팀 자료 저장소
+
+사내 팀 자료는 `SLIDE_FILES_DIR` 아래 독립 저장소에 둡니다([데이터 형식](DATA_FORMAT.md#슬라이드-팀-자료)). 기존 `DB_PATH` DB의 형식(v34)과 migration은 바뀌지 않으며, 처음 자료를 저장할 때 `slide-files.sqlite`를 자동으로 만듭니다. 이전 릴리스로 되돌리면 이 폴더는 읽히지 않을 뿐 그대로 남습니다. 팀을 영구 삭제하면 그 팀의 슬라이드 자료와 파일도 함께 삭제합니다. 저장소 형식이 올라간 릴리스는 서버 시작에서 자동 변환하지 않고 안내와 함께 중단하므로, 서버를 멈추고 백업한 뒤 명시적으로 실행합니다.
+
+```sh
+npm run migrate -- --engine sqlite-slides --database /절대경로/slide-files/slide-files.sqlite --dry-run
+npm run migrate -- --engine sqlite-slides --database /절대경로/slide-files/slide-files.sqlite
+```
+
+외부 사이트는 같은 PostgreSQL의 **별도 스키마 `graeboard_slides`**와 팀 R2 버킷의 `slides/<팀 ID>/` 접두를 씁니다. 기존 `graeboard` 스키마와 그 이력(team v4)은 바뀌지 않으므로 배포 순서에 제약이 없고, 슬라이드 도입 전 릴리스를 다시 배포해도 같은 DB에서 그대로 동작합니다(슬라이드 자료는 스키마와 버킷에 남습니다). 새 릴리스를 배포한 뒤 스키마를 만들 때까지는 슬라이드 요청만 503으로 답하고 업무 기능은 정상입니다.
+
+```sh
+PG_SITE_URL=… npm run migrate -- --engine postgres --scope slides --url-env PG_SITE_URL --dry-run
+PG_SITE_URL=… npm run migrate -- --engine postgres --scope slides --url-env PG_SITE_URL
+```
+
+운영·개발 외부 DB에 실행하는 것은 대상 환경을 명시한 별도 승인이 필요합니다([DB 변경 지침](DATABASE_CHANGES.md)).
+
+### 사내·외부 슬라이드 동기화
+
+동기화 연결이 활성인 팀은 슬라이드 자료도 양쪽에 전달합니다. 팀 데이터 저장소의 전용 브랜치 `sync-slides-v1`을 쓰며 업무 브랜치 `sync-v1`과 그 프로토콜·커서·lease는 관여하지 않습니다. 사내는 변경 약 2초 뒤와 1분마다, 외부는 gateway의 1분 Cron과 슬라이드 변경 요청 뒤에 실행합니다. 일시정지·복구 점검·미연결 상태에서는 실행하지 않습니다.
+
+- 자료는 4MiB 조각으로 나뉘어 올라가고 받는 쪽은 조각과 전체의 SHA-256을 확인한 뒤에만 목록에 보입니다. 외부는 한 번에 조각 4개까지만 옮기므로 25MiB 자료는 여러 번의 실행(수 분)에 걸쳐 전달됩니다.
+- 한쪽만 새 릴리스이면 그쪽만 브랜치에 게시하고 상대는 브랜치를 읽지 않습니다. 상대가 올라오면 브랜치 전체를 따라잡습니다.
+- 슬라이드 동기화 실패는 업무 동기화에 영향을 주지 않고 `GraeBoard slide synchronization failed` / `GraeBoard slide file not received`로 기록되며 다음 실행에서 다시 시도합니다.
+- Git 이력은 줄지 않습니다. 자료를 저장할 때마다 바뀐 조각만큼 저장소가 커지므로(같은 내용의 조각은 다시 올리지 않음) 데이터 저장소 크기를 함께 관찰합니다. 이력을 줄이는 브랜치 세대 교체는 아직 제공하지 않습니다.
 
 ## 백업과 복구
 
 기본 백업은 `backups/graeboard-시각.sqlite`에 생성합니다. 서버와 같은 `DB_PATH`·`DOCUMENT_IMAGES_DIR`을 사용하고, 백업 대상 DB와 호환되는 릴리스의 도구로 실행합니다. `.env`가 자동으로 읽히는지뿐 아니라 서비스에 직접 지정한 환경 변수와 일치하는지도 확인합니다.
 
-**백업 범위:** `npm run backup`은 내부 Node 서버의 `DB_PATH` SQLite와 그 DB가 참조하는 이미지, 그리고 `SLIDE_FILES_DIR`의 슬라이드 저장소를 보관합니다. 외부 Edge의 PostgreSQL·R2 자료는 `backup:external`·`restore:external` 절차로 별도 보존·복구합니다. 내부 SQLite 백업 성공을 외부 사이트까지 백업한 것으로 기록하지 않습니다. 내부 Node의 저장소는 SQLite로 고정하며 Node의 SQLite control과 PG 업무 저장소를 혼합하는 모드는 지원하지 않습니다.
+**백업 범위:** `npm run backup`은 내부 Node 서버의 `DB_PATH` SQLite와 그 DB가 참조하는 이미지, 그리고 `SLIDE_FILES_DIR`의 슬라이드 저장소를 보관합니다. 외부 Edge의 PostgreSQL·R2 자료는 `backup:external`·`restore:external` 절차로 별도 보존·복구합니다. 외부 백업은 `graeboard_slides` 스키마가 있으면 팀 폴더에 `slides.json`(자료·revision·동기화 기록 행)과 `slides/<SHA-256>.canvaslide`(참조하는 R2 원본)를 함께 담고, 이때 manifest 버전은 기존 배치 버전에 3을 더한 값(4·5·6)입니다. 슬라이드 도입 전 도구는 이 백업을 거절합니다. 외부 복구는 대상 DB에 슬라이드 스키마를 먼저 만들어야 하고, 대상 저장소에 이 팀의 다른 슬라이드 자료가 있으면 업무 자료를 넣기 전에 거절합니다. 같은 백업을 다시 실행하면 행은 다시 넣지 않고 R2 원본만 비교해 빠진 것을 채우며, 내용이 다른 객체가 있으면 덮어쓰지 않고 거절합니다. 내부 SQLite 백업 성공을 외부 사이트까지 백업한 것으로 기록하지 않습니다. 내부 Node의 저장소는 SQLite로 고정하며 Node의 SQLite control과 PG 업무 저장소를 혼합하는 모드는 지원하지 않습니다.
 
 ```sh
 npm run backup
@@ -206,7 +248,7 @@ npm run backup -- backups/manual.sqlite
 
 이름을 지정한 백업은 기존 파일이나 이미지 묶음을 덮어쓰지 않습니다. 반복 백업에는 매번 새로운 이름을 사용합니다. 백업에서 이미지가 사용되면 `manual.sqlite.images/`가 함께 생깁니다. **SQLite 파일과 이 폴더를 같은 위치에 함께 보관·이동**해야 합니다. 참조한 이미지가 없거나 해시가 다르면 백업·복구를 실패 처리합니다.
 
-슬라이드 저장소가 있으면 `manual.sqlite.slides/`도 함께 생깁니다. 같은 실행에서 `slide-files.sqlite`의 일관된 사본을 만들고, 그 사본이 참조하는 파일(각 자료의 현재 revision과 보관 중인 직전 10개)만 해시를 확인해 모읍니다. 현재 revision의 파일이 없거나 해시가 다르면 백업을 만들지 않습니다. 임시 공유는 백업에 남더라도 복구할 때 삭제합니다. 슬라이드 저장소가 없는 사이트의 백업은 이전과 같습니다.
+슬라이드 저장소가 있으면 `manual.sqlite.slides/`도 함께 생깁니다. 같은 실행에서 `slide-files.sqlite`의 일관된 사본을 만들고, 그 사본이 참조하는 파일(각 자료의 현재 revision과 보관 중인 직전 10개)만 해시를 확인해 모읍니다. 현재 revision의 파일이 없거나 해시가 다르면 백업을 만들지 않습니다. 임시 공유는 백업에 남더라도 복구할 때 삭제합니다. 복구한 저장소는 동기화 게시 세대를 새로 시작하고 슬라이드 브랜치를 처음부터 다시 읽습니다. 슬라이드 저장소가 없는 사이트의 백업은 이전과 같습니다.
 
 백업은 `VACUUM INTO`로 실행 중인 SQLite의 일관된 사본을 생성하고 `integrity_check`를 수행한 뒤 그 사본에서 참조한 이미지도 모읍니다. 실행 중인 DB 본체 파일만 복사하면 WAL에 남은 변경이 누락될 수 있습니다. 업데이트 직전의 최종 백업은 서버와 다른 쓰기 작업을 중지한 뒤 생성합니다.
 

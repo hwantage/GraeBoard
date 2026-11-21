@@ -427,17 +427,40 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 | 위치 | 내용 |
 | --- | --- |
-| `slide-files.sqlite` | 자체 `PRAGMA user_version=1`과 `schema_migrations`(checksum). `server/migrations/slides/001-slide-files.sql` |
+| `slide-files.sqlite` | 자체 `PRAGMA user_version=2`와 `schema_migrations`(단계별 checksum). `server/migrations/slides/001-slide-files.sql`, `002-slide-sync.sql`. v1은 명시적 변환(`npm run migrate -- --engine sqlite-slides`)으로만 v2가 됩니다 |
 | `slide_files` | `id`, `team_id`, `title`, `revision`, `byte_length`, `content_hash`, 만든·마지막 저장 사용자와 시각, `deleted_at`, `create_request_id`(팀 안에서 유일) |
 | `slide_file_revisions` | 저장마다 한 행: `(file_id, revision)`, `content_hash`, `byte_length`, 저장자·시각, `request_id`(자료 안에서 유일) |
 | `slide_shares` | 24시간 뒤 만료하는 임시 공유 스냅샷(JSON 문자열, 5MiB 이하). 팀 원본과 다른 테이블·보관 주기 |
+| `slide_sync_state`, `slide_sync_files` | 상대 사이트와의 동기화 기록: 팀별 적용 head·게시 세대(epoch)·다음 번호, 자료별 마지막 공유 버전·해시·제목·삭제 여부·조각 목록과 아직 확인되지 않은 게시 버전 |
 | `blobs/<teamId>/<SHA-256>.canvaslide` | 내용 주소의 불변 파일. 임시 파일에 쓰고 fsync한 뒤 이름을 바꿔 게시 |
+| `staging/<teamId>/<조각 SHA-256>` | 상대 사이트에서 받는 중인 조각. 자료가 완성되면 삭제 |
 
 - **조건부 저장**: 새 바이트를 먼저 파일로 쓰고 해시를 계산한 뒤, 요청의 기준 revision이 현재와 같을 때만 한 트랜잭션에서 `slide_files`를 새 revision으로 바꿉니다. 다르면 HTTP 409와 현재 메타데이터를 반환하며 양쪽 바이트가 모두 남습니다.
 - **재시도**: 같은 요청 ID의 생성·저장은 처음 저장한 결과(revision·해시·저장자)를 그대로 다시 반환합니다. 그 사이 다른 팀원이 저장했거나 자료가 삭제됐어도 최신 값으로 바꿔 답하지 않으므로, 응답을 잃은 세션이 본 적 없는 revision에 묶여 새 내용을 덮어쓰지 않습니다. 같은 요청 ID에 다른 내용을 보내면 409입니다.
 - **보관**: revision 기록은 모두 남기고 바이트는 현재와 직전 10개 revision까지 보관합니다. 그보다 오래된 내용은 같은 팀의 다른 자료·보관 중인 revision이 쓰지 않을 때 파일을 삭제합니다. 자료 삭제는 목록에서만 빼는 표시이며 파일과 기록은 남습니다. 이름 변경은 revision을 올리지 않습니다.
 - **권한**: 요청마다 업무 DB의 팀 소속을 확인합니다. 팀장·팀원·시스템 관리자는 읽기·쓰기, 열람자는 읽기·내려받기·임시 공유 열기만 가능하고 팀 밖 사용자는 메타데이터와 원본을 받을 수 없습니다. 비로그인 공개 링크는 없습니다.
 - 읽을 때 파일 해시가 기록과 다르면 원본으로 내보내지 않고 오류로 처리합니다.
+
+외부 사이트는 같은 내용을 PostgreSQL의 별도 스키마 `graeboard_slides`(자체 `schema_migrations`, 단계별 checksum은 `shared/slides/slide-store-version.js`)와 팀 R2 버킷의 `slides/<teamId>/<SHA-256>.canvaslide`에 둡니다. 받는 중인 조각은 같은 접두의 `<조각 SHA-256>.chunk`입니다. `graeboard` 스키마의 테이블·이력·checksum은 바뀌지 않습니다. 같은 내용을 다시 쓰는 저장과 보관 범위를 벗어난 객체의 삭제는 팀 단위 잠금으로 순서를 정해, 삭제 뒤에 등록되는 저장은 객체가 없으면 다시 올립니다. API와 저장 계약(조건부 저장·재시도·보관·권한·25MiB)은 사내와 같습니다.
+
+### 슬라이드 동기화 브랜치
+
+연결된 팀의 슬라이드 자료는 팀 데이터 저장소의 `sync-slides-v1` 브랜치로 오갑니다. 업무 reducer의 입력이 아니며 `sync-v1`의 형식·프로토콜 번호·해시와 무관한 별도 형식(format 1)입니다.
+
+| 경로 | 내용 |
+| --- | --- |
+| `slides.json` | `{format: 1, teamId}` |
+| `files/<자료 ID>.json` | canonical JSON: `id`, `title`, `contentHash`, `byteLength`, `chunks`(조각 SHA-256 목록), `version`(`<게시 세대>:<번호>`), `base`(이 버전이 기준으로 삼은 직전 공유 버전 또는 `null`), `updatedBy`, `updatedAt`, `deletedAt` |
+| `chunks/<조각 SHA-256>` | 원본 바이트를 4MiB 고정 크기로 자른 조각 |
+
+- 조각 이름은 내용의 SHA-256이고 받는 쪽이 검증하는 값입니다. Git의 객체 ID는 메타데이터 파일이 바뀌었는지 알아보는 데만 씁니다.
+- **수신**: 바뀐 메타데이터마다 조각을 받아 조각·전체 해시와 길이를 확인하고, 바이트 설치와 행 갱신을 마친 뒤에 다음으로 넘어갑니다. 바뀐 자료를 모두 적용했을 때만 적용 head를 옮기며, 받다 만 조각은 보관해 다음 실행이 이어 받습니다.
+- **게시**: 적용 head가 브랜치 head와 같을 때만 게시합니다. 조각을 먼저 올리고(이미 있는 조각은 건너뜀) 메타데이터를 마지막에 커밋하므로 바이트 없는 자료가 보이지 않습니다. 강제 갱신은 쓰지 않고, 경합에서 지면 받은 뒤 다시 게시합니다.
+- **버전**: 같은 로컬 상태에는 같은 버전을 한 번만 배정해 응답을 잃은 게시를 다시 시도해도 중복이 생기지 않습니다. 복구한 저장소는 새 게시 세대로 시작해 번호를 다시 쓰지 않습니다.
+- **양쪽 수정**: 먼저 게시된 버전이 그 자료로 남고, 늦은 쪽의 내용은 `<제목> (충돌 · 사내|외부)`라는 새 자료로 보존해 양쪽에 전달합니다. 사본의 ID는 자료·내용·사이트에서 정해지므로 같은 충돌을 다시 보아도 늘지 않습니다. 이름만·내용만 서로 다르게 바꾼 경우는 둘 다 반영하고, 이름을 양쪽이 다르게 바꾸면 먼저 게시된 이름을 따릅니다.
+- **삭제**: 삭제와 수정이 겹치면 수정이 남아 자료를 되살립니다. 양쪽 삭제는 그대로 삭제입니다.
+- 동기화로 내용이 바뀐 자료는 로컬 revision이 올라가므로 열어 두었던 편집기의 다음 저장은 409 충돌 흐름으로 이어집니다.
+- Git 이력의 객체는 줄지 않습니다. 저장소가 보관 범위 밖 내용을 지우는 것(로컬 blob·R2)과 Git 이력에 남는 조각은 별개입니다.
 
 브라우저의 복구본은 편집기의 IndexedDB(`canvaslide-recovery.<계정 ID>.<팀 ID>`)에 계정·팀별로 나눠 저장하며 서버에 올라가지 않습니다. 복구본에는 열었던 팀 자료의 ID와 revision이 함께 남아, 복구한 내용을 저장할 때도 같은 조건부 저장을 거칩니다.
 
@@ -453,7 +476,7 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 | `DELETE /api/teams/:teamId/slides/:fileId` | 목록에서 삭제 |
 | `POST /api/teams/:teamId/slide-shares` | 임시 공유 생성. 본문 `text/plain`(편집기의 공유 스냅샷 JSON) |
 | `GET /api/teams/:teamId/slide-shares/:shareId` | 임시 공유 읽기 `{body}` |
-| `GET /tools/canvaslide/current.json`, `/tools/canvaslide/<빌드 ID>/…` | 조립한 편집기 정적 파일. 없는 파일은 404 |
+| `GET /tools/canvaslide/current.json`, `/tools/canvaslide/<빌드 ID>/…` | `npm run build`가 설치한 편집기 정적 파일. 없는 파일은 404(앱 화면으로 대체하지 않음) |
 
 ## 주요 API
 

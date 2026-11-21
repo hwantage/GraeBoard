@@ -25,7 +25,7 @@ Node와 외부 라우트는 문서·일정·업무·사본·인증/제어·이�
 
 배포 suite는 고정 `7fec065d1adc241da29d54474af06b390d12d72b`의 workflow·CLI를 Git에서 읽어 구·신 버전 4개 조합을 실행합니다. shallow clone에 해당 커밋이 없으면 `git fetch origin 7fec065d1adc241da29d54474af06b390d12d72b`로 준비하며 구조 CI는 `fetch-depth: 0`을 사용하고 이 배포 회귀도 함께 실행합니다.
 
-`tests/`는 기능별 Node 검사와 `sync/protocol/`·`sync/transport/`·`sync/recovery/`·`sync/integration/`으로 분류하고 공통 fixture/helper·수동 Deno probe는 `support/`에 둡니다. 브라우저 검사는 `browser/`의 기능 폴더에서 수집하며 `browser/support/`와 기존 `browser/fixtures/`는 실행 suite가 아닙니다. Node 재귀 수집기는 131개, Playwright는 51개 spec·각 엔진 787건을 수집합니다. 원본 전환 16건은 고정 전체 소스에서 별도 실행합니다.
+`tests/`는 기능별 Node 검사와 `sync/protocol/`·`sync/transport/`·`sync/recovery/`·`sync/integration/`으로 분류하고 공통 fixture/helper·수동 Deno probe는 `support/`에 둡니다. 브라우저 검사는 `browser/`의 기능 폴더에서 수집하며 `browser/support/`와 기존 `browser/fixtures/`는 실행 suite가 아닙니다. Node 재귀 수집기는 149개, Playwright는 56개 spec·각 엔진 824건을 수집합니다. 원본 전환 16건은 고정 전체 소스에서 별도 실행합니다.
 
 아래는 현재 구현 경로입니다. 기능별 하위 디렉토리의 목표 배치와 지속적인 명명·유지보수 규칙은 [코드 배치 가이드](CODE_ORGANIZATION.md)에 있습니다. 실제 파일을 이동한 변경에서 이 표의 경로도 함께 갱신합니다.
 
@@ -37,7 +37,7 @@ Node와 외부 라우트는 문서·일정·업무·사본·인증/제어·이�
 | `src/main.tsx`, `app-version.d.ts`, `types.ts`, `Panels.tsx`, `styles.css`                                                                                                                                                                              | 루트 유지 5개: 진입점·선언·통합 타입·패널·전역 CSS                                                                                                           |
 | `src/documents/`, `src/documents/editor/`                                                                                                                                                                                                               | 공용 문서 패널·브라우저·내보내기와 Milkdown 편집기 내부                                                                                                      |
 | `src/calendar/`                                                                                                                                                                                                                                         | 일정·태그·주간 할 일·개인 일정의 UI·훅·타입·CSS                                                                                                              |
-| `src/slides/`, `shared/slides/`, `server/slides/`, `server/storage/slides/`, `scripts/canvaslide/`                                                                                                                                                      | 슬라이드 화면과 편집기 프레임, 프레임 메시지·파일·제공 규칙, 사내 라우트와 독립 SQLite 저장소·백업, 고정한 CanvaSlide 편집기의 빌드 어댑터                   |
+| `src/slides/`, `shared/slides/`, `server/slides/`, `server/storage/slides/`, `worker/slides/`, `worker/storage/slides/`, `server/sync/core/slide-file-branch.mjs`, `scripts/canvaslide/`                                                                | 슬라이드 화면과 편집기 프레임, 프레임 메시지·파일·제공 규칙, 사내·외부 라우트와 저장소·백업, 슬라이드 동기화, 고정한 CanvaSlide 편집기의 빌드 어댑터         |
 | `src/platform/`                                                                                                                                                                                                                                         | API·오류·사이트 환경·공통 조회 정책·SharedWorker SSE·리소스 구독 기반                                                                                        |
 | `src/ui/`                                                                                                                                                                                                                                               | Select·색 선택·이모지 선택·알림·도움말·공통 메뉴·포인터/모바일/목록 훅                                                                                       |
 | `src/app/App.tsx`                                                                                                                                                                                                                                       | 팀·연도·화면 조합, 선택·편집 UI와 업무 명령 연결; 조회·저장·필터·이력 상태는 sheet 훅이 소유                                                                 |
@@ -258,7 +258,9 @@ Milkdown 진입 전 AST 왕복 검사를 하고 안전한 `<br>`만 줄바꿈으
 | 공유 | 편집기의 공유 대화상자는 그대로 쓰고 생성·조회만 그래보드의 임시 스냅샷 API로 보냅니다. 링크는 `/slides?team=…&share=…`이며 팀 자료가 다른 출처로 전송되지 않습니다. |
 | 화면 정책 | 편집기 문서는 편집기 자체 정책에 `frame-ancestors 'self'`만 바꿔 제공하고(`shared/slides/slide-editor-policy.js`), 앱 화면은 `frame-src 'self' blob:`을 허용합니다. `blob:`은 Firefox·WebKit이 프레임 안의 파일 내려받기를 프레임 이동으로 다루기 때문에 필요합니다. |
 
-서버는 `SlideFileService`(권한·검증·조건부 저장·임시 공유)와 저장소(`SqliteSlideFileRepository`)로 나눕니다. 저장 형식과 API는 [데이터 형식](DATA_FORMAT.md#슬라이드-팀-자료), 조립·제공·백업은 [운영 안내](OPERATIONS.md#슬라이드-편집기와-팀-자료)에 있습니다. 편집기 버전을 올릴 때는 `canvaslide-upstream.json`의 커밋을 바꾸고 조립과 `tests/slides/`, `tests/browser/slides/`를 실행합니다.
+서버는 `SlideFileService`(권한·검증·조건부 저장·임시 공유)와 저장소로 나눕니다. 사내는 `SqliteSlideFileRepository`(독립 SQLite와 파일), 외부는 `PostgresSlideFileRepository`(`graeboard_slides` 스키마와 R2)이며 두 저장소는 같은 계약과 같은 동기화 메서드(`sync*`)를 구현합니다. 동기화 규칙은 `syncSlideFiles`(`server/sync/core/slide-file-branch.mjs`)에만 있고 전송 수단(Git CLI·GitHub API)과 저장소를 인자로 받습니다. 저장 형식·API·브랜치 형식은 [데이터 형식](DATA_FORMAT.md#슬라이드-팀-자료), 빌드·버전 갱신·migration·백업은 [운영 안내](OPERATIONS.md#슬라이드-편집기와-팀-자료)에 있습니다.
+
+`npm run build`는 편집기 배포본을 준비·검증해 `dist/tools/canvaslide/`에 설치하며 실패하면 빌드가 실패합니다. 어댑터를 고쳤으면 `npm run build:canvaslide && npm run build:canvaslide:pack`으로 다시 조립·묶어 고정 파일을 갱신합니다(`tests/slides/canvaslide-dist-pipeline.test.mjs`가 불일치를 잡습니다). `scripts/canvaslide/frame/`의 파일은 내용이 빌드 ID에 들어가므로 포맷만 바꿔도 새 빌드가 됩니다.
 
 ### 접속 토큰과 클라이언트 시각
 
@@ -443,7 +445,7 @@ npx playwright install chromium firefox webkit
 npm run test:e2e
 ```
 
-`tests/browser/slides/`는 실제 편집기를 조작하므로 먼저 `npm run build:canvaslide`로 배포본을 만듭니다. 배포본이 없으면 이 spec은 건너뛰지 않고 실패합니다.
+`tests/browser/slides/`는 `npm run build`가 설치한 실제 편집기를 조작합니다. 배포본이 없으면 이 spec은 건너뛰지 않고 실패합니다. `tests/slides/`의 외부 저장소·백업·동기화 검사는 `TEST_PG_BIN`의 실제 PostgreSQL을 쓰고 R2와 GitHub API는 메모리 버킷과 로컬 Git 저장소를 읽는 대역(`tests/support/worker-github-fixture.mjs`)을 씁니다. 슬라이드 도입 전 릴리스와의 호환 검사는 커밋 `37a8702`의 소스를 Git에서 꺼내 실행하므로 shallow clone에서는 `git fetch origin 37a87022774864653647192213633b7f71d166a9`가 필요합니다.
 
 작은 기능 수정의 반복 확인에는 빌드 후 `npm run test:e2e:core`로 행/셀·사본·화면 전환·캘린더·문서 입력/동기화/내보내기의 핵심 spec을 3개 엔진에서 실행합니다. `-- --project=chromium`으로 개발 중 범위를 줄일 수 있습니다. 큰 구조 변경의 완료 전에는 `npm run test:e2e` 전체와 수정 기능의 실패·권한·취소 경로를 확인합니다.
 
