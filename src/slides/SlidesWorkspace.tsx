@@ -151,7 +151,7 @@ export default function SlidesWorkspace({
     return (
       <section className="board slides-board">
         <ErrorNote error={error} />
-        {!error && <LoadingState label="슬라이드를 불러오는 중입니다." />}
+        {!error && <LoadingState label="CanvaSlide를 불러오는 중입니다." />}
       </section>
     );
   if (start && editor)
@@ -175,7 +175,7 @@ export default function SlidesWorkspace({
       </section>
     );
   return (
-    <section className="board slides-board">
+    <>
       <ErrorNote error={error} />
       {!editor && (
         <p className="slide-notice" role="status">
@@ -190,11 +190,10 @@ export default function SlidesWorkspace({
         people={people}
         onOpen={(file) => editor && open({ kind: "file", fileId: file.id })}
         onNew={(title) => open({ kind: "new", title })}
-        onOpenLocal={() => editor && open({ kind: "local" })}
         onChanged={refresh}
         onError={setError}
         onNotify={onNotify}
       />
-    </section>
+    </>
   );
 }

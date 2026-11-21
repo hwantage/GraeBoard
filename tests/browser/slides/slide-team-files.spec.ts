@@ -121,6 +121,97 @@ async function peerSession(
   return peer;
 }
 
+test("CanvaSlide 목록은 공통 제목줄과 원형 메뉴를 쓰고 화면 폭에 관계없이 크기와 작업을 함께 표시한다", async ({
+  page,
+}) => {
+  const title = `팀 발표자료 ${randomUUID()}`;
+  const file = await upload(
+    page.request,
+    teamId,
+    title,
+    example("freefall.canvaslide"),
+  );
+  await page.goto("/slides");
+  const row = page
+    .getByRole("row")
+    .filter({ has: page.getByRole("button", { name: title, exact: true }) });
+  const cells = row.getByRole("cell");
+  const size = cells.nth(3);
+  await expect(size).toHaveText(
+    `${(file.byteLength / 1024 ** 2).toFixed(1)}MB`,
+  );
+  const download = row.getByRole("button", { name: "내려받기" });
+  const remove = row.getByRole("button", { name: "삭제" });
+  for (const width of [1280, 768, 540, 390, 320]) {
+    await page.setViewportSize({ width, height: 800 });
+    const sizeBox = await size.evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      return range.getBoundingClientRect().toJSON();
+    });
+    expect(sizeBox.left).toBeGreaterThanOrEqual(0);
+    const first = (await download.boundingBox())!;
+    expect(sizeBox.right).toBeLessThanOrEqual(width);
+    expect(sizeBox.right <= first.x || sizeBox.bottom <= first.y).toBe(true);
+    const last = (await remove.boundingBox())!;
+    expect(last.x + last.width).toBeLessThanOrEqual(width);
+    await expect(
+      page.getByRole("button", { name: "새 팀 자료" }),
+    ).toBeInViewport();
+  }
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.getByRole("button", { name: "연간 업무", exact: true }).click();
+  const annual = page.getByRole("heading", { name: "연간 업무", exact: true });
+  const annualBox = (await annual.boundingBox())!;
+  const titleFont = await annual.evaluate(
+    (el) => getComputedStyle(el).fontSize,
+  );
+  const presentationHeight = (await page
+    .getByRole("button", { name: "발표 모드", exact: true })
+    .boundingBox())!.height;
+  const launcher = page.getByRole("button", {
+    name: "CanvaSlide",
+    exact: true,
+  });
+  const calendar = page.getByRole("button", { name: "캘린더", exact: true });
+  const calendarBox = (await calendar.boundingBox())!;
+  const launchBox = (await launcher.boundingBox())!;
+  expect([launchBox.width, launchBox.height]).toEqual([
+    calendarBox.width,
+    calendarBox.height,
+  ]);
+  await expect(launcher).toHaveCSS("border-radius", "50%");
+  await expect
+    .poll(() =>
+      launcher
+        .locator("img")
+        .evaluate((el: HTMLImageElement) => el.naturalWidth),
+    )
+    .toBeGreaterThan(0);
+  await launcher.click();
+  await expect(launcher).toHaveAttribute("aria-pressed", "true");
+  await expect(page).toHaveTitle(/CanvaSlide/);
+  const heading = page.getByRole("heading", {
+    name: "CanvaSlide",
+    exact: true,
+  });
+  const headingBox = (await heading.boundingBox())!;
+  expect([headingBox.x, headingBox.y]).toEqual([annualBox.x, annualBox.y]);
+  await expect(heading).toHaveCSS("font-size", titleFont);
+  for (const button of [
+    page.getByRole("button", { name: "새 팀 자료" }),
+    page.getByRole("button", { name: /팀 자료로 가져오기/ }),
+    download,
+  ])
+    expect((await button.boundingBox())!.height).toBe(presentationHeight);
+  await expect(
+    page.getByRole("button", {
+      name: /편집기만 열기|팀에 저장하지 않고 편집기 열기/,
+    }),
+  ).toHaveCount(0);
+});
+
 test("팀 자료를 열어 편집하고 Ctrl/Cmd+S로 저장하면 다른 팀원이 같은 내용을 열고 내려받는다", async ({
   page,
   context,
@@ -479,7 +570,7 @@ test("복구본은 계정과 팀 범위로 나뉘어 다른 계정에는 보이�
   const file = await upload(
     page.request,
     teamId,
-    "복구 자료",
+    `복구 자료 ${randomUUID()}`,
     example("flowchart.canvaslide"),
   );
   await openTeamFile(page, file.id);
@@ -536,9 +627,7 @@ test("복구본은 계정과 팀 범위로 나뉘어 다른 계정에는 보이�
   ).toBe(true);
   await login(admin.request, peerName, "local-peer-password");
   await admin.goto("/slides");
-  await admin
-    .getByRole("button", { name: "팀에 저장하지 않고 편집기 열기" })
-    .click();
+  await admin.getByRole("button", { name: file.title, exact: true }).click();
   await expect(editor(admin).getByTestId("canvas-viewport")).toBeVisible();
   await admin.waitForTimeout(1500);
   await expect(
@@ -548,9 +637,7 @@ test("복구본은 계정과 팀 범위로 나뉘어 다른 계정에는 보이�
   // The author gets it back, still bound to the team file and its revision.
   await login(admin.request, "test@somansa.com", "1234");
   await admin.goto("/slides");
-  await admin
-    .getByRole("button", { name: "팀에 저장하지 않고 편집기 열기" })
-    .click();
+  await admin.getByRole("button", { name: file.title, exact: true }).click();
   const offer = editor(admin).getByRole("dialog", {
     name: "Recover unsaved work",
   });

@@ -37,8 +37,7 @@ import {
 export type SlideEditorStart =
   | { kind: "file"; fileId: string }
   | { kind: "new"; title: string }
-  | { kind: "share"; shareId: string }
-  | { kind: "local" };
+  | { kind: "share"; shareId: string };
 export type SlideEditorHandle = { leave: () => Promise<boolean> };
 
 type SaveTarget = { kind: "team"; title: string } | { kind: "device" } | null;
@@ -352,7 +351,7 @@ export default function SlideEditorFrame({
 
   const binding = state?.binding ?? null;
   return (
-    <section className="slide-editor" aria-label="슬라이드 편집기">
+    <section className="slide-editor" aria-label="CanvaSlide 편집기">
       <header className="slide-editor-bar">
         <Button title="팀 자료 목록" onClick={onClose}>
           <ArrowLeft size={15} />
