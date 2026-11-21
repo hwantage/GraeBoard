@@ -154,6 +154,13 @@ export async function syncSlideFiles({
     pending: 0,
     raced: false,
   };
+  // Nothing new on the branch and nothing to publish: the pass ends after the
+  // one request that read the head.
+  if (
+    head === (state.head || null) &&
+    !(await store.syncFiles(teamId)).some(slideFileDirty)
+  )
+    return result;
   const tree = new Map();
   if (head) {
     for (const file of (await transport.readCommit(head)).files)

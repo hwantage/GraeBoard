@@ -145,6 +145,52 @@ test("외부 서버의 예약 실행은 연결이 활성일 때만, 한 번에 �
     transport: transport(),
   });
   assert.deepEqual([second.pending, second.published, chunks()], [0, 1, 7]);
+  // An idle pass costs one request (the branch head) and writes nothing.
+  const github = githubEmulator(remote);
+  const idle = await syncTeamSlides(pg.env, profile, {
+    transport: new GitHubApiTransport({
+      repository: "fixture/team",
+      token: "fixture-secret",
+      fetch: github.fetch,
+    }),
+  });
+  assert.deepEqual([idle.published, idle.received, idle.pending], [0, 0, 0]);
+  assert.deepEqual(
+    github.calls.map((call) => call.path),
+    [`/git/ref/heads/${SLIDE_BRANCH}`],
+  );
+  // While task synchronization waits out a GitHub rate limit, or another
+  // executor holds its lease, slides make no request at all.
+  const quiet = githubEmulator(remote);
+  const quietTransport = () =>
+    new GitHubApiTransport({
+      repository: "fixture/team",
+      token: "fixture-secret",
+      fetch: quiet.fetch,
+    });
+  await pg.pool.query(
+    "INSERT INTO graeboard.site_entities(team_id,entity,entity_key,payload,revision,deleted) VALUES($1,'syncRefresh','[]',$2,0,0) ON CONFLICT(team_id,entity,entity_key) DO UPDATE SET payload=EXCLUDED.payload",
+    [pg.teamId, JSON.stringify({ nextAt: Date.now() + 120000 })],
+  );
+  assert.equal(
+    await syncTeamSlides(pg.env, profile, { transport: quietTransport() }),
+    null,
+  );
+  await pg.pool.query(
+    "UPDATE graeboard.site_entities SET payload='{}' WHERE entity='syncRefresh'",
+  );
+  await pg.pool.query(
+    "UPDATE graeboard.team_sync_links SET lease_owner='other-executor',lease_until=$1",
+    [Date.now() + 600000],
+  );
+  assert.equal(
+    await syncTeamSlides(pg.env, profile, { transport: quietTransport() }),
+    null,
+  );
+  assert.deepEqual(quiet.calls, []);
+  await pg.pool.query(
+    "UPDATE graeboard.team_sync_links SET lease_owner=NULL,lease_until=NULL",
+  );
   // The task link was only read.
   assert.equal(
     (await pg.pool.query("SELECT mode FROM graeboard.team_sync_links")).rows[0]

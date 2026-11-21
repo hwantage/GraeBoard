@@ -613,6 +613,53 @@ export function slideSyncContract(name, makeStores) {
     assert.equal((await inside.read(file.id)).equals(slide("처음")), true);
   });
 
+  test(`${name}: 늦게 돌아온 게시 응답이 그 사이 확정된 더 새 버전을 되돌리지 않는다`, async (t) => {
+    const peers = await twoPeers(t, makeStores);
+    if (!peers) return;
+    const { inside, outside, teamId } = peers;
+    const file = await outside.create("자료", slide("버전 1"));
+    await settle(outside, inside);
+    await outside.save(file.id, slide("버전 2"));
+
+    // The push of version 2 succeeds, but its call returns late. Meanwhile
+    // the same site saves again and another pass (Cron next to a pass started
+    // by a request) receives version 2 and publishes version 3.
+    const publish = outside.transport.publish.bind(outside.transport);
+    let delayed = false;
+    let between;
+    outside.transport.publish = async (...args) => {
+      const result = await publish(...args);
+      if (!delayed) {
+        delayed = true;
+        await outside.save(file.id, slide("버전 3"));
+        between = await outside.sync();
+      }
+      return result;
+    };
+    await outside.sync();
+    outside.transport.publish = publish;
+    assert.equal(
+      between.published,
+      1,
+      "the overlapping pass published version 3",
+    );
+    const record = async () =>
+      (await outside.store.syncFiles(teamId)).find(
+        (item) => item.id === file.id,
+      );
+    const cursor = (await outside.store.syncState(teamId)).head;
+    assert.equal(cursor, between.head, "the cursor stays at the newer commit");
+    assert.equal((await record()).shared.hash, sha(slide("버전 3")));
+    assert.equal((await record()).shared.version.endsWith(":3"), true);
+    assert.equal((await record()).pendingVersion, null);
+    // Nothing is left to publish: no repeated publication of the same file.
+    const next = await outside.sync();
+    assert.deepEqual([next.published, next.received, next.pending], [0, 0, 0]);
+    assert.equal((await outside.store.syncState(teamId)).head, cursor);
+    await settle(inside);
+    assert.equal((await inside.read(file.id)).equals(slide("버전 3")), true);
+  });
+
   test(`${name}: 손상된 조각은 받지 않고 다음 시도까지 기존 자료를 유지한다`, async (t) => {
     const peers = await twoPeers(t, makeStores);
     if (!peers) return;

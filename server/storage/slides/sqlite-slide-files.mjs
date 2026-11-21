@@ -562,8 +562,25 @@ export class SqliteSlideFileRepository {
       shared.metaOid,
     );
   }
+  // Confirms a version this site published. It applies only while that
+  // version is still the one waiting for confirmation (or is already the
+  // shared one): a confirmation that arrives after a later version was
+  // published or received must not put the older version back.
   syncMarkShared(teamId, fileId, shared) {
-    this.#markShared(this.#open(), teamId, fileId, shared);
+    return this.#transaction((db) => {
+      const row = db
+        .prepare(
+          "SELECT shared_version,pending_version FROM slide_sync_files WHERE team_id=? AND file_id=?",
+        )
+        .get(teamId, fileId);
+      if (
+        row?.pending_version !== shared.version &&
+        row?.shared_version !== shared.version
+      )
+        return false;
+      this.#markShared(db, teamId, fileId, shared);
+      return true;
+    });
   }
   // Applies a version received from the branch. `take` says which parts of it
   // replace the local file; `copy` first keeps the local content as a file of

@@ -17,12 +17,13 @@ export function createSlideFileSync({
   let ticker = null;
   let stopped = false;
 
+  // Not while task synchronization is paused or recovering, and not while a
+  // run, maintenance or an upgrade holds its lease.
+  const idle = "mode='active' AND (lease_owner IS NULL OR lease_until < ?)";
   const active = (teamId) =>
     db
-      .prepare(
-        "SELECT 1 FROM team_sync_links WHERE team_id=? AND mode='active'",
-      )
-      .get(teamId);
+      .prepare(`SELECT 1 FROM team_sync_links WHERE team_id=? AND ${idle}`)
+      .get(teamId, Date.now());
   // One pass at a time per team; a request during a pass is answered by it.
   function run(teamId) {
     if (stopped || !active(teamId)) return Promise.resolve(null);
@@ -62,8 +63,8 @@ export function createSlideFileSync({
     if (ticker || stopped) return;
     ticker = setInterval(() => {
       for (const row of db
-        .prepare("SELECT team_id FROM team_sync_links WHERE mode='active'")
-        .all())
+        .prepare(`SELECT team_id FROM team_sync_links WHERE ${idle}`)
+        .all(Date.now()))
         void run(row.team_id);
     }, intervalMs);
     ticker.unref?.();

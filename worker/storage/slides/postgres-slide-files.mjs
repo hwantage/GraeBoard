@@ -438,9 +438,25 @@ export class PostgresSlideFileRepository {
       ],
     );
   }
+  // Confirms a version this site published; see the SQLite repository. Two
+  // passes of this site can overlap (Cron and a pass started by a request).
   async syncMarkShared(teamId, fileId, shared) {
     this.#team(teamId);
-    await this.#read((client) => this.#markShared(client, fileId, shared));
+    return this.#transaction(async (client) => {
+      const row = (
+        await client.query(
+          `SELECT shared_version,pending_version FROM ${S}.slide_sync_files WHERE team_id=$1 AND file_id=$2`,
+          [teamId, fileId],
+        )
+      ).rows[0];
+      if (
+        row?.pending_version !== shared.version &&
+        row?.shared_version !== shared.version
+      )
+        return false;
+      await this.#markShared(client, fileId, shared);
+      return true;
+    });
   }
   // False (nothing applied) when the file no longer looks like `expect`: it
   // was saved, renamed or deleted here after the decision was made.
