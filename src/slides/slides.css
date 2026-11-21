@@ -87,6 +87,7 @@
 }
 .slide-card-thumbnail {
   display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   height: 132px;
   margin: -14px -16px 10px;

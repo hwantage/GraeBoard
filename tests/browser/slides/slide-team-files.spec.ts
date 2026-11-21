@@ -253,6 +253,11 @@ test("첫 프레임 사진을 썸네일에 그리고 다음 열람자는 원본�
   await card(page).scrollIntoViewIfNeeded();
   const img = card(page).locator(".slide-card-thumbnail img");
   await expect(img).toBeVisible();
+  const picture = (await img.boundingBox())!;
+  const slot = (await card(page).locator(".slide-card-thumbnail").boundingBox())!;
+  expect(picture.height).toBeLessThanOrEqual(slot.height);
+  expect(picture.width).toBeLessThanOrEqual(slot.width);
+  await expect(img).toHaveCSS("object-fit", "contain");
   const pixels = await img.evaluate(async (el: HTMLImageElement) => {
     await el.decode();
     const canvas = document.createElement("canvas");
