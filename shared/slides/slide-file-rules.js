@@ -22,6 +22,15 @@ export function slideTitleProblem(value) {
     return "자료 이름에 쓸 수 없는 문자가 있습니다.";
   return "";
 }
+// Reserve room for the suffix without cutting an emoji's surrogate pair.
+export function slideCopyTitle(title) {
+  const suffix = " 사본";
+  const stem = title
+    .slice(0, MAX_SLIDE_TITLE_LENGTH - suffix.length)
+    .replace(/[\uD800-\uDBFF]$/, "")
+    .trimEnd();
+  return stem + suffix;
+}
 export const normalizeSlideTitle = (value) => value.trim().normalize("NFC");
 
 // A name the title can be downloaded under on macOS and Windows.

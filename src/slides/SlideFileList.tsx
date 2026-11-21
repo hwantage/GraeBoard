@@ -15,6 +15,7 @@ import { Empty } from "../ui/Empty";
 import { Modal } from "../ui/Modal";
 import {
   MAX_SLIDE_FILE_BYTES,
+  slideCopyTitle,
   slideDownloadName,
   slideTitleFromFileName,
 } from "../../shared/slides/slide-file-rules.js";
@@ -274,7 +275,7 @@ export default function SlideFileList({
               ? ""
               : prompt.kind === "rename"
                 ? prompt.file.title
-                : `${prompt.file.title} 사본`
+                : slideCopyTitle(prompt.file.title)
           }
           busy={busy}
           onClose={() => setPrompt(null)}

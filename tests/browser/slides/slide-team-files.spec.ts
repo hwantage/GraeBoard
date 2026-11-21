@@ -424,13 +424,19 @@ test("목록과 상세에서 만든 자료는 즉시 서버에 저장되고 새�
   await expect(titleInput(page)).toHaveValue(title);
   for (const width of [1200, 390]) {
     await page.setViewportSize({ width, height: 850 });
+    await expect(
+      editor(page).getByRole("button", {
+        name: width === 390 ? "Actions menu" : "Share",
+        exact: true,
+      }),
+    ).toBeVisible();
     await expect(newButton).toBeInViewport();
     await expect(
       page.getByRole("button", { name: "다른 이름으로 저장" }),
     ).toBeInViewport();
     await expect(
       editor(page).getByRole("button", {
-        name: /^(?:(?:New|Open|Save)(?: \(.*\))?|Save as(?:…|\.\.\.)?|File)$/i,
+        name: /^(?:(?:New|Open|Save)(?: \(.*\))?|Save as(?:…|\.\.\.)?|File menu)$/i,
       }),
     ).toHaveCount(0);
     await expect(
@@ -475,7 +481,9 @@ test("다른 이름으로 저장은 미저장 본문을 팀 사본으로 저장�
   page,
 }) => {
   const original = example("flowchart.canvaslide");
-  const file = await upload(page.request, teamId, "팀 원본", original);
+  // The suffix would otherwise split the emoji at the 120-character limit.
+  const stem = "가".repeat(116);
+  const file = await upload(page.request, teamId, stem + "🎞️x", original);
   await openTeamFile(page, file.id);
   const copy = page.getByRole("button", {
     name: "다른 이름으로 저장",
@@ -483,7 +491,7 @@ test("다른 이름으로 저장은 미저장 본문을 팀 사본으로 저장�
   });
   const dialog = page.getByRole("dialog", { name: "다른 이름으로 저장" });
   await copy.click();
-  await expect(dialog.getByRole("textbox")).toHaveValue("팀 원본 사본");
+  await expect(dialog.getByRole("textbox")).toHaveValue(stem + " 사본");
   await expect(
     dialog.getByRole("button", { name: "이 기기에 저장" }),
   ).toHaveCount(0);
@@ -664,8 +672,26 @@ test("이미지가 든 대표 자료(5.9MB)를 저장하고 내려받아 독립 
   // The downloaded file opens in the editor running on its own, outside GraeBoard's frame.
   await page.goto(`/tools/canvaslide/${current.buildId}/`);
   await expect(page).toHaveTitle(/ — CanvaSlide$/);
+  const bar = page.locator("header.editor-top-bar");
+  await expect(
+    bar.getByRole("textbox", { name: "Document name" }),
+  ).toBeVisible();
+  for (const name of [/^New \(/, /^Open \(/, /^Save \(/, /^Save as/i])
+    await expect(bar.getByRole("button", { name })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await bar.getByRole("button", { name: "File menu", exact: true }).click();
+  await expect(bar.getByRole("menuitem")).toHaveText([
+    "New",
+    "Open",
+    "Save",
+    "Save as…",
+  ]);
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1366, height: 900 });
+  const openFile = bar.getByRole("button", { name: /^Open \(/ });
+  await expect(openFile).toBeVisible();
   const chooser = page.waitForEvent("filechooser");
-  await page.getByRole("button", { name: /^Open/ }).click();
+  await openFile.click();
   await (
     await chooser
   ).setFiles({

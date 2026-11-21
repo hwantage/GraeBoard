@@ -20,6 +20,7 @@ import {
 } from "../../shared/slides/slide-frame-protocol.js";
 import {
   MAX_SLIDE_TITLE_LENGTH,
+  slideCopyTitle,
   slideTitleProblem,
 } from "../../shared/slides/slide-file-rules.js";
 import {
@@ -305,7 +306,7 @@ export default function SlideEditorFrame({
           if (!live.current.state?.canStore || live.current.dialog) return null;
           const title = await ask<string | null>((resolve) => ({
             kind: "save-target",
-            name: bound ? `${name} 사본` : name,
+            name: bound ? slideCopyTitle(name) : name,
             resolve,
           }));
           return title ? { kind: "team", title } : null;
