@@ -1,9 +1,12 @@
-import { useRef, useState } from "react";
-import { LayoutGrid, List, Plus, Upload } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Info, LayoutGrid, List, Plus, Upload } from "lucide-react";
 import ray from "../../assets/character/canvaslide-ray-384.png";
 import { showTouchTooltip } from "../ui/Tooltip";
 import { useRecentCreation } from "../sheet/NewTaskMark";
-import { useTouchPress } from "../ui/useTouchPress";
+import { Avatar } from "../ui/Avatar";
+import { relativeTime } from "../ui/HistoryTime";
+import { serverNow } from "../platform/api";
+import type { User } from "../types";
 import { Button } from "../ui/Button";
 import SlideCardThumbnail from "./SlideCardThumbnail";
 import type { SlideThumbnails } from "./slide-thumbnails";
@@ -40,6 +43,7 @@ export type SlideListView = "cards" | "table";
 export default function SlideFileList({
   teamId,
   files,
+  users,
   view,
   onViewChange,
   thumbnails,
@@ -52,6 +56,7 @@ export default function SlideFileList({
 }: {
   teamId: string;
   files: SlideFile[];
+  users: User[];
   view: SlideListView;
   onViewChange: (view: SlideListView) => void;
   thumbnails: SlideThumbnails | null;
@@ -64,7 +69,6 @@ export default function SlideFileList({
 }) {
   const [busy, setBusy] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
-  const touch = useTouchPress();
   async function importFile(file: File) {
     if (file.size > MAX_SLIDE_FILE_BYTES)
       return onError(
@@ -208,43 +212,101 @@ export default function SlideFileList({
             </tbody>
           </table>
         ) : (
-          <ul className="slide-card-grid" aria-label="팀 자료">
-            {files.map((file) => (
-              <li key={file.id} className="slide-file-card">
-                <button
-                  type="button"
-                  className="slide-open"
-                  aria-label={file.title}
-                  data-tooltip={`${file.title}\n생성  ${dateTime.format(new Date(file.createdAt))}\n수정  ${dateTime.format(new Date(file.updatedAt))}\n크기  ${size(file.byteLength)}`}
-                  onClick={() => onOpen(file)}
-                  onPointerDown={(event) => {
-                    const button = event.currentTarget;
-                    touch.start(event, {
-                      onLongPress: () => showTouchTooltip(button),
-                    });
-                  }}
-                  onClickCapture={touch.onClickCapture}
-                  onContextMenu={(event) => {
-                    if (touch.isTouch.current) event.preventDefault();
-                  }}
-                >
-                  <SlideCardThumbnail
-                    key={file.contentHash}
-                    file={file}
-                    thumbnails={thumbnails}
-                    canWrite={canWrite}
-                  />
-                  <span className="slide-card-heading">
-                    <span className="slide-card-title">{file.title}</span>
-                  </span>
-                </button>
-                <SlideNewMark createdAt={file.createdAt} />
-              </li>
-            ))}
-          </ul>
+          <SlideFileCards
+            files={files}
+            users={users}
+            thumbnails={thumbnails}
+            canWrite={canWrite}
+            onOpen={onOpen}
+          />
         )}
       </div>
     </section>
+  );
+}
+
+function SlideFileCards({
+  files,
+  users,
+  thumbnails,
+  canWrite,
+  onOpen,
+}: {
+  files: SlideFile[];
+  users: User[];
+  thumbnails: SlideThumbnails | null;
+  canWrite: boolean;
+  onOpen: (file: SlideFile) => void;
+}) {
+  const [now, setNow] = useState(() => Date.parse(serverNow()));
+  const creators = useMemo(
+    () => new Map(users.map((user) => [user.id, user])),
+    [users],
+  );
+  useEffect(() => {
+    const timer = window.setInterval(
+      () => setNow(Date.parse(serverNow())),
+      60_000,
+    );
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <ul className="slide-card-grid" aria-label="팀 자료">
+      {files.map((file) => {
+        const creator = file.creationFromSync
+          ? undefined
+          : creators.get(file.createdBy);
+        const createdLabel = file.creationFromSync ? "첫 동기화본" : "생성";
+        const info = `${file.title}\n${createdLabel}  ${dateTime.format(new Date(file.createdAt))}\n수정  ${dateTime.format(new Date(file.updatedAt))}\n크기  ${size(file.byteLength)}`;
+        return (
+          <li key={file.id} className="slide-file-card">
+            <SlideCardThumbnail
+              key={file.contentHash}
+              file={file}
+              thumbnails={thumbnails}
+              canWrite={canWrite}
+            />
+            <SlideNewMark createdAt={file.createdAt} />
+            <div className="slide-card-heading">
+              <span
+                role="img"
+                aria-label={
+                  creator ? `작성자 ${creator.name}` : "작성자 정보 없음"
+                }
+              >
+                <Avatar user={creator} />
+              </span>
+              <div className="slide-card-caption">
+                <button
+                  type="button"
+                  className="slide-open"
+                  onClick={() => onOpen(file)}
+                >
+                  <span className="slide-card-title">{file.title}</span>
+                </button>
+                <div className="slide-card-byline">
+                  {(creator || file.creationFromSync) && (
+                    <span>{creator?.name ?? createdLabel}</span>
+                  )}
+                  <time dateTime={file.createdAt}>
+                    {relativeTime(file.createdAt, now, "minute")}
+                  </time>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="slide-card-info"
+                aria-label={`${file.title} 정보`}
+                data-tooltip={info}
+                onClick={(event) => showTouchTooltip(event.currentTarget)}
+              >
+                <Info size={17} aria-hidden="true" />
+              </button>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

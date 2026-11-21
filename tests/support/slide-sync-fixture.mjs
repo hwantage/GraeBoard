@@ -131,6 +131,11 @@ export function slideSyncContract(name, makeStores) {
     assert.deepEqual(await outside.list(), await inside.list());
     assert.equal((await outside.read(file.id)).equals(first), true);
     assert.equal((await outside.store.get(teamId, file.id)).revision, 1);
+    assert.equal((await outside.store.list(teamId))[0].creationFromSync, true);
+    assert.equal(
+      (await inside.store.list(teamId))[0].creationFromSync,
+      undefined,
+    );
 
     // The other direction, and a file made there.
     const second = slide("외부에서 고친 내용");

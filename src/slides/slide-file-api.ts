@@ -12,6 +12,7 @@ export type SlideFile = {
   revision: number;
   byteLength: number;
   contentHash: string;
+  creationFromSync?: boolean;
   createdBy: string;
   createdAt: string;
   updatedBy: string;

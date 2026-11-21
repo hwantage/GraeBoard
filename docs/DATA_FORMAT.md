@@ -423,6 +423,8 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 영구 저장의 단위는 표준 `.canvaslide` 파일 하나입니다. 그래보드는 캔버스 요소나 이미지를 해석하지 않고 받은 바이트를 그대로 보관하며, 자료를 찾고 권한·변경을 관리하는 정보만 따로 둡니다. 파일 한도는 사내·외부 공통 25MiB입니다(`shared/slides/slide-file-rules.js`). 서버는 크기와 "UTF-8 JSON 객체 하나"인지만 확인하고, 형식 검증은 편집기의 코덱이 열 때와 저장할 때 수행합니다.
 
+파일 메타데이터의 `createdBy`·`createdAt`은 이 사이트에 기록된 생성 정보입니다. 동기화로 처음 받은 파일과 자동 충돌 사본에는 API가 `creationFromSync: true`를 함께 반환합니다. 이 경우 두 값은 최초 수신 버전 또는 충돌로 보존한 버전의 저장자·시각입니다. 판별에는 기존 생성 요청 ID를 사용합니다.
+
 팀 파일 본문 저장 요청(`PUT …/slides/:fileId/content`)은 변경할 제목과 기준 제목을 `X-Slide-Title`·`X-Slide-Base-Title` 헤더에 URI 인코딩해 함께 보낼 수 있습니다. 기준 revision과 제목이 일치해야 반영합니다. 두 헤더가 없는 기존 호출은 본문만 저장합니다.
 
 사내 Node는 `SLIDE_FILES_DIR`(기본 `data/slide-files`)의 **독립 저장소**를 사용합니다. 업무 DB(`DB_PATH`, v34)에는 슬라이드 테이블이 없고 두 DB 사이에 외래 키도 없습니다.

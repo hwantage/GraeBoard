@@ -171,6 +171,11 @@ const meta = (row) =>
     revision: row.revision,
     byteLength: row.byte_length,
     contentHash: row.content_hash,
+    // A sync-created row records the first received revision, whose editor
+    // can differ from the original creator.
+    ...(/^sync(?:-conflict)?:/.test(row.create_request_id) && {
+      creationFromSync: true,
+    }),
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedBy: row.updated_by,

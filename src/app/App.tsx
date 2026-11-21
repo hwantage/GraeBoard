@@ -2387,6 +2387,7 @@ function Workspace({
             teamId={teamId}
             user={user}
             teams={boot.teams}
+            users={boot.users}
             onSelectTeam={(id) => void navigateWorkspace(() => setTeamId(id))}
             onNotify={(message) => {
               setUndoToast(null);

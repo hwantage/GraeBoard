@@ -226,7 +226,7 @@ test("카드형과 목록형을 전환하고 상세에서 돌아오거나 다시
   await expect(table).toHaveCount(0);
 });
 
-test("CanvaSlide 제목 옆에서 새 자료를 만들고 카드의 두 줄 제목과 썸네일 바깥 툴팁을 표시한다", async ({
+test("CanvaSlide 제목 옆에서 새 자료를 만들고 썸네일 아래의 두 줄 제목과 정보 아이콘의 툴팁을 확인한다", async ({
   page,
   browserName,
 }) => {
@@ -248,6 +248,7 @@ test("CanvaSlide 제목 옆에서 새 자료를 만들고 카드의 두 줄 제�
   const card = fileCard(page, title);
   const other = fileCard(page, shortTitle);
   const titleButton = card.getByRole("button", { name: title, exact: true });
+  const info = card.getByRole("button", { name: title + " 정보", exact: true });
   const newButton = page.getByRole("button", { name: "새 팀 자료" });
   await page.getByRole("heading", { name: "CanvaSlide" }).hover();
   const tooltip = page.getByRole("tooltip");
@@ -257,7 +258,7 @@ test("CanvaSlide 제목 옆에서 새 자료를 만들고 카드의 두 줄 제�
   const newBadge = card.getByRole("img", { name: "새 자료" });
   await expect(tooltip).toHaveCount(0);
   await expect(image).toBeVisible();
-  await expect(card.getByRole("button")).toHaveCount(1);
+  await expect(card.getByRole("button")).toHaveCount(2);
   await expect(
     page.getByRole("list").getByRole("button", { name: "새 팀 자료" }),
   ).toHaveCount(0);
@@ -269,11 +270,24 @@ test("CanvaSlide 제목 옆에서 새 자료를 만들고 카드의 두 줄 제�
     hour12: false,
   });
   const preview = await image.getAttribute("src");
+  const boot = await json(await page.request.get("/api/bootstrap"));
+  const creator = boot.users.find(
+    (person: { id: string }) => person.id === file.createdBy,
+  );
+  const avatar = card.getByRole("img", {
+    name: "작성자 " + creator.name,
+    exact: true,
+  });
+  await expect(card.locator("time")).toHaveAttribute(
+    "datetime",
+    file.createdAt,
+  );
+  await expect(card.locator(".slide-card-byline")).toContainText(creator.name);
   for (const width of [1280, 768, 540, 390, 320]) {
     await page.setViewportSize({ width, height: 800 });
     await page.getByRole("heading", { name: "CanvaSlide" }).hover();
     const idle = (await card.boundingBox())!;
-    expect(idle.height).toBe(168);
+    expect(idle.width).toBeGreaterThan(200);
     expect((await other.boundingBox())!.height).toBe(idle.height);
     await expect(newBadge).toHaveText("NEW");
     await expect(newBadge).toBeVisible();
@@ -287,11 +301,15 @@ test("CanvaSlide 제목 옆에서 새 자료를 만들고 카드의 두 줄 제�
     expect(rightGap).toBeGreaterThanOrEqual(0);
     expect(rightGap).toBeLessThanOrEqual(12);
     expect(badge.y + badge.height).toBeLessThan(strip.y);
-    expect(strip.y).toBeGreaterThan(previewBox.y);
-    expect(strip.y + strip.height).toBeCloseTo(
-      previewBox.y + previewBox.height,
-      0,
+    expect(strip.y).toBeGreaterThanOrEqual(
+      previewBox.y + previewBox.height - 1,
     );
+    expect(previewBox.width / previewBox.height).toBeCloseTo(16 / 9, 1);
+    const avatarBox = (await avatar.boundingBox())!;
+    const titleBox = (await caption.boundingBox())!;
+    const infoBox = (await info.boundingBox())!;
+    expect(avatarBox.x + avatarBox.width).toBeLessThan(titleBox.x);
+    expect(infoBox.x).toBeGreaterThan(titleBox.x + titleBox.width);
     expect(strip.width).toBeCloseTo(previewBox.width, 0);
     await expect(caption).toHaveCSS("-webkit-line-clamp", "2");
     expect(
@@ -300,7 +318,9 @@ test("CanvaSlide 제목 옆에서 새 자료를 만들고 카드의 두 줄 제�
         clipped: el.scrollHeight > el.clientHeight,
       })),
     ).toEqual({ lines: 2, clipped: true });
-    await card.hover();
+    await titleButton.hover();
+    await expect(tooltip).toHaveCount(0);
+    await info.hover();
     await expect(tooltip).toContainText(title);
     await expect(tooltip).toContainText(/생성/);
     await expect(tooltip).toContainText(
@@ -314,10 +334,10 @@ test("CanvaSlide 제목 옆에서 새 자료를 만들고 카드의 두 줄 제�
     );
     await expect(card.getByRole("img", { name: "새 자료" })).toBeVisible();
     await expect(image).toHaveAttribute("src", preview!);
-    await expect(card.getByRole("button")).toHaveCount(1);
+    await expect(card.getByRole("button")).toHaveCount(2);
     const rect = (await tooltip.boundingBox())!;
     expect(
-      rect.y >= idle.y + idle.height || rect.y + rect.height <= idle.y,
+      rect.y >= infoBox.y + infoBox.height || rect.y + rect.height <= infoBox.y,
     ).toBe(true);
     expect(rect.x).toBeGreaterThanOrEqual(0);
     expect(rect.x + rect.width).toBeLessThanOrEqual(width);
@@ -377,16 +397,12 @@ test("CanvaSlide 제목 옆에서 새 자료를 만들고 카드의 두 줄 제�
     browserName === "webkit" && process.platform === "darwin"
       ? "Alt+Tab"
       : "Tab";
-  const titles = page
-    .getByRole("list", { name: "팀 자료" })
-    .getByRole("button");
-  await titles.first().focus();
+  await titleButton.focus();
   await page.keyboard.press(tab);
-  const next = titles.nth(1);
-  await expect(next).toBeFocused();
-  await expect(tooltip).toContainText((await next.getAttribute("aria-label"))!);
+  await expect(info).toBeFocused();
+  await expect(tooltip).toContainText(title);
   await page.keyboard.press("Escape");
-  await expect(next).toBeFocused();
+  await expect(info).toBeFocused();
   await expect(tooltip).toHaveCount(0);
   await card.hover();
   for (const button of [
@@ -401,7 +417,7 @@ test("CanvaSlide 제목 옆에서 새 자료를 만들고 카드의 두 줄 제�
   ).toHaveCount(0);
 });
 
-test("터치로 카드를 길게 누르면 툴팁이 보이고 짧게 누르면 해당 자료가 열린다", async ({
+test("터치로 정보 아이콘을 누르면 툴팁이 보이고 제목을 누르면 해당 자료가 열린다", async ({
   page,
   browser,
 }) => {
@@ -422,21 +438,14 @@ test("터치로 카드를 길게 누르면 툴팁이 보이고 짧게 누르면 
     const view = await touch.newPage();
     await view.goto("/slides");
     const card = fileCard(view, title);
-    const open = card.getByRole("button", { name: title });
+    const open = card.getByRole("button", { name: title, exact: true });
     const tip = view.getByRole("tooltip");
     await expect(open).toBeVisible();
     await expect(tip).toHaveCount(0);
-    const press = {
-      pointerType: "touch",
-      pointerId: 3,
-      isPrimary: true,
-      button: 0,
-    };
-    await open.dispatchEvent("pointerdown", press);
+    await card
+      .getByRole("button", { name: title + " 정보", exact: true })
+      .tap();
     await expect(tip).toContainText(title);
-    await open.dispatchEvent("pointerup", press);
-    await open.dispatchEvent("pointerout", press);
-    await open.dispatchEvent("click", { detail: 1 });
     await expect(tip).toContainText("생성");
     await expect(view).toHaveURL(/\/slides$/);
     await view.getByRole("heading", { name: "CanvaSlide" }).tap();
@@ -467,14 +476,14 @@ test("카드를 누르는 동안 썸네일이 표시돼도 원래 누른 자료�
     await route.continue();
   });
   await page.goto("/slides");
-  const open = fileCard(page, file.title).getByRole("button");
-  const placeholder = open.locator(".slide-card-thumbnail svg");
+  const card = fileCard(page, file.title);
+  const placeholder = card.locator(".slide-card-thumbnail svg");
   await expect(placeholder).toBeVisible();
   const svg = (await placeholder.boundingBox())!;
   await page.mouse.move(svg.x + svg.width / 2, svg.y + svg.height / 2);
   await page.mouse.down();
   release();
-  await expect(open.locator(".slide-card-thumbnail img")).toBeVisible();
+  await expect(card.locator(".slide-card-thumbnail img")).toBeVisible();
   await page.mouse.up();
   await expect(titleInput(page)).toHaveValue(file.title);
 });
@@ -549,9 +558,11 @@ test("첫 프레임 사진을 썸네일에 그리고 다음 열람자는 원본�
     await expect(view.getByRole("button", { name: "새 팀 자료" })).toHaveCount(
       0,
     );
-    await card(view).hover();
+    await card(view)
+      .getByRole("button", { name: file.title + " 정보", exact: true })
+      .hover();
     await expect(view.getByRole("tooltip")).toContainText("크기");
-    await expect(card(view).getByRole("button")).toHaveCount(1);
+    await expect(card(view).getByRole("button")).toHaveCount(2);
     expect(reads).toEqual([]);
   } finally {
     await viewer.close();
@@ -564,15 +575,34 @@ test("카드의 new 표시는 생성 시각을 기준으로 12시간이 지나�
   const now = Date.now();
   const stamp = (offset: number) => new Date(now + offset).toISOString();
   const period = 12 * 60 * 60 * 1000;
+  const creator = (await json(await page.request.get("/api/bootstrap")))
+    .users[0];
   await page.clock.install({ time: new Date(now) });
   await page.route("**/api/teams/*/slides", async (route) => {
     const files = [
       { title: "만료 직전", createdAt: stamp(-period + 60_000) },
       { title: "생성 12시간 경과", createdAt: stamp(-period) },
+      {
+        title: "최근 자료",
+        createdAt: stamp(-4 * 60_000),
+        createdBy: creator.id,
+      },
+      {
+        title: "예전 자료",
+        createdAt: stamp(-2 * 86_400_000),
+        createdBy: "former-member",
+      },
+      {
+        title: "원격 자료",
+        createdAt: stamp(-86_400_000),
+        creationFromSync: true,
+        createdBy: creator.id,
+      },
     ].map((file) => ({
       ...file,
       id: randomUUID(),
       updatedAt: stamp(0),
+      updatedBy: "another-editor",
       byteLength: 123,
     }));
     await route.fulfill({
@@ -589,7 +619,29 @@ test("카드의 new 표시는 생성 시각을 기준으로 12시간이 지나�
   await page.getByRole("heading", { name: "CanvaSlide" }).hover();
   await expect(badge("생성 12시간 경과")).toHaveCount(0);
   await expect(badge("만료 직전")).toBeVisible();
+  const recent = fileCard(page, "최근 자료");
+  await expect(
+    recent.getByRole("img", { name: "작성자 " + creator.name }),
+  ).toBeVisible();
+  await expect(recent.locator("time")).toHaveText("4분 전");
+  await expect(fileCard(page, "생성 12시간 경과").locator("time")).toHaveText(
+    "12시간 전",
+  );
+  await expect(
+    fileCard(page, "예전 자료").getByRole("img", { name: "작성자 정보 없음" }),
+  ).toBeVisible();
+  await expect(fileCard(page, "예전 자료").locator("time")).toHaveText(
+    "2일 전",
+  );
+  const synced = fileCard(page, "원격 자료");
+  await expect(
+    synced.getByRole("img", { name: "작성자 정보 없음" }),
+  ).toBeVisible();
+  await expect(synced.locator(".slide-card-byline")).toContainText(
+    "첫 동기화본",
+  );
   await page.clock.fastForward(61_000);
+  await expect(recent.locator("time")).toHaveText("5분 전");
   await expect(badge("만료 직전")).toHaveCount(0);
 });
 
@@ -634,7 +686,9 @@ test("상세 제목을 고쳐 본문과 함께 저장하고 목록과 다시 연
   const bytes = await (await content(page.request, teamId, file.id)).body();
   expect(JSON.parse(bytes.toString()).name).toBe(title);
   await page.getByRole("button", { name: "팀 자료 목록" }).click();
-  const cards = page.getByRole("list", { name: "팀 자료" }).getByRole("button");
+  const cards = page
+    .getByRole("list", { name: "팀 자료" })
+    .locator(".slide-open");
   await expect(cards.nth(0)).toHaveAccessibleName(newerTitle);
   await expect(cards.nth(1)).toHaveAccessibleName(title);
   await page.getByRole("button", { name: title, exact: true }).click();
@@ -1064,7 +1118,9 @@ test("상세에서 사본을 삭제할 때 취소와 실패는 편집을 유지�
     bytes,
   );
   await expect.poll(() => snapshotCount(page, scope)).toBe(0);
-  await fileCard(page, file.title).getByRole("button").click();
+  await fileCard(page, file.title)
+    .getByRole("button", { name: file.title, exact: true })
+    .click();
   await expect(idleSave(page)).toBeDisabled();
   await expect(
     editor(page).getByRole("dialog", { name: "Recover unsaved work" }),
@@ -1086,7 +1142,9 @@ test("편집기 배포본이 없는 서버에서도 자료 상세에서 저장�
   );
   await page.setViewportSize({ width: 320, height: 800 });
   await page.goto("/slides");
-  await fileCard(page, file.title).getByRole("button").click();
+  await fileCard(page, file.title)
+    .getByRole("button", { name: file.title, exact: true })
+    .click();
   await expect(page).toHaveURL(new RegExp(file.id));
   await expect(page.locator("iframe.slide-editor-frame")).toHaveCount(0);
   const back = page.getByRole("button", { name: "팀 자료 목록" });
@@ -1237,7 +1295,7 @@ test("이동 전에 다른 이름으로 저장하면 편집한 내용을 사본�
   expect(await (await content(page.request, teamId, file.id)).body()).toEqual(
     original,
   );
-  await card.getByRole("button").click();
+  await card.getByRole("button", { name: copyTitle, exact: true }).click();
   await expect(titleInput(page)).toHaveValue(copyTitle);
   await expect(idleSave(page)).toBeDisabled();
   const copyId = new URL(page.url()).searchParams.get("file")!;

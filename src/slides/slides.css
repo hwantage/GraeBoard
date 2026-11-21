@@ -105,50 +105,28 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr));
   align-content: start;
-  gap: 10px;
+  gap: 16px 12px;
   margin: 0;
-  padding: 8px;
+  padding: 10px;
   list-style: none;
 }
-@media (max-width: 520px) {
+@media (max-width: 440px) {
   .slide-card-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 .slide-file-card {
   position: relative;
   min-width: 0;
 }
-.slide-open {
-  display: grid;
-  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
-  overflow: hidden;
-  width: 100%;
-  height: 168px;
-  padding: 0;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--surface, #fff);
-  color: inherit;
-  font: inherit;
-  font-weight: 600;
-  text-align: left;
-  cursor: pointer;
-  -webkit-touch-callout: none;
-  user-select: none;
-}
-.slide-open:hover,
-.slide-open:focus-visible {
-  border-color: var(--accent);
-}
 .slide-card-thumbnail {
-  grid-area: 1 / 1;
-  /* Keep the card as the click target when the preview replaces its placeholder. */
-  pointer-events: none;
   display: grid;
   grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
+  width: 100%;
+  aspect-ratio: 16 / 9;
   overflow: hidden;
+  border-radius: 9px;
   background: var(--accent-surface);
   color: var(--accent-muted);
 }
@@ -159,14 +137,35 @@
   object-fit: cover;
 }
 .slide-card-heading {
-  grid-area: 1 / 1;
-  align-self: end;
   display: grid;
-  align-content: center;
-  min-height: 46px;
-  padding: 4px 10px;
-  background: rgb(25 29 31 / 64%);
-  color: #fff;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+  min-height: 70px;
+  padding: 8px 1px 0;
+}
+.slide-open {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  text-align: left;
+}
+.slide-open::after {
+  /* Make the entire card a stable hit target as its thumbnail loads. */
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9px;
+}
+.slide-open:focus-visible {
+  outline: 0;
+}
+.slide-open:focus-visible::after {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.slide-open:hover .slide-card-title {
+  color: var(--accent);
 }
 .slide-card-title {
   display: -webkit-box;
@@ -174,7 +173,41 @@
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   overflow-wrap: anywhere;
-  line-height: 18px;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 19px;
+}
+.slide-card-byline {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 17px;
+  white-space: nowrap;
+}
+.slide-card-byline span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.slide-card-byline span + time::before {
+  content: "·";
+  margin-right: 4px;
+}
+.slide-card-info {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  padding: 0;
+  color: var(--muted);
+}
+.slide-card-info:is(:hover, :focus-visible) {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 .slide-file-card > .slide-new-mark {
   position: absolute;

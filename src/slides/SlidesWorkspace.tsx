@@ -56,12 +56,14 @@ export default function SlidesWorkspace({
   teamId,
   user,
   teams,
+  users,
   onSelectTeam,
   onNotify,
 }: {
   ref?: Ref<SlidesWorkspaceHandle>;
   teamId: string;
   user: User;
+  users: User[];
   teams: { id: string; name: string }[];
   onSelectTeam: (teamId: string) => void;
   onNotify: (message: string) => void;
@@ -261,6 +263,7 @@ export default function SlidesWorkspace({
         thumbnails={thumbnails}
         teamId={teamId}
         files={list.files}
+        users={users}
         view={view}
         onViewChange={changeView}
         canWrite={list.canWrite && !!editor}
