@@ -300,7 +300,7 @@ export class SqliteSlideFileRepository {
   list(teamId) {
     return this.#open()
       .prepare(
-        "SELECT * FROM slide_files WHERE team_id=? AND deleted_at IS NULL ORDER BY updated_at DESC, id",
+        "SELECT * FROM slide_files WHERE team_id=? AND deleted_at IS NULL ORDER BY created_at DESC, id",
       )
       .all(teamId)
       .map(meta);

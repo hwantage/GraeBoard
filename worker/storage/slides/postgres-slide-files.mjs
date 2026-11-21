@@ -175,7 +175,7 @@ export class PostgresSlideFileRepository {
     return this.#read(async (client) =>
       (
         await client.query(
-          `SELECT * FROM ${S}.slide_files WHERE team_id=$1 AND deleted_at IS NULL ORDER BY updated_at DESC, id`,
+          `SELECT * FROM ${S}.slide_files WHERE team_id=$1 AND deleted_at IS NULL ORDER BY created_at DESC, id`,
           [teamId],
         )
       ).rows.map(meta),

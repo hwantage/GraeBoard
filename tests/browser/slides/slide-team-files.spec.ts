@@ -474,6 +474,13 @@ test("상세 제목을 고쳐 본문과 함께 저장하고 목록과 다시 연
     "상세 제목 원본",
     example("flowchart.canvaslide"),
   );
+  const newerTitle = `나중에 생성한 자료 ${randomUUID().slice(0, 8)}`;
+  await upload(
+    page.request,
+    teamId,
+    newerTitle,
+    example("flowchart.canvaslide"),
+  );
   await openTeamFile(page, file.id);
   const input = titleInput(page);
   await expect(input).toHaveValue(file.title);
@@ -499,6 +506,9 @@ test("상세 제목을 고쳐 본문과 함께 저장하고 목록과 다시 연
   const bytes = await (await content(page.request, teamId, file.id)).body();
   expect(JSON.parse(bytes.toString()).name).toBe(title);
   await page.getByRole("button", { name: "팀 자료 목록" }).click();
+  const cards = page.getByRole("list", { name: "팀 자료" }).getByRole("button");
+  await expect(cards.nth(0)).toHaveAccessibleName(newerTitle);
+  await expect(cards.nth(1)).toHaveAccessibleName(title);
   await page.getByRole("button", { name: title, exact: true }).click();
   await expect(input).toHaveValue(title);
   await expect(idleSave(page)).toBeDisabled();

@@ -164,8 +164,14 @@ async function team(t, directory) {
 
 test("편집기 제목과 파일을 함께 저장하고 목록에서 바뀐 제목과 경합하면 둘 다 보존한다", async (t) => {
   const { lead, teamId } = await team(t);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
   const file = (await lead.upload(teamId, "처음", slide("처음"))).body;
-  const path = "/api/teams/" + teamId + "/slides/" + file.id;
+  t.mock.timers.tick(1000);
+  const newer = (await lead.upload(teamId, "나중 자료", slide("나중 자료")))
+    .body;
+  const listPath = "/api/teams/" + teamId + "/slides";
+  const path = listPath + "/" + file.id;
+  t.mock.timers.tick(1000);
   const save = (baseTitle, title, revision) =>
     lead.data(path + "/content", {
       method: "PUT",
@@ -183,6 +189,11 @@ test("편집기 제목과 파일을 함께 저장하고 목록에서 바뀐 제�
   assert.equal(saved.body.revision, 2);
   assert.equal(saved.body.title, "새 이름");
   await lead.data(path, { method: "PATCH", json: { title: "동료의 이름" } });
+  assert.deepEqual(
+    (await lead.data(listPath)).body.files.map((row) => row.id),
+    [newer.id, file.id],
+    "editing or renaming an older file must preserve creation order",
+  );
   const conflict = await save("새 이름", "내 이름", 2);
   assert.equal(conflict.status, 409);
   assert.equal(conflict.body.details.current.title, "동료의 이름");
