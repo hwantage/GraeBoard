@@ -30,6 +30,9 @@
 - 검증(커밋 `d8d4a91`, Node 22.23.1·npm 10.9.8·PostgreSQL 17, 맥북): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 931건 통과(실패·취소·skip 0, 그중 `tests/slides/` 10개 suite), `npm run build`·`npm run build:edge` 성공, 구조 오류 0·import 경계 위반 0. `tests/browser/slides` 9건 × Chromium·Firefox·WebKit 27건 통과. `npm run test:e2e:core` 315건은 310 통과·3 실패·2 skip이며 3건(`calendar-improvements.spec.ts:320` × 3개 엔진, 체크박스 strict mode violation)은 기준 커밋 `37a8702`에서도 같은 오류로 실패합니다. 전체 브라우저 검사(각 엔진 824건)는 실행하지 않았습니다.
 - 격리 검증의 범위: 외부 저장소·백업·동기화는 임시 PostgreSQL 17 클러스터에서 실행했고 R2는 메모리 버킷, GitHub Git Data API는 로컬 bare 저장소를 읽는 대역입니다. 실제 Supabase Edge·Cloudflare R2·GitHub와 운영·개발 외부 DB에는 적용하지 않았습니다. 슬라이드 도입 전 릴리스 호환은 `37a8702`의 실제 소스를 Git에서 꺼내 같은 DB·저장소에서 실행했습니다. 깨끗한 checkout(`npm ci` → `npm run build`, pnpm·`dist-canvaslide` 없음)은 로컬 주소로 배포본을 제공해 확인했으며 실제 보관 브랜치 게시와 갱신 workflow의 Actions 실행은 하지 않았습니다. 원본 커밋 `649180c`와 `0de6fc3` 두 개를 같은 어댑터로 조립했고, 저장 구조가 달랐던 `e3690be`는 형 검사에서 조립이 실패했습니다.
 
+- 최종 리뷰에서 버전 2의 중복 확인을 버전 3의 게시 직후에 전달해, 같은 파일이 한 번 더 게시되는 경우를 재현했습니다. SQLite와 PostgreSQL에서 이미 확정한 버전은 쓰기 없이 확인하고, 파일별 확인이 거절된 회차는 수신 위치를 유지해 다음 주기에 다시 읽습니다. 두 저장소 조합에서 추가 회귀 검사 4건이 수정 전 실패하고 수정 후 통과했습니다.
+- 맥북의 격리된 Chromium에서 원본 예제 3프레임의 발표·페이지 이동, HTML 내보내기와 독립 플레이어 재생, PDF 내보내기와 3쪽 재가져오기, Figma 예제의 2개 페이지 가져오기를 확인했습니다.
+
 ## 2026-11-20 — 터치 화면에서 문서 이미지 도구가 항상 보여 내용을 가리던 문제
 
 - 문서 본문 이미지의 오른쪽 위 버튼(편집·원래 크기·크게 보기)과 크기 손잡이는 `task-document.css`의 `@media (hover: none)`이 터치 화면에서 항상 표시해 이미지 내용을 가렸습니다. 숨긴 상태도 `opacity: 0`뿐이어서 보이지 않는 버튼이 탭을 받았습니다.

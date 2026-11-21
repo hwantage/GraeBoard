@@ -449,11 +449,10 @@ export class PostgresSlideFileRepository {
           [teamId, fileId],
         )
       ).rows[0];
-      if (
-        row?.pending_version !== shared.version &&
-        row?.shared_version !== shared.version
-      )
-        return false;
+      // A duplicate confirmation has nothing to write. In particular it
+      // must leave the pending version of a newer publication alone.
+      if (row?.pending_version !== shared.version)
+        return row?.shared_version === shared.version;
       await this.#markShared(client, fileId, shared);
       return true;
     });

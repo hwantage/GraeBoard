@@ -573,11 +573,10 @@ export class SqliteSlideFileRepository {
           "SELECT shared_version,pending_version FROM slide_sync_files WHERE team_id=? AND file_id=?",
         )
         .get(teamId, fileId);
-      if (
-        row?.pending_version !== shared.version &&
-        row?.shared_version !== shared.version
-      )
-        return false;
+      // A duplicate confirmation has nothing to write. In particular it
+      // must leave the pending version of a newer publication alone.
+      if (row?.pending_version !== shared.version)
+        return row?.shared_version === shared.version;
       this.#markShared(db, teamId, fileId, shared);
       return true;
     });

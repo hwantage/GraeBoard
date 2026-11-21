@@ -221,8 +221,7 @@ export async function syncSlideFiles({
       mine?.pendingVersion === meta.version ||
       shared?.version === meta.version
     ) {
-      await store.syncMarkShared(teamId, meta.id, sharedOf(meta, metaOid));
-      return true;
+      return store.syncMarkShared(teamId, meta.id, sharedOf(meta, metaOid));
     }
     const dirty = !!mine && slideFileDirty(mine);
     const localContent = dirty && mine.contentHash !== (shared?.hash ?? null);
@@ -438,13 +437,19 @@ export async function syncSlideFiles({
       file.oid,
     ]),
   );
-  for (const meta of metas)
-    await store.syncMarkShared(
+  let confirmed = true;
+  for (const meta of metas) {
+    const recorded = await store.syncMarkShared(
       teamId,
       meta.id,
       sharedOf(meta, published.get(slideMetaPath(meta.id))),
     );
-  await store.syncSetHead(teamId, commit, head);
+    if (!recorded) confirmed = false;
+  }
+  // The Git push succeeded. If a competing pass changed a file or the
+  // cursor, receive the commit from the last confirmed head on the next pass.
+  if (!confirmed || !(await store.syncSetHead(teamId, commit, head)))
+    result.raced = true;
   result.head = commit;
   result.published = metas.length;
   return result;

@@ -613,6 +613,58 @@ export function slideSyncContract(name, makeStores) {
     assert.equal((await inside.read(file.id)).equals(slide("처음")), true);
   });
 
+  test(`${name}: 이전 버전의 확인이 중복 도착해도 다음 버전의 게시 확인을 보존한다`, async (t) => {
+    const peers = await twoPeers(t, makeStores);
+    if (!peers) return;
+    const { outside, teamId } = peers;
+    const file = await outside.create("자료", slide("첫 버전"));
+    await settle(outside);
+    const record = async () =>
+      (await outside.store.syncFiles(teamId)).find(
+        (entry) => entry.id === file.id,
+      );
+    const previous = (await record()).shared;
+    await outside.save(file.id, slide("다음 버전"));
+
+    // The previous response arrives again after the new ref advances, but
+    // before this pass confirms the new version locally.
+    const publish = outside.transport.publish.bind(outside.transport);
+    outside.transport.publish = async (...args) => {
+      const result = await publish(...args);
+      const pending = (await record()).pendingVersion;
+      assert.ok(pending);
+      await outside.store.syncMarkShared(teamId, file.id, previous);
+      assert.equal((await record()).pendingVersion, pending);
+      return result;
+    };
+    await outside.sync();
+    outside.transport.publish = publish;
+    assert.equal((await record()).shared.hash, sha(slide("다음 버전")));
+    assert.equal((await outside.sync()).published, 0);
+  });
+
+  test(`${name}: 게시한 파일의 버전을 확인하지 못한 회차는 수신 커서를 전진시키지 않는다`, async (t) => {
+    const peers = await twoPeers(t, makeStores);
+    if (!peers) return;
+    const { outside, teamId } = peers;
+    const file = await outside.create("자료", slide("이전"));
+    await settle(outside);
+    const previous = (await outside.store.syncState(teamId)).head;
+    await outside.save(file.id, slide("변경"));
+    const confirm = outside.store.syncMarkShared.bind(outside.store);
+    // A concurrent pass has replaced the version being confirmed.
+    outside.store.syncMarkShared = () => false;
+    const attempt = await outside.sync();
+    assert.equal(attempt.published, 1);
+    assert.equal((await outside.store.syncState(teamId)).head, previous);
+    await outside.sync();
+    assert.equal((await outside.store.syncState(teamId)).head, previous);
+    outside.store.syncMarkShared = confirm;
+    const again = await outside.sync();
+    assert.equal(again.published, 0);
+    assert.equal((await outside.store.syncState(teamId)).head, attempt.head);
+  });
+
   test(`${name}: 늦게 돌아온 게시 응답이 그 사이 확정된 더 새 버전을 되돌리지 않는다`, async (t) => {
     const peers = await twoPeers(t, makeStores);
     if (!peers) return;
