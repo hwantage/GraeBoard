@@ -24,9 +24,11 @@ import type { RichEditorProps as Props } from "./rich-editor-types";
 
 import { safeDocumentLink } from "./document-markdown";
 type LinkRange = { from: number; to: number; mark: Mark };
-function linkAround(state: EditorState): LinkRange | null {
+function linkAround(
+  state: EditorState,
+  selection = state.selection,
+): LinkRange | null {
   const type = state.schema.marks.link;
-  const { selection } = state;
   const { $from, $to } = selection;
   if (!type || !(selection instanceof TextSelection) || !$from.sameParent($to))
     return null;
@@ -34,10 +36,9 @@ function linkAround(state: EditorState): LinkRange | null {
   const offset = $from.parentOffset;
   let mark: Mark | null | undefined = null;
   let index = -1;
-  for (const hit of [
-    offset ? parent.childBefore(offset) : null,
-    parent.childAfter(offset),
-  ]) {
+  const before = offset ? parent.childBefore(offset) : null;
+  const after = parent.childAfter(offset);
+  for (const hit of selection.empty ? [before, after] : [after]) {
     mark = hit?.node && type.isInSet(hit.node.marks);
     if (mark) {
       index = hit!.index;
@@ -59,12 +60,10 @@ function linkAround(state: EditorState): LinkRange | null {
 export default function useDocumentLinkActions({
   props,
   editorRef,
-  latest,
   shell,
   run,
 }: {
   editorRef: React.RefObject<Editor | null>;
-  latest: React.RefObject<Props>;
   shell: React.RefObject<HTMLDivElement | null>;
   props: Props;
   run: (action: (ctx: Ctx) => unknown) => void;
@@ -76,50 +75,99 @@ export default function useDocumentLinkActions({
     text: string;
     original: string;
     editText: boolean;
+    existing: boolean;
   };
   const [link, setLink] = useState<LinkForm | null>(null);
-  const linkFormOpen = useRef(false);
   const [linkError, setLinkError] = useState("");
   type LinkTip = { href: string; left: number; top: number };
   const [linkTip, setLinkTip] = useState<LinkTip | null>(null);
-  const linkTipRef = useRef<LinkTip | null>(null);
+  const hoveredLink = useRef<HTMLAnchorElement | null>(null);
+  const hideTimer = useRef<number | undefined>(undefined);
   const linkTipBox = useRef<HTMLDivElement>(null);
   const linkTitlesRef = useRef<DocumentLinkTitles | null>(null);
   const [notice, notify] = useToast();
   const [noticeFailed, setNoticeFailed] = useState(false);
   const [linkOpenError, setLinkOpenError] = useState("");
   linkOpener.current = documentLinks;
-  linkFormOpen.current = link !== null;
-  function syncLinkTip(view: EditorView, focused = view.hasFocus()) {
-    const range =
-      focused && !latest.current.readOnly && !linkFormOpen.current
-        ? linkAround(view.state)
-        : null;
-    const box = shell.current;
-    let next: LinkTip | null = null;
-    if (range && box) {
-      const rect = box.getBoundingClientRect();
-      const scale = rect.width / box.offsetWidth || 1;
-      const start = view.coordsAtPos(range.from, 1);
-      const end = view.coordsAtPos(range.to, -1);
-      next = {
-        href: range.mark.attrs.href,
-        left: Math.max(0, (start.left - rect.left) / scale),
-        top: (end.bottom - rect.top) / scale + 6,
-      };
-    }
-    const current = linkTipRef.current;
+  function keepLinkTip() {
+    window.clearTimeout(hideTimer.current);
+  }
+  function hideLinkTip() {
+    keepLinkTip();
+    if (!hoveredLink.current) return false;
+    hoveredLink.current = null;
+    setLinkTip(null);
+    return true;
+  }
+  function leaveLinkTip() {
+    if (!hoveredLink.current) return;
+    // Give the pointer time to cross the gap to the action buttons.
+    keepLinkTip();
+    hideTimer.current = window.setTimeout(hideLinkTip, 150);
+  }
+  function hoveredRange(view: EditorView, anchor: HTMLAnchorElement) {
+    if (!view.dom.contains(anchor)) return null;
+    const from = view.posAtDOM(anchor, 0);
+    const to = view.posAtDOM(anchor, anchor.childNodes.length);
     if (
-      current === next ||
-      (current &&
-        next &&
-        current.href === next.href &&
-        Math.abs(current.left - next.left) < 0.5 &&
-        Math.abs(current.top - next.top) < 0.5)
+      from >= to ||
+      !view.state.doc.resolve(from).parent.inlineContent ||
+      !view.state.doc.rangeHasMark(from, to, view.state.schema.marks.link)
+    )
+      return null;
+    const range = linkAround(
+      view.state,
+      TextSelection.create(view.state.doc, from, to),
+    );
+    return range?.mark.attrs.href === anchor.getAttribute("href")
+      ? range
+      : null;
+  }
+  function showLinkTip(event: React.PointerEvent<HTMLDivElement>) {
+    if (
+      event.pointerType !== "mouse" ||
+      event.buttons ||
+      props.readOnly ||
+      link !== null
     )
       return;
-    linkTipRef.current = next;
-    setLinkTip(next);
+    const anchor =
+      event.target instanceof Element ? event.target.closest("a[href]") : null;
+    if (!(anchor instanceof HTMLAnchorElement)) return;
+    keepLinkTip();
+    if (hoveredLink.current === anchor) return;
+    const box = shell.current;
+    const view = editorRef.current?.action((ctx) => ctx.get(editorViewCtx));
+    const range = view && hoveredRange(view, anchor);
+    if (!box || !range) {
+      hideLinkTip();
+      return;
+    }
+    const rect = box.getBoundingClientRect();
+    const scale = rect.width / box.offsetWidth || 1;
+    const lines = anchor.getClientRects();
+    if (!lines.length) return;
+    hoveredLink.current = anchor;
+    setLinkTip({
+      href: range.mark.attrs.href,
+      left: Math.max(0, (lines[0].left - rect.left) / scale),
+      top: (lines[lines.length - 1].bottom - rect.top) / scale + 6,
+    });
+  }
+  function editHoveredLink() {
+    const anchor = hoveredLink.current;
+    const view = editorRef.current?.action((ctx) => ctx.get(editorViewCtx));
+    const range = view && anchor && hoveredRange(view, anchor);
+    if (!view || !range) {
+      hideLinkTip();
+      return;
+    }
+    view.dispatch(
+      view.state.tr.setSelection(
+        TextSelection.create(view.state.doc, range.to),
+      ),
+    );
+    openLinkForm();
   }
   function linkTarget(state: EditorState) {
     const around = linkAround(state);
@@ -142,18 +190,17 @@ export default function useDocumentLinkActions({
     const view = editorRef.current?.action((ctx) => ctx.get(editorViewCtx));
     if (!view || props.readOnly) return;
     const target = linkTarget(view.state);
-    linkTipRef.current = null;
-    setLinkTip(null);
+    hideLinkTip();
     setLinkError("");
     setLink({
       href: target.around?.mark.attrs.href ?? "",
       text: target.text,
       original: target.text,
       editText: target.editText,
+      existing: !!target.around,
     });
   }
   function closeLinkForm() {
-    linkFormOpen.current = false;
     setLink(null);
     editorRef.current?.action((ctx) => ctx.get(editorViewCtx).focus());
   }
@@ -166,7 +213,6 @@ export default function useDocumentLinkActions({
       setLinkError("https:// 또는 mailto:로 시작하는 주소를 입력하세요.");
       return;
     }
-    linkFormOpen.current = false;
     setLink(null);
     run((ctx) => {
       const view = ctx.get(editorViewCtx);
@@ -203,7 +249,10 @@ export default function useDocumentLinkActions({
   function removeLink() {
     run((ctx) => {
       const view = ctx.get(editorViewCtx);
-      const around = linkAround(view.state);
+      const anchor = hoveredLink.current;
+      const around = link
+        ? linkAround(view.state)
+        : anchor && hoveredRange(view, anchor);
       if (around)
         view.dispatch(
           view.state.tr.removeMark(
@@ -213,6 +262,7 @@ export default function useDocumentLinkActions({
           ),
         );
     });
+    if (link) setLink(null);
   }
   function openLink(href: string, event: MouseEvent) {
     const target = parseDocumentLinkPath(href);
@@ -237,15 +287,17 @@ export default function useDocumentLinkActions({
       notify("링크 주소를 복사하지 못했습니다. 다시 시도해 주세요.");
     }
   }
+  const tipVisible = linkTip !== null;
   useLayoutEffect(() => {
-    const sync = () => {
-      const view = editorRef.current?.action((ctx) => ctx.get(editorViewCtx));
-      if (view) syncLinkTip(view);
+    if (!tipVisible) return;
+    window.addEventListener("resize", hideLinkTip);
+    window.addEventListener("scroll", hideLinkTip, true);
+    return () => {
+      keepLinkTip();
+      window.removeEventListener("resize", hideLinkTip);
+      window.removeEventListener("scroll", hideLinkTip, true);
     };
-    sync();
-    window.addEventListener("resize", sync);
-    return () => window.removeEventListener("resize", sync);
-  }, [link === null]);
+  }, [tipVisible]);
   useLayoutEffect(() => {
     const tip = linkTipBox.current;
     const box = shell.current;
@@ -259,15 +311,17 @@ export default function useDocumentLinkActions({
     setLink,
     linkError,
     linkTip,
-    setLinkTip,
-    linkTipRef,
+    showLinkTip,
+    hideLinkTip,
+    leaveLinkTip,
+    keepLinkTip,
+    editHoveredLink,
     linkTipBox,
     linkTitlesRef,
     notice,
     noticeFailed,
     linkOpenError,
     setLinkOpenError,
-    syncLinkTip,
     openLinkForm,
     closeLinkForm,
     applyLink,

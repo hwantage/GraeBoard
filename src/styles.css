@@ -2566,7 +2566,8 @@ body.document-block-moving * {
   display: flex;
   flex-direction: column;
 }
-.task-detail-modal > header {
+.task-detail-modal > header,
+.document-image-preview > header {
   flex-shrink: 0;
   gap: 12px;
   padding-block: 14px;
@@ -2753,9 +2754,12 @@ body.document-block-moving * {
   min-width: 0;
   margin-left: auto;
 }
+.task-detail-modal .task-detail-actions .button,
+.document-image-preview .document-image-view-controls .button {
+  min-height: 32px;
+}
 .task-detail-modal .task-detail-actions .button {
   flex-shrink: 0;
-  min-height: 32px;
   padding: 6px 8px;
   font-size: 11px;
   color: var(--ink);
@@ -2773,7 +2777,8 @@ body.document-block-moving * {
   .task-detail-modal .task-detail-actions .button {
     padding-inline: 6px;
   }
-  .task-detail-modal > header {
+  .task-detail-modal > header,
+  .document-image-preview > header {
     padding-inline: 16px;
   }
 }

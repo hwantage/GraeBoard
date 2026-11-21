@@ -581,7 +581,7 @@ test("기존 HTTP 링크는 붙여넣기·읽기 전용 클릭에서 그대로 �
   ]);
 });
 
-test("링크 버튼은 주소와 표시 이름을 한 줄씩 받고, 커서가 링크에 있으면 주소와 열기·복사·수정·제거를 보인다", async ({
+test("링크 버튼은 주소와 표시 이름을 한 줄씩 받고, 마우스를 올린 링크의 주소와 열기·복사·수정·제거를 보인다", async ({
   page,
 }) => {
   await saveTask(page, taskIds[0], "앞 글자 네이버 뒤 글자\n");
@@ -653,8 +653,15 @@ test("링크 버튼은 주소와 표시 이름을 한 줄씩 받고, 커서가 �
     .poll(() => taskMarkdown(page, taskIds[0]))
     .toBe("앞 글자 [네이버 바로가기](https://www.naver.com) 뒤 글자\n");
 
-  // The caret in the link shows its address and actions below it.
+  // Applying the form leaves the text caret in the link. Only a mouse hover opens the tip.
   const tip = source.getByRole("group", { name: "링크", exact: true });
+  await rich(source).press("ArrowLeft");
+  await expect(tip).toHaveCount(0);
+  await link.hover();
+  await expect(tip).toBeVisible();
+  await source.getByRole("button", { name: "링크", exact: true }).hover();
+  await expect(tip).toHaveCount(0);
+  await link.hover();
   await expect(tip).toContainText("https://www.naver.com");
   const linkBox = (await link.boundingBox())!;
   const tipBox = (await tip.boundingBox())!;
@@ -674,20 +681,22 @@ test("링크 버튼은 주소와 표시 이름을 한 줄씩 받고, 커서가 �
   await name.press("Escape");
   await expect(address).toHaveCount(0);
   await expect(source).toBeVisible();
-  await expect(tip).toBeVisible();
+  await expect(tip).toHaveCount(0);
+  await link.hover();
   await tip.getByRole("button", { name: "링크 수정" }).click();
   await address.fill("https://example.com/docs");
   await address.press("Enter");
   await expect
     .poll(() => taskMarkdown(page, taskIds[0]))
     .toBe("앞 글자 [네이버 바로가기](https://example.com/docs) 뒤 글자\n");
+  await link.hover();
   await tip.getByRole("button", { name: "링크 제거" }).click();
   await expect(rich(source).getByRole("link")).toHaveCount(0);
   await expect(tip).toHaveCount(0);
   await expect
     .poll(() => taskMarkdown(page, taskIds[0]))
     .toBe("앞 글자 네이버 바로가기 뒤 글자\n");
-  // A plain click opens a web link, and its caret shows the actions.
+  // A plain click still opens a web link.
   await rich(source).press("ControlOrMeta+z");
   await rich(source).getByRole("link", { name: "네이버 바로가기" }).click();
   await expect(tip).toContainText("https://example.com/docs");
@@ -695,6 +704,64 @@ test("링크 버튼은 주소와 표시 이름을 한 줄씩 받고, 커서가 �
     ["https://www.naver.com", "_blank", "noopener,noreferrer"],
     ["https://example.com/docs", "_blank", "noopener,noreferrer"],
   ]);
+});
+
+test("입력 커서를 옮기지 않고 가리킨 링크만 수정하거나 제거한다", async ({
+  page,
+}) => {
+  await saveTask(
+    page,
+    taskIds[0],
+    "[첫 링크](https://first.example) / [두 번째](https://second.example)\n",
+  );
+  const source = await open(page);
+  const editor = rich(source);
+  const first = editor.getByRole("link", { name: "첫 링크" });
+  const second = editor.getByRole("link", { name: "두 번째" });
+  const tip = source.getByRole("group", { name: "링크", exact: true });
+  await page.evaluate(() => {
+    window.open = () => null;
+  });
+  const toolbarLink = source.getByRole("button", { name: "링크", exact: true });
+  await first.click();
+  await toolbarLink.hover();
+  await expect(tip).toHaveCount(0);
+  await second.hover();
+  await expect(tip).toContainText("https://second.example");
+  expect(
+    await first.evaluate((el) =>
+      el.contains(getSelection()?.anchorNode ?? null),
+    ),
+  ).toBe(true);
+  await tip.getByRole("button", { name: "링크 수정" }).click();
+  const address = source.getByRole("textbox", { name: "링크 주소" });
+  await expect(address).toHaveValue("https://second.example");
+  await address.fill("https://changed.example");
+  await address.press("Enter");
+  await expect(second).toHaveAttribute("href", "https://changed.example");
+  await first.click();
+  await second.hover();
+  await tip.getByRole("button", { name: "링크 제거" }).click();
+  await expect(second).toHaveCount(0);
+  await expect(first).toHaveAttribute("href", "https://first.example");
+  await expect(editor).toContainText("두 번째");
+  await editor.focus();
+  await first.evaluate(async (el) => {
+    getSelection()!.collapse(el.firstChild!, 1);
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+  });
+  await editor.press("ArrowRight");
+  await expect(tip).toHaveCount(0);
+  await toolbarLink.focus();
+  await toolbarLink.press("Enter");
+  await expect(address).toHaveValue("https://first.example");
+  await source
+    .getByRole("button", { name: "링크 제거", exact: true })
+    .press("Enter");
+  await expect(first).toHaveCount(0);
+  await expect(editor).toContainText("첫 링크");
 });
 
 test("꼬리 메모와 사본의 업무 상세·메모에도 전체 페이지 버튼 왼쪽에 링크 복사가 있다", async ({
