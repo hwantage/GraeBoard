@@ -10,12 +10,12 @@ import { postgresBusinessFixture } from "../support/business-storage-fixture.mjs
 import { createExternalRouteApp } from "../support/external-route-fixture.mjs";
 import {
   migrateSlideSchema,
-  slideSchemaMigration,
+  slideSchemaMigrations,
 } from "../../server/migrations/postgres-slides.mjs";
 import { SLIDE_KEPT_REVISIONS } from "../../worker/storage/slides/postgres-slide-files.mjs";
 import { slideObjectKey } from "../../worker/storage/slides/r2-slide-blobs.mjs";
 import { postgresHistoryVersion } from "../../shared/storage/postgres-schema-version.js";
-import { SLIDE_SCHEMA_CHECKSUM } from "../../shared/slides/slide-store-version.js";
+import { SLIDE_SCHEMA_CHECKSUMS } from "../../shared/slides/slide-store-version.js";
 import { MAX_SLIDE_FILE_BYTES } from "../../shared/slides/slide-file-rules.js";
 import { unpack } from "../../shared/formatting/compact.js";
 
@@ -192,13 +192,17 @@ test("슬라이드 스키마는 graeboard 이력을 바꾸지 않고 한 번만 
   if (!site) return;
   const { pg } = site;
   const before = await history(pg.pool);
-  assert.equal(slideSchemaMigration.checksum, SLIDE_SCHEMA_CHECKSUM);
+  assert.deepEqual(
+    slideSchemaMigrations.map((step) => step.checksum),
+    [...SLIDE_SCHEMA_CHECKSUMS],
+    "the runtime manifest matches the migration files",
+  );
   assert.deepEqual(await migrateSlideSchema(pg.pool, { dryRun: true }), {
     from: 0,
-    to: 1,
+    to: 2,
     applied: false,
     dryRun: true,
-    checksum: SLIDE_SCHEMA_CHECKSUM,
+    checksums: [...SLIDE_SCHEMA_CHECKSUMS],
   });
   assert.equal(
     (
@@ -219,7 +223,10 @@ test("슬라이드 스키마는 graeboard 이력을 바꾸지 않고 한 번만 
         "SELECT version,checksum FROM graeboard_slides.schema_migrations",
       )
     ).rows,
-    [{ version: 1, checksum: SLIDE_SCHEMA_CHECKSUM }],
+    SLIDE_SCHEMA_CHECKSUMS.map((checksum, index) => ({
+      version: index + 1,
+      checksum,
+    })),
   );
   assert.deepEqual(
     (
@@ -229,6 +236,29 @@ test("슬라이드 스키마는 graeboard 이력을 바꾸지 않고 한 번만 
     ).rows,
     [],
   );
+
+  // A store left at the first step is upgraded by the same command, and
+  // until then only slide requests are refused.
+  await pg.pool.query(
+    "DROP TABLE graeboard_slides.slide_sync_state, graeboard_slides.slide_sync_files",
+  );
+  await pg.pool.query(
+    "DELETE FROM graeboard_slides.schema_migrations WHERE version=2",
+  );
+  assert.equal(
+    (await site.lead.data(`/teams/${pg.teamId}/slides`)).status,
+    503,
+  );
+  assert.deepEqual(await migrateSlideSchema(pg.pool), {
+    from: 1,
+    to: 2,
+    applied: true,
+  });
+  assert.equal(
+    (await site.lead.data(`/teams/${pg.teamId}/slides`)).status,
+    200,
+  );
+  assert.deepEqual(await history(pg.pool), before);
 
   // A schema whose history is not this code's is refused, data kept.
   await pg.pool.query(

@@ -75,7 +75,8 @@ async function resource(request, env) {
     /^[a-f0-9-]{36}$/.test(key.slice(probePrefix.length));
   const validSlide =
     key.startsWith(slidePrefix) &&
-    /^[a-f0-9]{64}\.canvaslide$/.test(key.slice(slidePrefix.length));
+    // `.chunk`: pieces of a file still being received from the other site.
+    /^[a-f0-9]{64}\.(?:canvaslide|chunk)$/.test(key.slice(slidePrefix.length));
   if (!validImage && !validProbe && !validSlide)
     return failure(403, "다른 팀의 이미지입니다.");
   if (method === "GET" || method === "HEAD") {

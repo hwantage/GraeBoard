@@ -41,6 +41,17 @@ const TABLES = {
     "saved_at",
     "request_id",
   ],
+  // What the two sites last agreed on per file (see slide-file-branch.mjs).
+  slide_sync_files: [
+    "team_id",
+    "file_id",
+    "shared_version",
+    "shared_hash",
+    "shared_title",
+    "shared_deleted_at",
+    "shared_chunks",
+    "meta_oid",
+  ],
 };
 const key = (teamId, contentHash) => {
   if (!/^[a-f0-9]{64}$/.test(contentHash))
@@ -140,6 +151,12 @@ async function readTables(adapter, teamId) {
           [teamId],
         )
       ).rows;
+      tables.slide_sync_files = (
+        await tx.query(
+          `SELECT ${TABLES.slide_sync_files.join(",")} FROM ${S}.slide_sync_files WHERE team_id=$1 ORDER BY file_id`,
+          [teamId],
+        )
+      ).rows;
       return tables;
     },
     { teamId, readOnly: true },
@@ -227,7 +244,8 @@ export async function checkSlideTarget({ adapter, teamId, backup }) {
       );
     return "absent";
   }
-  if (!tables.slide_files.length) return "empty";
+  if (!tables.slide_files.length && !tables.slide_sync_files.length)
+    return "empty";
   if (backup && portableHash(tables) === backup.hash) return "restored";
   throw new Error(
     "Target slide store already has files of this team; restore into an empty store",
@@ -251,6 +269,12 @@ export async function restoreSlides({ adapter, teamId, blobs, backup }) {
             `INSERT INTO ${S}.${table}(${columns.join(",")}) VALUES(${columns.map((_, i) => "$" + (i + 1)).join(",")})`,
             columns.map((name) => row[name]),
           );
+      // A restored store starts a new publication epoch and reads the sync
+      // branch from the beginning, so it never reuses a version ID. Versions
+      // allocated but not confirmed are not part of a backup.
+      await tx.query(`DELETE FROM ${S}.slide_sync_state WHERE team_id=$1`, [
+        teamId,
+      ]);
     },
     { teamId },
   );

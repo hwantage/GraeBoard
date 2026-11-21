@@ -51,4 +51,25 @@ export class R2SlideBlobStore {
   async remove(contentHash) {
     await this.bucket.delete(this.key(contentHash));
   }
+  // Chunks of a file still being received from the other site.
+  #chunk(hash) {
+    assert(/^[a-f0-9]{64}$/.test(hash), 400, "자료 해시를 확인하세요.");
+    return `${slideObjectPrefix(this.teamId)}${hash}.chunk`;
+  }
+  async stage(hash, bytes) {
+    await this.bucket.put(this.#chunk(hash), bytes, {
+      httpMetadata: { contentType: "application/octet-stream" },
+      customMetadata: { teamId: this.teamId },
+    });
+  }
+  async staged(hash) {
+    const object = await this.bucket.get(this.#chunk(hash));
+    if (!object) return null;
+    const bytes = new Uint8Array(await object.arrayBuffer());
+    // A damaged staged chunk is fetched again.
+    return digest(bytes) === hash ? bytes : null;
+  }
+  async unstage(hash) {
+    await this.bucket.delete(this.#chunk(hash));
+  }
 }
