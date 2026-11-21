@@ -129,7 +129,7 @@ const fileCard = (page: Page, title: string) =>
     has: page.getByRole("button", { name: title, exact: true }),
   });
 
-test("CanvaSlide 제목 옆에서 새 자료를 만들고 고정 높이 카드에 접근하면 정보와 작업이 보인다", async ({
+test("CanvaSlide 제목 옆에서 새 자료를 만들고 카드의 두 줄 제목과 썸네일 바깥 툴팁을 표시한다", async ({
   page,
   browserName,
 }) => {
@@ -153,59 +153,59 @@ test("CanvaSlide 제목 옆에서 새 자료를 만들고 고정 높이 카드�
   const titleButton = card.getByRole("button", { name: title, exact: true });
   const newButton = page.getByRole("button", { name: "새 팀 자료" });
   await page.getByRole("heading", { name: "CanvaSlide" }).hover();
-  await expect(titleButton).toHaveAttribute("title", title);
+  const tooltip = page.getByRole("tooltip");
+  const image = card.locator(".slide-card-thumbnail img");
+  const caption = card.locator(".slide-card-title");
+  await expect(tooltip).toHaveCount(0);
+  await expect(image).toBeVisible();
   await expect(card.getByRole("button")).toHaveCount(1);
-  await expect(card.locator("dl, time, .task-new-mark")).toHaveCount(0);
-  await expect(card.locator(".slide-card-thumbnail")).toBeVisible();
   await expect(
     page.getByRole("list").getByRole("button", { name: "새 팀 자료" }),
   ).toHaveCount(0);
   await expect(newButton).toHaveClass(/primary/);
-  await card.hover();
-  await expect(card.getByText("저장한 사람")).toHaveCount(0);
-  await expect(card.getByRole("img", { name: "새 자료" })).toBeVisible();
-  await expect(card.locator("time").first()).toHaveAttribute(
-    "datetime",
-    file.createdAt,
-  );
-  await expect(card.locator("time").last()).toHaveAttribute(
-    "datetime",
-    file.updatedAt,
-  );
-  const size = card.locator(".slide-card-size");
-  await expect(size).toHaveText(
-    `${(file.byteLength / 1024 ** 2).toFixed(1)}MB`,
-  );
-  const download = card.getByRole("button", { name: "내려받기" });
-  const remove = card.getByRole("button", { name: "삭제" });
+  const format = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    dateStyle: "short",
+    timeStyle: "short",
+    hour12: false,
+  });
+  const preview = await image.getAttribute("src");
   for (const width of [1280, 768, 540, 390, 320]) {
     await page.setViewportSize({ width, height: 800 });
     await page.getByRole("heading", { name: "CanvaSlide" }).hover();
     const idle = (await card.boundingBox())!;
-    const adjacent = (await other.boundingBox())!;
-    expect(idle.height).toBe(136);
-    expect(adjacent.height).toBe(idle.height);
-    await expect(titleButton).toHaveCSS("white-space", "nowrap");
-    await expect(titleButton).toHaveCSS("text-overflow", "ellipsis");
+    expect(idle.height).toBe(168);
+    expect((await other.boundingBox())!.height).toBe(idle.height);
+    await expect(caption).toHaveCSS("-webkit-line-clamp", "2");
     expect(
-      await titleButton.evaluate((el) => el.scrollWidth > el.clientWidth),
-    ).toBe(true);
+      await caption.evaluate((el) => ({
+        lines: el.clientHeight / parseFloat(getComputedStyle(el).lineHeight),
+        clipped: el.scrollHeight > el.clientHeight,
+      })),
+    ).toEqual({ lines: 2, clipped: true });
     await card.hover();
+    await expect(tooltip).toContainText(title);
+    await expect(tooltip).toContainText(/생성/);
+    await expect(tooltip).toContainText(
+      format.format(new Date(file.createdAt)),
+    );
+    await expect(tooltip).toContainText(
+      format.format(new Date(file.updatedAt)),
+    );
+    await expect(tooltip).toContainText(
+      `${(file.byteLength / 1024 ** 2).toFixed(1)}MB`,
+    );
+    await expect(card.getByRole("img", { name: "새 자료" })).toBeVisible();
+    await expect(image).toHaveAttribute("src", preview!);
+    await expect(card.getByRole("button")).toHaveCount(1);
+    const rect = (await tooltip.boundingBox())!;
+    expect(
+      rect.y >= idle.y + idle.height || rect.y + rect.height <= idle.y,
+    ).toBe(true);
+    expect(rect.x).toBeGreaterThanOrEqual(0);
+    expect(rect.x + rect.width).toBeLessThanOrEqual(width);
     expect((await card.boundingBox())!.height).toBe(idle.height);
-    const sizeBox = await size.evaluate((el) => {
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      return range.getBoundingClientRect().toJSON();
-    });
-    expect(sizeBox.left).toBeGreaterThanOrEqual(0);
-    const first = (await download.boundingBox())!;
-    expect(sizeBox.right).toBeLessThanOrEqual(width);
-    expect(sizeBox.right <= first.x || sizeBox.bottom <= first.y).toBe(true);
-    const last = (await remove.boundingBox())!;
-    expect(last.x + last.width).toBeLessThanOrEqual(width);
-    await expect(
-      page.getByRole("button", { name: "새 팀 자료" }),
-    ).toBeInViewport();
+    await expect(newButton).toBeInViewport();
   }
 
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -260,20 +260,21 @@ test("CanvaSlide 제목 옆에서 새 자료를 만들고 고정 높이 카드�
     browserName === "webkit" && process.platform === "darwin"
       ? "Alt+Tab"
       : "Tab";
-  await page.getByRole("button", { name: /팀 자료로 가져오기/ }).focus();
+  const titles = page
+    .getByRole("list", { name: "팀 자료" })
+    .getByRole("button");
+  await titles.first().focus();
   await page.keyboard.press(tab);
-  await expect(titleButton).toBeFocused();
-  await expect(download).toBeVisible();
-  await page.keyboard.press(tab);
-  await expect(download).toBeFocused();
+  const next = titles.nth(1);
+  await expect(next).toBeFocused();
+  await expect(tooltip).toContainText((await next.getAttribute("aria-label"))!);
   await page.keyboard.press("Escape");
-  await expect(titleButton).toBeFocused();
-  await expect(download).toHaveCount(0);
+  await expect(next).toBeFocused();
+  await expect(tooltip).toHaveCount(0);
   await card.hover();
   for (const button of [
     newButton,
     page.getByRole("button", { name: /팀 자료로 가져오기/ }),
-    download,
   ])
     expect((await button.boundingBox())!.height).toBe(presentationHeight);
   await expect(
@@ -283,7 +284,7 @@ test("CanvaSlide 제목 옆에서 새 자료를 만들고 고정 높이 카드�
   ).toHaveCount(0);
 });
 
-test("터치로 카드를 길게 누르면 작업이 열리고 짧게 누르면 해당 자료가 열린다", async ({
+test("터치로 카드를 길게 누르면 툴팁이 보이고 짧게 누르면 해당 자료가 열린다", async ({
   page,
   browser,
 }) => {
@@ -305,9 +306,9 @@ test("터치로 카드를 길게 누르면 작업이 열리고 짧게 누르면 
     await view.goto("/slides");
     const card = fileCard(view, title);
     const open = card.getByRole("button", { name: title });
-    const rename = card.getByRole("button", { name: "이름 변경" });
+    const tip = view.getByRole("tooltip");
     await expect(open).toBeVisible();
-    await expect(rename).toHaveCount(0);
+    await expect(tip).toHaveCount(0);
     const press = {
       pointerType: "touch",
       pointerId: 3,
@@ -315,16 +316,14 @@ test("터치로 카드를 길게 누르면 작업이 열리고 짧게 누르면 
       button: 0,
     };
     await open.dispatchEvent("pointerdown", press);
-    await expect(rename).toBeVisible();
+    await expect(tip).toContainText(title);
     await open.dispatchEvent("pointerup", press);
+    await open.dispatchEvent("pointerout", press);
     await open.dispatchEvent("click", { detail: 1 });
-    await expect(rename).toBeVisible();
-    await rename.tap();
-    const dialog = view.getByRole("dialog", { name: "이름 변경" });
-    await expect(dialog).toBeVisible();
-    await dialog.getByRole("button", { name: "취소" }).tap();
+    await expect(tip).toContainText("생성");
+    await expect(view).toHaveURL(/\/slides$/);
     await view.getByRole("heading", { name: "CanvaSlide" }).tap();
-    await expect(rename).toHaveCount(0);
+    await expect(tip).toHaveCount(0);
     await open.tap();
     await expect(view).toHaveURL(new RegExp(file.id));
   } finally {
@@ -403,12 +402,8 @@ test("첫 프레임 사진을 썸네일에 그리고 다음 열람자는 원본�
       0,
     );
     await card(view).hover();
-    await expect(
-      card(view).getByRole("button", { name: "내려받기" }),
-    ).toBeVisible();
-    await expect(
-      card(view).getByRole("button", { name: /이름 변경|사본 만들기|삭제/ }),
-    ).toHaveCount(0);
+    await expect(view.getByRole("tooltip")).toContainText("크기");
+    await expect(card(view).getByRole("button")).toHaveCount(1);
     expect(reads).toEqual([]);
   } finally {
     await viewer.close();
@@ -544,10 +539,9 @@ test("팀 자료를 열어 편집하고 Ctrl/Cmd+S로 저장하면 다른 팀원
   const peerPage = await peer.newPage();
   await openTeamFile(peerPage, fileId);
   const download = peerPage.waitForEvent("download");
-  await peerPage.getByRole("button", { name: "팀 자료 목록" }).click();
-  const savedCard = fileCard(peerPage, title);
-  await savedCard.hover();
-  await savedCard.getByRole("button", { name: "내려받기" }).click();
+  await peerPage
+    .getByRole("button", { name: "서버에 저장된 파일 내려받기" })
+    .click();
   const path = await (await download).path();
   expect(readFileSync(path).equals(stored)).toBe(true);
   await peer.close();
@@ -656,6 +650,9 @@ test("새 자료는 이름 없이 편집하고 첫 저장 때만 팀 파일을 �
   await expect(titleInput(page)).toHaveValue("");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page).not.toHaveURL(/file=/);
+  await expect(
+    page.getByRole("button", { name: /서버에 저장된 파일 내려받기|자료 삭제/ }),
+  ).toHaveCount(0);
   const viewport = editor(page).getByTestId("canvas-viewport");
   await viewport.click();
   await page.keyboard.press("r");
@@ -793,6 +790,129 @@ test("다른 이름으로 저장은 미저장 본문을 팀 사본으로 저장�
   );
 });
 
+test("상세에서 사본을 삭제할 때 취소와 실패는 편집을 유지하고 확인하면 사본과 복구본만 지운다", async ({
+  page,
+}) => {
+  test.setTimeout(60000);
+  const bytes = example("flowchart.canvaslide");
+  const file = await upload(
+    page.request,
+    teamId,
+    `원본 ${randomUUID()}`,
+    bytes,
+  );
+  const user = (await json(await page.request.get("/api/bootstrap"))).user;
+  const scope = `canvaslide-recovery.${user.id}.${teamId}`;
+  await openTeamFile(page, file.id);
+  await page.getByRole("button", { name: "다른 이름으로 저장" }).click();
+  const saveAs = page.getByRole("dialog", { name: "다른 이름으로 저장" });
+  const copyName = `삭제할 사본 ${randomUUID()}`;
+  await saveAs.getByRole("textbox").fill(copyName);
+  await saveAs.getByRole("button", { name: "팀 사본으로 저장" }).click();
+  await expect(titleInput(page)).toHaveValue(copyName);
+  const copy = new URL(page.url()).searchParams.get("file")!;
+  expect(copy).not.toBe(file.id);
+  const saved = await (await content(page.request, teamId, copy)).body();
+  await nudge(page);
+  const exported = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "서버에 저장된 파일 내려받기" })
+    .click();
+  const downloaded = await exported;
+  expect(downloaded.suggestedFilename().normalize("NFC")).toBe(
+    copyName + ".canvaslide",
+  );
+  expect(readFileSync((await downloaded.path())!)).toEqual(saved);
+  await expect
+    .poll(() => snapshotCount(page, scope), { timeout: 40000 })
+    .toBeGreaterThan(0);
+
+  const remove = page.getByRole("button", { name: "자료 삭제", exact: true });
+  const confirm = page.getByRole("dialog", { name: "자료 삭제" });
+  for (const width of [320, 768]) {
+    await page.setViewportSize({ width, height: 800 });
+    await expect(remove).toBeInViewport();
+    const box = (await remove.boundingBox())!;
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+  }
+  await remove.click();
+  await expect(confirm).toContainText(copyName);
+  await expect(confirm).toContainText("저장하지 않은 변경");
+  await confirm.getByRole("button", { name: "취소" }).click();
+  await expect(saveButton(page)).toBeEnabled();
+  expect((await content(page.request, teamId, copy)).status()).toBe(200);
+  const route = `**/api/teams/${teamId}/slides/${copy}`;
+  await page.route(
+    route,
+    (r) =>
+      r.fulfill({ status: 503, json: { error: "잠시 후 다시 시도하세요." } }),
+    { times: 1 },
+  );
+  await remove.click();
+  await confirm.getByRole("button", { name: "삭제", exact: true }).click();
+  await expect(confirm.getByRole("alert")).toBeVisible();
+  expect((await content(page.request, teamId, copy)).status()).toBe(200);
+  // The server can commit a delete before its response reaches the editor.
+  await page.route(
+    route,
+    async (r) => {
+      await r.fetch();
+      await r.abort("failed");
+    },
+    { times: 1 },
+  );
+  await confirm.getByRole("button", { name: "삭제", exact: true }).click();
+  await expect
+    .poll(async () => (await content(page.request, teamId, copy)).status())
+    .toBe(404);
+  await expect(confirm.getByRole("alert")).toBeVisible();
+  await confirm.getByRole("button", { name: "삭제", exact: true }).click();
+  await expect(page).toHaveURL(/\/slides$/);
+  await expect(fileCard(page, copyName)).toHaveCount(0);
+  await expect(fileCard(page, file.title)).toBeVisible();
+  expect((await content(page.request, teamId, copy)).status()).toBe(404);
+  expect(await (await content(page.request, teamId, file.id)).body()).toEqual(
+    bytes,
+  );
+  await expect.poll(() => snapshotCount(page, scope)).toBe(0);
+  await fileCard(page, file.title).getByRole("button").click();
+  await expect(idleSave(page)).toBeDisabled();
+  await expect(
+    editor(page).getByRole("dialog", { name: "Recover unsaved work" }),
+  ).toHaveCount(0);
+});
+
+test("편집기 배포본이 없는 서버에서도 자료 상세에서 저장된 파일을 내려받을 수 있다", async ({
+  page,
+}) => {
+  const bytes = example("flowchart.canvaslide");
+  const file = await upload(
+    page.request,
+    teamId,
+    `독립 파일 ${randomUUID()}`,
+    bytes,
+  );
+  await page.route("**/tools/canvaslide/current.json", (r) =>
+    r.fulfill({ status: 404 }),
+  );
+  await page.goto("/slides");
+  await fileCard(page, file.title).getByRole("button").click();
+  await expect(page).toHaveURL(new RegExp(file.id));
+  await expect(page.locator("iframe.slide-editor-frame")).toHaveCount(0);
+  const exported = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "서버에 저장된 파일 내려받기" })
+    .click();
+  expect(readFileSync((await (await exported).path())!)).toEqual(bytes);
+  await page.getByRole("button", { name: "자료 삭제", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "자료 삭제" })
+    .getByRole("button", { name: "삭제", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/slides$/);
+  await expect(fileCard(page, file.title)).toHaveCount(0);
+});
+
 test("새 자료 생성에 실패하면 같은 화면에서 다시 저장할 수 있다", async ({
   page,
 }) => {
@@ -885,6 +1005,14 @@ test("열람자는 읽기만 하고, 팀 밖 사용자는 원본을 받을 수 �
   const viewerPage = await viewer.newPage();
   await openTeamFile(viewerPage, file.id);
   await expect(titleInput(viewerPage)).toHaveCount(0);
+  await expect(
+    viewerPage.getByRole("button", { name: "자료 삭제" }),
+  ).toHaveCount(0);
+  const download = viewerPage.waitForEvent("download");
+  await viewerPage
+    .getByRole("button", { name: "서버에 저장된 파일 내려받기" })
+    .click();
+  expect(readFileSync((await (await download).path())!)).toEqual(bytes);
   await nudge(viewerPage, false);
   await saveShortcut(viewerPage);
   await fileShortcut(viewerPage, "Shift+s");
@@ -1057,6 +1185,9 @@ test("편집 가능한 공유 링크는 팀 사본으로 저장하고 해당 파
   const { id } = await json(shared);
   await page.goto(`/slides?team=${teamId}&share=${id}`);
   await expect(editor(page).getByTestId("canvas-viewport")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /서버에 저장된 파일 내려받기|자료 삭제/ }),
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "다른 이름으로 저장" }).click();
   const prompt = page.getByRole("dialog", { name: "다른 이름으로 저장" });
   await prompt.getByRole("textbox").fill("공유에서 만든 팀 파일");

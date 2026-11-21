@@ -1,34 +1,21 @@
-import { useEffect, useRef, useState } from "react";
-import { Copy, Download, Plus, Pencil, Trash2, Upload } from "lucide-react";
-import { saveFile } from "../platform/api";
+import { useRef, useState } from "react";
+import { Plus, Upload } from "lucide-react";
+import { showTouchTooltip } from "../ui/Tooltip";
 import { useRecentCreation } from "../sheet/NewTaskMark";
 import { useTouchPress } from "../ui/useTouchPress";
 import { Button } from "../ui/Button";
 import SlideCardThumbnail from "./SlideCardThumbnail";
 import type { SlideThumbnails } from "./slide-thumbnails";
-import SlideTitleDialog from "./SlideTitleDialog";
 import { Empty } from "../ui/Empty";
-import { Modal } from "../ui/Modal";
 import {
   MAX_SLIDE_FILE_BYTES,
-  slideCopyTitle,
-  slideDownloadName,
   slideTitleFromFileName,
 } from "../../shared/slides/slide-file-rules.js";
 import {
-  copySlideFile,
   createSlideFile,
-  deleteSlideFile,
-  readSlideFile,
-  renameSlideFile,
   slideRequestId,
   type SlideFile,
 } from "./slide-file-api";
-
-type Prompt =
-  | { kind: "rename"; file: SlideFile }
-  | { kind: "copy"; file: SlideFile }
-  | { kind: "delete"; file: SlideFile };
 
 const size = (bytes: number) =>
   bytes >= 1024 * 1024
@@ -62,56 +49,19 @@ export default function SlideFileList({
   onError: (message: string) => void;
   onNotify: (message: string) => void;
 }) {
-  const [prompt, setPrompt] = useState<Prompt | null>(null);
   const [busy, setBusy] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const touch = useTouchPress();
-  const [inspected, setInspected] = useState<string | null>(null);
-  const inspectedCard = useRef<HTMLLIElement>(null);
-
-  useEffect(() => {
-    if (!inspected) return;
-    const outside = (event: PointerEvent) => {
-      if (!inspectedCard.current?.contains(event.target as Node))
-        setInspected(null);
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      const card = inspectedCard.current;
-      if (card?.contains(document.activeElement))
-        card.querySelector<HTMLButtonElement>(".slide-open")?.focus();
-      setInspected(null);
-    };
-    document.addEventListener("pointerdown", outside, true);
-    document.addEventListener("keydown", escape);
-    return () => {
-      document.removeEventListener("pointerdown", outside, true);
-      document.removeEventListener("keydown", escape);
-    };
-  }, [inspected]);
-
-  async function run(work: () => Promise<unknown>, done: string) {
-    if (busy) return;
-    setBusy(true);
-    onError("");
-    try {
-      await work();
-      setPrompt(null);
-      onChanged();
-      onNotify(done);
-    } catch (error) {
-      onError((error as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
   async function importFile(file: File) {
     if (file.size > MAX_SLIDE_FILE_BYTES)
       return onError(
         `자료는 ${MAX_SLIDE_FILE_BYTES / 1024 / 1024}MB까지 가져올 수 있습니다.`,
       );
     const title = slideTitleFromFileName(file.name) || "가져온 자료";
-    await run(async () => {
+    if (busy) return;
+    setBusy(true);
+    onError("");
+    try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const created = await createSlideFile(
         teamId,
@@ -120,18 +70,12 @@ export default function SlideFileList({
         slideRequestId(),
       );
       thumbnails?.remember(created, bytes);
-    }, "팀 자료로 가져왔습니다.");
-  }
-  async function download(file: SlideFile) {
-    onError("");
-    try {
-      const { bytes, title } = await readSlideFile(teamId, file.id);
-      saveFile(
-        new Blob([bytes], { type: "application/json" }),
-        slideDownloadName(title),
-      );
+      onChanged();
+      onNotify("팀 자료로 가져왔습니다.");
     } catch (error) {
       onError((error as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -192,164 +136,40 @@ export default function SlideFileList({
         ) : (
           <ul className="slide-card-grid" aria-label="팀 자료">
             {files.map((file) => (
-              <li
-                key={file.id}
-                className="slide-file-card"
-                ref={inspected === file.id ? inspectedCard : undefined}
-                onPointerEnter={(event) => {
-                  if (event.pointerType !== "touch") setInspected(file.id);
-                }}
-                onPointerLeave={(event) => {
-                  if (
-                    event.pointerType !== "touch" &&
-                    !event.currentTarget.querySelector(":focus-visible")
-                  )
-                    setInspected((id) => (id === file.id ? null : id));
-                }}
-                onFocus={(event) => {
-                  if (event.target.matches(":focus-visible"))
-                    setInspected(file.id);
-                }}
-                onBlur={(event) => {
-                  if (
-                    !event.currentTarget.contains(event.relatedTarget) &&
-                    !event.currentTarget.matches(":hover")
-                  )
-                    setInspected((id) => (id === file.id ? null : id));
-                }}
-              >
-                <SlideCardThumbnail
-                  key={file.contentHash}
-                  file={file}
-                  thumbnails={thumbnails}
-                  canWrite={canWrite}
-                />
-                <div className="slide-card-heading">
-                  <button
-                    type="button"
-                    className="slide-open"
-                    title={file.title}
-                    onPointerDown={(event) =>
-                      touch.start(event, {
-                        onLongPress: () => setInspected(file.id),
-                      })
-                    }
-                    onClickCapture={touch.onClickCapture}
-                    onContextMenu={(event) => {
-                      if (touch.isTouch.current) event.preventDefault();
-                    }}
-                    onClick={() => onOpen(file)}
-                  >
-                    {file.title}
-                  </button>
-                  {inspected === file.id && (
+              <li key={file.id} className="slide-file-card">
+                <button
+                  type="button"
+                  className="slide-open"
+                  aria-label={file.title}
+                  data-tooltip={`${file.title}\n생성  ${dateTime.format(new Date(file.createdAt))}\n수정  ${dateTime.format(new Date(file.updatedAt))}\n크기  ${size(file.byteLength)}`}
+                  onClick={() => onOpen(file)}
+                  onPointerDown={(event) => {
+                    const button = event.currentTarget;
+                    touch.start(event, {
+                      onLongPress: () => showTouchTooltip(button),
+                    });
+                  }}
+                  onClickCapture={touch.onClickCapture}
+                  onContextMenu={(event) => {
+                    if (touch.isTouch.current) event.preventDefault();
+                  }}
+                >
+                  <SlideCardThumbnail
+                    key={file.contentHash}
+                    file={file}
+                    thumbnails={thumbnails}
+                    canWrite={canWrite}
+                  />
+                  <span className="slide-card-heading">
+                    <span className="slide-card-title">{file.title}</span>
                     <SlideNewMark createdAt={file.createdAt} />
-                  )}
-                </div>
-                {inspected === file.id && (
-                  <div className="slide-card-info">
-                    <dl className="slide-card-details">
-                      <dt>생성</dt>
-                      <dd>
-                        <time dateTime={file.createdAt}>
-                          {dateTime.format(new Date(file.createdAt))}
-                        </time>
-                      </dd>
-                      <dt>수정</dt>
-                      <dd>
-                        <time dateTime={file.updatedAt}>
-                          {dateTime.format(new Date(file.updatedAt))}
-                        </time>
-                      </dd>
-                      <dt>크기</dt>
-                      <dd className="slide-card-size">
-                        {size(file.byteLength)}
-                      </dd>
-                    </dl>
-                    <div className="slide-card-actions">
-                      <Button
-                        tooltip="내려받기"
-                        onClick={() => void download(file)}
-                      >
-                        <Download size={15} />
-                      </Button>
-                      {canWrite && (
-                        <>
-                          <Button
-                            tooltip="이름 변경"
-                            onClick={() => setPrompt({ kind: "rename", file })}
-                          >
-                            <Pencil size={15} />
-                          </Button>
-                          <Button
-                            tooltip="사본 만들기"
-                            onClick={() => setPrompt({ kind: "copy", file })}
-                          >
-                            <Copy size={15} />
-                          </Button>
-                          <Button
-                            tooltip="삭제"
-                            onClick={() => setPrompt({ kind: "delete", file })}
-                          >
-                            <Trash2 size={15} />
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                )}
+                  </span>
+                </button>
               </li>
             ))}
           </ul>
         )}
       </div>
-      {prompt?.kind === "delete" && (
-        <Modal title="자료 삭제" onClose={() => setPrompt(null)}>
-          <p>
-            <strong>{prompt.file.title}</strong> 자료를 팀 목록에서 삭제합니다.
-          </p>
-          <div className="form-actions">
-            <Button onClick={() => setPrompt(null)}>취소</Button>
-            <Button
-              className="danger"
-              disabled={busy}
-              onClick={() =>
-                void run(
-                  () => deleteSlideFile(teamId, prompt.file.id),
-                  "자료를 삭제했습니다.",
-                )
-              }
-            >
-              삭제
-            </Button>
-          </div>
-        </Modal>
-      )}
-      {prompt && prompt.kind !== "delete" && (
-        <SlideTitleDialog
-          heading={prompt.kind === "rename" ? "이름 변경" : "사본 만들기"}
-          action={prompt.kind === "rename" ? "변경" : "사본 만들기"}
-          initial={
-            prompt.kind === "rename"
-              ? prompt.file.title
-              : slideCopyTitle(prompt.file.title)
-          }
-          busy={busy}
-          onClose={() => setPrompt(null)}
-          onSubmit={(title) => {
-            if (prompt.kind === "rename")
-              void run(
-                () => renameSlideFile(teamId, prompt.file.id, title),
-                "이름을 변경했습니다.",
-              );
-            else
-              void run(
-                () => copySlideFile(teamId, prompt.file.id, title),
-                "사본을 만들었습니다.",
-              );
-          }}
-        />
-      )}
     </section>
   );
 }

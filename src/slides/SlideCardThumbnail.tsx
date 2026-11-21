@@ -12,7 +12,7 @@ export default function SlideCardThumbnail({
   thumbnails: SlideThumbnails | null;
   canWrite: boolean;
 }) {
-  const host = useRef<HTMLDivElement>(null);
+  const host = useRef<HTMLSpanElement>(null);
   const [image, setImage] = useState("");
   useEffect(() => {
     if (!host.current || !thumbnails) return;
@@ -34,12 +34,12 @@ export default function SlideCardThumbnail({
     };
   }, [file, thumbnails, canWrite]);
   return (
-    <div ref={host} className="slide-card-thumbnail" aria-hidden="true">
+    <span ref={host} className="slide-card-thumbnail" aria-hidden="true">
       {image ? (
         <img src={image} alt="" />
       ) : (
         <FileImage size={27} strokeWidth={1.4} />
       )}
-    </div>
+    </span>
   );
 }

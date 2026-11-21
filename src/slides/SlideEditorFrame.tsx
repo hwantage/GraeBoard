@@ -7,6 +7,7 @@ import {
   type Ref,
 } from "react";
 import { ArrowLeft, Copy, FilePlus2, Save } from "lucide-react";
+import SlideFileActions from "./SlideFileActions";
 import SlideTitleDialog from "./SlideTitleDialog";
 import { ApiError } from "../platform/api";
 import { Button } from "../ui/Button";
@@ -103,6 +104,8 @@ export default function SlideEditorFrame({
   userId,
   canWrite,
   start,
+  initialFile,
+  onDeleted,
   onClose,
   onNew,
   onSaved,
@@ -113,6 +116,8 @@ export default function SlideEditorFrame({
   userId: string;
   canWrite: boolean;
   start: SlideEditorStart;
+  initialFile?: SlideFile;
+  onDeleted: (id: string) => void;
   onClose: () => void;
   onNew: () => void;
   onSaved: (file: SlideFile, bytes: Uint8Array<ArrayBuffer>) => void;
@@ -120,6 +125,7 @@ export default function SlideEditorFrame({
   const frame = useRef<HTMLIFrameElement>(null);
   const bridge = useRef<SlideFrameBridge | null>(null);
   const [ready, setReady] = useState(false);
+  const [openFailed, setOpenFailed] = useState(false);
   const [state, setState] = useState<SlideEditorState | null>(null);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -203,6 +209,7 @@ export default function SlideEditorFrame({
           throw new Error("새 자료를 열지 못했습니다. 다시 시도하세요.");
       }
     } catch (failure) {
+      setOpenFailed(true);
       setError((failure as Error).message);
     }
   }
@@ -391,6 +398,7 @@ export default function SlideEditorFrame({
   }
   async function leave() {
     if (
+      document.querySelector(".slide-delete-dialog[open]") ||
       leaving.current ||
       activeSave.current ||
       saving ||
@@ -439,6 +447,23 @@ export default function SlideEditorFrame({
     return () => window.removeEventListener("beforeunload", warn);
   }, [dirty]);
   const binding = state?.binding ?? null;
+  const teamFile =
+    binding?.fileId && binding.teamId === teamId
+      ? { id: binding.fileId, title: binding.title }
+      : openFailed
+        ? initialFile
+        : undefined;
+  async function finishDeletion(fileId: string) {
+    if (binding?.fileId === fileId && state) {
+      const cleared = await bridge.current?.request<boolean>("prepare-leave", {
+        documentSession: state.documentSession,
+        discard: true,
+      });
+      if (!cleared)
+        throw new Error("편집 복구본을 정리하지 못했습니다. 다시 시도하세요.");
+    }
+    onDeleted(fileId);
+  }
   function canSave(current: SlideEditorState | null) {
     return (
       !busy &&
@@ -457,7 +482,8 @@ export default function SlideEditorFrame({
       .catch((failure) => setError((failure as Error).message));
   }
   async function runFileCommand(command: string) {
-    if (busy || dialog) return;
+    if (busy || dialog || document.querySelector(".slide-delete-dialog[open]"))
+      return;
     if (command === "open") return onClose();
     if (!canWrite) return;
     if (command === "new") return newFile();
@@ -534,7 +560,9 @@ export default function SlideEditorFrame({
           />
         ) : (
           <strong className="slide-editor-title">
-            {state?.name || "CanvaSlide"}
+            {(openFailed && !binding && initialFile?.title) ||
+              state?.name ||
+              "CanvaSlide"}
           </strong>
         )}
         <div className="heading-actions">
@@ -566,6 +594,19 @@ export default function SlideEditorFrame({
               <Copy size={15} />
               <span>다른 이름으로 저장</span>
             </Button>
+          )}
+          {teamFile && (
+            <SlideFileActions
+              key={teamFile.id}
+              teamId={teamId}
+              fileId={teamFile.id}
+              title={teamFile.title}
+              canWrite={canWrite}
+              dirty={dirty}
+              disabled={busy}
+              onDeleted={() => finishDeletion(teamFile.id)}
+              onError={setError}
+            />
           )}
         </div>
       </header>

@@ -24,6 +24,7 @@ import SlideEditorFrame, {
   type SlideEditorStart,
 } from "./SlideEditorFrame";
 import { SlideThumbnails } from "./slide-thumbnails";
+import SlideFileActions from "./SlideFileActions";
 import SlideFileList from "./SlideFileList";
 import "./slides.css";
 
@@ -127,9 +128,24 @@ export default function SlidesWorkspace({
   }
   async function close() {
     if (frame.current && !(await frame.current.leave())) return;
+    showList();
+  }
+  function showList() {
     setStart(null);
+    setError("");
     writeAddress();
     refresh();
+  }
+  function deleted(fileId: string) {
+    setList(
+      (previous) =>
+        previous && {
+          ...previous,
+          files: previous.files.filter((file) => file.id !== fileId),
+        },
+    );
+    showList();
+    onNotify("자료를 삭제했습니다.");
   }
 
   if (otherTeam) {
@@ -161,6 +177,36 @@ export default function SlidesWorkspace({
         {!error && <LoadingState label="CanvaSlide를 불러오는 중입니다." />}
       </section>
     );
+  const initialFile =
+    start?.kind === "file"
+      ? list.files.find((file) => file.id === start.fileId)
+      : undefined;
+  if (initialFile && !editor)
+    return (
+      <section className="board slides-board slides-editing">
+        <header className="slide-editor-bar">
+          <Button title="팀 자료 목록" onClick={showList}>
+            목록
+          </Button>
+          <strong className="slide-editor-title">{initialFile.title}</strong>
+          <div className="heading-actions">
+            <SlideFileActions
+              key={initialFile.id}
+              teamId={teamId}
+              fileId={initialFile.id}
+              title={initialFile.title}
+              canWrite={list.canWrite}
+              onDeleted={() => deleted(initialFile.id)}
+              onError={setError}
+            />
+          </div>
+        </header>
+        <ErrorNote error={error} />
+        <p className="slide-notice">
+          이 서버에 CanvaSlide 편집기 배포본이 설치되지 않았습니다.
+        </p>
+      </section>
+    );
   if (start && editor)
     return (
       <section className="board slides-board slides-editing">
@@ -172,6 +218,8 @@ export default function SlidesWorkspace({
           userId={user.id}
           canWrite={list.canWrite}
           start={start}
+          initialFile={initialFile}
+          onDeleted={deleted}
           onClose={() => void close()}
           onNew={openNew}
           onSaved={(file, bytes) => {
@@ -187,8 +235,8 @@ export default function SlidesWorkspace({
       <ErrorNote error={error} />
       {!editor && (
         <p className="slide-notice" role="status">
-          이 서버에 CanvaSlide 편집기 배포본이 설치되지 않았습니다. 자료 목록과
-          내려받기만 사용할 수 있습니다.
+          이 서버에 CanvaSlide 편집기 배포본이 설치되지 않았습니다. 카드를 열어
+          저장된 파일을 내려받을 수 있습니다.
         </p>
       )}
       <SlideFileList
@@ -196,7 +244,7 @@ export default function SlidesWorkspace({
         teamId={teamId}
         files={list.files}
         canWrite={list.canWrite && !!editor}
-        onOpen={(file) => editor && open({ kind: "file", fileId: file.id })}
+        onOpen={(file) => open({ kind: "file", fileId: file.id })}
         onNew={openNew}
         onChanged={refresh}
         onError={setError}

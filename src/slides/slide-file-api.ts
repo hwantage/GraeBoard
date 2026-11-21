@@ -1,4 +1,4 @@
-import { api, send } from "../platform/api";
+import { api } from "../platform/api";
 import {
   SLIDE_EDITOR_BUILD_ID,
   SLIDE_EDITOR_CURRENT,
@@ -106,16 +106,6 @@ export async function readSlideFile(
     bytes: new Uint8Array(await response.arrayBuffer()),
   };
 }
-export const renameSlideFile = (
-  teamId: string,
-  fileId: string,
-  title: string,
-) => send<SlideFile>(`${base(teamId)}/${fileId}`, { title }, "PATCH");
-export const copySlideFile = (teamId: string, fileId: string, title: string) =>
-  send<SlideFile>(`${base(teamId)}/${fileId}/copy`, {
-    title,
-    requestId: slideRequestId(),
-  });
 export const deleteSlideFile = (teamId: string, fileId: string) =>
   api(`${base(teamId)}/${fileId}`, { method: "DELETE" });
 export const createSlideShare = (teamId: string, body: string) =>
