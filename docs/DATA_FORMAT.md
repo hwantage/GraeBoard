@@ -419,6 +419,42 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 
 시스템 관리자는 팀 생성 API에서, 시스템 관리자와 팀장은 `PATCH /api/teams/:id`에서 `theme`를 보낼 수 있습니다. 수정 요청의 `settingsRevision`은 동시 설정 변경을 검사하며, 테마를 바꾸면 설정 `revision`도 증가합니다. 속성·기본 서식 저장은 테마를 보존하고, `theme`를 생략한 설정 저장은 현재 테마를 유지합니다. 지원하지 않는 테마 ID는 서버에서 거절합니다.
 
+## 슬라이드 팀 자료
+
+영구 저장의 단위는 표준 `.canvaslide` 파일 하나입니다. 그래보드는 캔버스 요소나 이미지를 해석하지 않고 받은 바이트를 그대로 보관하며, 자료를 찾고 권한·변경을 관리하는 정보만 따로 둡니다. 파일 한도는 사내·외부 공통 25MiB입니다(`shared/slides/slide-file-rules.js`). 서버는 크기와 "UTF-8 JSON 객체 하나"인지만 확인하고, 형식 검증은 편집기의 코덱이 열 때와 저장할 때 수행합니다.
+
+사내 Node는 `SLIDE_FILES_DIR`(기본 `data/slide-files`)의 **독립 저장소**를 사용합니다. 업무 DB(`DB_PATH`, v34)에는 슬라이드 테이블이 없고 두 DB 사이에 외래 키도 없습니다.
+
+| 위치 | 내용 |
+| --- | --- |
+| `slide-files.sqlite` | 자체 `PRAGMA user_version=1`과 `schema_migrations`(checksum). `server/migrations/slides/001-slide-files.sql` |
+| `slide_files` | `id`, `team_id`, `title`, `revision`, `byte_length`, `content_hash`, 만든·마지막 저장 사용자와 시각, `deleted_at`, `create_request_id`(팀 안에서 유일) |
+| `slide_file_revisions` | 저장마다 한 행: `(file_id, revision)`, `content_hash`, `byte_length`, 저장자·시각, `request_id`(자료 안에서 유일) |
+| `slide_shares` | 24시간 뒤 만료하는 임시 공유 스냅샷(JSON 문자열, 5MiB 이하). 팀 원본과 다른 테이블·보관 주기 |
+| `blobs/<teamId>/<SHA-256>.canvaslide` | 내용 주소의 불변 파일. 임시 파일에 쓰고 fsync한 뒤 이름을 바꿔 게시 |
+
+- **조건부 저장**: 새 바이트를 먼저 파일로 쓰고 해시를 계산한 뒤, 요청의 기준 revision이 현재와 같을 때만 한 트랜잭션에서 `slide_files`를 새 revision으로 바꿉니다. 다르면 HTTP 409와 현재 메타데이터를 반환하며 양쪽 바이트가 모두 남습니다.
+- **재시도**: 같은 요청 ID의 생성·저장은 처음 저장한 결과(revision·해시·저장자)를 그대로 다시 반환합니다. 그 사이 다른 팀원이 저장했거나 자료가 삭제됐어도 최신 값으로 바꿔 답하지 않으므로, 응답을 잃은 세션이 본 적 없는 revision에 묶여 새 내용을 덮어쓰지 않습니다. 같은 요청 ID에 다른 내용을 보내면 409입니다.
+- **보관**: revision 기록은 모두 남기고 바이트는 현재와 직전 10개 revision까지 보관합니다. 그보다 오래된 내용은 같은 팀의 다른 자료·보관 중인 revision이 쓰지 않을 때 파일을 삭제합니다. 자료 삭제는 목록에서만 빼는 표시이며 파일과 기록은 남습니다. 이름 변경은 revision을 올리지 않습니다.
+- **권한**: 요청마다 업무 DB의 팀 소속을 확인합니다. 팀장·팀원·시스템 관리자는 읽기·쓰기, 열람자는 읽기·내려받기·임시 공유 열기만 가능하고 팀 밖 사용자는 메타데이터와 원본을 받을 수 없습니다. 비로그인 공개 링크는 없습니다.
+- 읽을 때 파일 해시가 기록과 다르면 원본으로 내보내지 않고 오류로 처리합니다.
+
+브라우저의 복구본은 편집기의 IndexedDB(`canvaslide-recovery.<계정 ID>.<팀 ID>`)에 계정·팀별로 나눠 저장하며 서버에 올라가지 않습니다. 복구본에는 열었던 팀 자료의 ID와 revision이 함께 남아, 복구한 내용을 저장할 때도 같은 조건부 저장을 거칩니다.
+
+| 경로 | 용도 |
+| --- | --- |
+| `GET /api/teams/:teamId/slides` | 팀 자료 목록과 `canWrite` |
+| `POST /api/teams/:teamId/slides` | 새 자료. 본문 `application/octet-stream`, `X-Slide-Title`(URL 인코딩), `X-Slide-Request-Id` |
+| `GET /api/teams/:teamId/slides/:fileId` | 메타데이터 |
+| `GET /api/teams/:teamId/slides/:fileId/content` | 원본 바이트. `X-Slide-Revision`, `X-Slide-Title`, `X-Slide-Content-Sha256`, 내려받기 이름 |
+| `PUT /api/teams/:teamId/slides/:fileId/content` | 조건부 저장. `X-Slide-Base-Revision`, `X-Slide-Request-Id` |
+| `PATCH /api/teams/:teamId/slides/:fileId` | 이름 변경 `{title}` |
+| `POST /api/teams/:teamId/slides/:fileId/copy` | 사본 `{title, requestId}` |
+| `DELETE /api/teams/:teamId/slides/:fileId` | 목록에서 삭제 |
+| `POST /api/teams/:teamId/slide-shares` | 임시 공유 생성. 본문 `text/plain`(편집기의 공유 스냅샷 JSON) |
+| `GET /api/teams/:teamId/slide-shares/:shareId` | 임시 공유 읽기 `{body}` |
+| `GET /tools/canvaslide/current.json`, `/tools/canvaslide/<빌드 ID>/…` | 조립한 편집기 정적 파일. 없는 파일은 404 |
+
 ## 주요 API
 
 모든 업무 API는 HTTP-only 세션 쿠키를 요구합니다. 쓰기 요청은 `X-Requested-With: WeeklyPlan`을 포함합니다. 브라우저 외부 출처는 허용하지 않습니다.

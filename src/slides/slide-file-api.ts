@@ -1,4 +1,9 @@
 import { api, send } from "../platform/api";
+import {
+  SLIDE_EDITOR_BUILD_ID,
+  SLIDE_EDITOR_CURRENT,
+  SLIDE_EDITOR_PATH,
+} from "../../shared/slides/slide-editor-policy.js";
 
 export type SlideFile = {
   id: string;
@@ -38,10 +43,23 @@ const binary = (
 
 export const slideRequestId = () => crypto.randomUUID();
 
-export const readSlideEditor = () =>
-  api<{ editor: SlideEditorBuild | null }>("/slides/editor").then(
-    (result) => result.editor,
-  );
+// The editor is a static build both sites serve; this file names the current one.
+export async function readSlideEditor(): Promise<SlideEditorBuild | null> {
+  const response = await fetch(SLIDE_EDITOR_CURRENT, {
+    credentials: "same-origin",
+    cache: "no-store",
+  });
+  if (!response.ok) return null;
+  const current = await response.json().catch(() => null);
+  return typeof current?.buildId === "string" &&
+    SLIDE_EDITOR_BUILD_ID.test(current.buildId)
+    ? {
+        buildId: current.buildId,
+        path: `${SLIDE_EDITOR_PATH}/${current.buildId}/`,
+        upstream: current.upstream,
+      }
+    : null;
+}
 export const listSlideFiles = (teamId: string, signal?: AbortSignal) =>
   api<SlideFileList>(base(teamId), { signal });
 export const createSlideFile = (

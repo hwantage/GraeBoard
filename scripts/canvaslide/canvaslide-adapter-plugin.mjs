@@ -22,9 +22,12 @@ export function graeboardCanvaslideAdapter({ graeboardRoot, upstreamRoot }) {
     },
   };
   const host = JSON.stringify(resolve(frame, "slide-frame-host.ts"));
-  const scoped = (replace) => (code) =>
-    `import { recoveryScopeSuffix as graeboardRecoveryScope } from ${host};\n` +
-    replace(code);
+  const scoped = (replace) => (code) => {
+    const replaced = replace(code);
+    return replaced === null
+      ? null
+      : `import { recoveryScopeSuffix as graeboardRecoveryScope } from ${host};\n${replaced}`;
+  };
   const once = (code, from, to) => {
     if (code.split(from).length !== 2) return null;
     return code.replace(from, to);

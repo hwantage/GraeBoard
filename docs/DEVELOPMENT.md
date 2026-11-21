@@ -37,6 +37,7 @@ Node와 외부 라우트는 문서·일정·업무·사본·인증/제어·이�
 | `src/main.tsx`, `app-version.d.ts`, `types.ts`, `Panels.tsx`, `styles.css`                                                                                                                                                                              | 루트 유지 5개: 진입점·선언·통합 타입·패널·전역 CSS                                                                                                           |
 | `src/documents/`, `src/documents/editor/`                                                                                                                                                                                                               | 공용 문서 패널·브라우저·내보내기와 Milkdown 편집기 내부                                                                                                      |
 | `src/calendar/`                                                                                                                                                                                                                                         | 일정·태그·주간 할 일·개인 일정의 UI·훅·타입·CSS                                                                                                              |
+| `src/slides/`, `shared/slides/`, `server/slides/`, `server/storage/slides/`, `scripts/canvaslide/`                                                                                                                                                      | 슬라이드 화면과 편집기 프레임, 프레임 메시지·파일·제공 규칙, 사내 라우트와 독립 SQLite 저장소·백업, 고정한 CanvaSlide 편집기의 빌드 어댑터                   |
 | `src/platform/`                                                                                                                                                                                                                                         | API·오류·사이트 환경·공통 조회 정책·SharedWorker SSE·리소스 구독 기반                                                                                        |
 | `src/ui/`                                                                                                                                                                                                                                               | Select·색 선택·이모지 선택·알림·도움말·공통 메뉴·포인터/모바일/목록 훅                                                                                       |
 | `src/app/App.tsx`                                                                                                                                                                                                                                       | 팀·연도·화면 조합, 선택·편집 UI와 업무 명령 연결; 조회·저장·필터·이력 상태는 sheet 훅이 소유                                                                 |
@@ -238,6 +239,27 @@ Milkdown 진입 전 AST 왕복 검사를 하고 안전한 `<br>`만 줄바꿈으
 
 업무 상세와 꼬리 메모는 `DocumentPanel`의 같은 탭·제목 입력·메뉴 구현을 사용합니다. 각 탭은 편집 여부와 관계없이 40px 높이를 유지하며, 제목 입력은 측정용 텍스트가 결정한 grid 영역 위에 배치해 팝업의 공통 입력칸 너비가 탭 폭을 늘리지 않게 합니다. 제목을 조합하는 중 다른 탭을 누르면 조합 확정에 따른 브라우저의 레일 스크롤을 누른 시점 위치로 되돌려, 좁은 화면의 더블클릭이 누른 탭에서 이름 변경을 시작하게 합니다. 화살표 hover는 사본 탭과 같이 색상을 바꾸지 않으며 선택 상태만 표시합니다. 각 문서 탭 오른쪽의 아래 화살표에서 공통 이름 변경·삭제 메뉴를 엽니다. 다른 문서의 메뉴를 열 때도 기존 `select()`로 현재 입력을 저장한 뒤 대상을 전환합니다. 메뉴는 `SheetTabs`와 같이 가로 스크롤 영역 밖의 제목 줄에 배치하고 화살표 위치를 따라가며, 화면 밖으로 스크롤되면 닫습니다. 기존 바깥 클릭·Escape·Tab 닫기와 열람자 권한을 유지합니다. 문서 폭은 `DocumentPage`가 포인터 캡처로 조절하며 키보드 조절·취소를 지원합니다. 폭은 사용자·팀·원본 연도/사본·문서별 localStorage에 보관하고 본문·순서는 기존 API를 이용합니다. `AnnualMemoPanel`은 제목 버튼·중앙 가로 스크롤 영역·별도 본문으로 아코디언을 구성하고, 사용자·팀·원본 연도/사본별 `weekly-plan:memo-open:…` 키에 펼침 상태를 기억합니다. 닫기는 기존 문서 `flush()`가 성공한 뒤에만 상태를 저장하며, 접힌 상태에서는 `DocumentPanel`을 마운트하지 않아 메모를 조회하지 않습니다. 저장소 접근이 차단되어도 현재 화면에서는 열고 닫을 수 있습니다. 아코디언은 `.sheet-scroll` 밖, 같은 `.grid-area`(세로 flex)의 아래쪽에 놓여 접으면 제목 행만, 펼치면 높이가 있는 패널로 고정되며 열고 닫아도 표의 스크롤 위치를 바꾸지 않습니다. 패널 높이는 사용자가 정하면 `weekly-plan:memo-height:…` 키에 기억하고 위쪽 가장자리 구분선(`.memo-height-handle`)으로 바꿉니다. 탭 선택은 탭 레일의 가로 위치만 조절합니다. 아코디언은 서식 툴바와 같은 높이 변수와 팀 테마를 사용하고 글자는 11px입니다. 발표 모드에서도 같은 패널을 읽기 전용으로 유지하며, 발표 도구의 입력 가로채기에서 메모·업무 문서 버튼·열린 dialog를 제외해 아코디언·문서 탭·팝업을 조작할 수 있습니다. 꼬리 메모에 마우스를 올려도 레이저·필기 커서는 유지하며, 실제 modal dialog가 열린 동안에만 발표 커서 덮어쓰기를 멈추고 레이저·지우개 표시를 숨겨 기본 커서를 복원합니다. 전역 Escape 처리도 열린 dialog에 양보하므로 중첩 이미지 팝업을 닫을 때 발표가 종료되지 않습니다. `SheetHorizontalScroll`은 업무 표의 가로 스크롤을 메모 위에 표시하며, 기존 `.sheet-scroll`의 좌표와 동기화해 행 가상화·고정 열·위치 복원을 유지합니다. 표의 가로 wheel·터치 이동을 처리하고 메모 내부 제스처는 각 문서와 메모 영역에 맡깁니다.
 
+### 슬라이드와 CanvaSlide 편집기
+
+`/slides`는 팀 자료 목록과 편집기 화면입니다. 편집기는 그래보드가 다시 만든 화면이 아니라 고정한 CanvaSlide 웹 편집기 전체이며, `npm run build:canvaslide`가 원본 커밋을 임시 작업 폴더에 읽어 원본의 Vite 설정에 그래보드 플러그인(`canvaslide-adapter-plugin.mjs`)을 더해 조립합니다. 원본 저장소·CI에는 아무것도 추가하지 않습니다. 플러그인이 하는 일은 세 가지입니다.
+
+- 편집기 진입점(`main.tsx`) 앞에 `frame/slide-frame-main.ts`를 함께 불러옵니다.
+- 편집기의 `platform/document-file-access`와 `platform/cloud-share`를 가져오는 모든 곳을 그래보드 어댑터(`slide-frame-file-access.ts`, `slide-frame-cloud-share.ts`)로 연결합니다. 어댑터는 원본 모듈을 `graeboard-upstream:` 이름으로 그대로 참조해 로컬 파일 동작을 위임하므로 편집기와 어댑터가 같은 문서 상태·코덱 인스턴스를 씁니다.
+- 복구 저장의 IndexedDB 이름과 잠금 이름에 계정·팀 범위를 붙입니다.
+
+각 연결 지점은 의존하는 원본 파일과 문구를 명시하고, 그 문구가 없거나 연결이 한 번도 실행되지 않으면 조립을 실패시킵니다. 조립 때 원본의 TypeScript 설정으로 어댑터까지 형 검사를 하므로 원본이 함수 시그니처를 바꿔도 조립에서 드러납니다. 프레임을 부모 없이 직접 열면 어댑터는 모두 원본 동작으로 물러나 독립 웹 편집기와 같게 동작합니다.
+
+| 책임 | 소유 |
+| --- | --- |
+| 저장 대상 | 편집기 문서 상태의 `filePath`에 `graeboard-slides://<팀>/<자료>?revision=…` 형태로 둡니다(`slide-frame-binding.ts`). 새 문서·파일 열기·예제·공유 링크·복구 등 편집기의 모든 문서 교체가 이 값을 함께 바꾸므로, 팀 자료가 아닌 문서가 직전 팀 자료의 저장 대상을 물려받지 않고 복구본은 편집을 시작한 revision을 유지합니다. |
+| 저장 | 편집기의 메뉴·단축키가 쓰는 같은 저장 큐(`saveCurrentDocument → saveDocumentFile → completeSave`)에서 어댑터가 원본 코덱으로 만든 바이트를 부모에 넘기고, 서버가 저장을 확정한 뒤에만 반환합니다. 실패·취소·충돌에서는 반환하지 않거나 `null`을 돌려 편집기가 저장 완료로 처리하지 않습니다. |
+| 부모↔프레임 메시지 | `shared/slides/slide-frame-protocol.js`의 채널. 양쪽 모두 보낸 창·같은 출처·편집 세션 값을 확인합니다. 로그인 자격 증명은 프레임에 주지 않고 부모(`SlideEditorFrame`)가 기존 `api()`로 호출합니다. |
+| 화면 이동 | `useWorkspaceNavigation`이 메뉴·뒤로 가기·팀 변경 전에 `SlidesWorkspace.leave()`를 호출하고, 프레임이 알려 준 미저장 상태에 따라 저장 후 이동·버리고 이동·계속 편집을 묻습니다. 버리고 이동하면 그 세션의 복구본도 지웁니다. |
+| 공유 | 편집기의 공유 대화상자는 그대로 쓰고 생성·조회만 그래보드의 임시 스냅샷 API로 보냅니다. 링크는 `/slides?team=…&share=…`이며 팀 자료가 다른 출처로 전송되지 않습니다. |
+| 화면 정책 | 편집기 문서는 편집기 자체 정책에 `frame-ancestors 'self'`만 바꿔 제공하고(`shared/slides/slide-editor-policy.js`), 앱 화면은 `frame-src 'self' blob:`을 허용합니다. `blob:`은 Firefox·WebKit이 프레임 안의 파일 내려받기를 프레임 이동으로 다루기 때문에 필요합니다. |
+
+서버는 `SlideFileService`(권한·검증·조건부 저장·임시 공유)와 저장소(`SqliteSlideFileRepository`)로 나눕니다. 저장 형식과 API는 [데이터 형식](DATA_FORMAT.md#슬라이드-팀-자료), 조립·제공·백업은 [운영 안내](OPERATIONS.md#슬라이드-편집기와-팀-자료)에 있습니다. 편집기 버전을 올릴 때는 `canvaslide-upstream.json`의 커밋을 바꾸고 조립과 `tests/slides/`, `tests/browser/slides/`를 실행합니다.
+
 ### 접속 토큰과 클라이언트 시각
 
 `AccountMenu` → `AccessTokens` → `/api/access-tokens`는 본인 토큰의 생성·목록·재조회·삭제를 처리합니다. 내부 `server/auth/access-tokens.mjs`는 SQLite 트랜잭션을, 외부 `worker/control/access-tokens.mjs`는 기존 `controlTransaction`을 사용하며 입력 검증·난수·해시·AES-GCM은 `server/storage/control/access-token-service.mjs`를 공유합니다. 신규 토큰에는 만료일이 없으며 원문은 암호화해 저장하고 눈 아이콘을 눌렀을 때 본인에게만 복호화해 반환합니다. 내부 키는 `access-token-key.mjs`에서 DB 밖의 파일 또는 환경 변수로 관리합니다. 브라우저 영속 저장소와 감사 로그에는 토큰을 넣지 않으며, 조회용 Bearer 인증은 아직 연결하지 않습니다. 미배포 신규 기능의 스키마 변경을 v33/site v3/control v2 마이그레이션 하나에 포함합니다. 배포·키 관리·백업 취급은 [운영 안내](OPERATIONS.md#접속-토큰-도입-업데이트)를 따릅니다.
@@ -420,6 +442,8 @@ npm run build:edge
 npx playwright install chromium firefox webkit
 npm run test:e2e
 ```
+
+`tests/browser/slides/`는 실제 편집기를 조작하므로 먼저 `npm run build:canvaslide`로 배포본을 만듭니다. 배포본이 없으면 이 spec은 건너뛰지 않고 실패합니다.
 
 작은 기능 수정의 반복 확인에는 빌드 후 `npm run test:e2e:core`로 행/셀·사본·화면 전환·캘린더·문서 입력/동기화/내보내기의 핵심 spec을 3개 엔진에서 실행합니다. `-- --project=chromium`으로 개발 중 범위를 줄일 수 있습니다. 큰 구조 변경의 완료 전에는 `npm run test:e2e` 전체와 수정 기능의 실패·권한·취소 경로를 확인합니다.
 

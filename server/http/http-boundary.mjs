@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { pack, unpack } from "../../shared/formatting/compact.js";
 import { now } from "../db.mjs";
+import { APP_FRAME_SOURCES } from "../../shared/slides/slide-editor-policy.js";
 import { HttpError } from "../../shared/validation.js";
 import {
   isSyncRequest,
@@ -28,9 +29,7 @@ export function installHttpBoundary(app) {
           fontSrc: ["'self'"],
           imgSrc: ["'self'", "data:"],
           connectSrc: ["'self'"],
-          // The slide editor runs in a same-origin frame. Firefox and WebKit
-          // treat a file it downloads from a blob URL as a frame navigation.
-          frameSrc: ["'self'", "blob:"],
+          frameSrc: APP_FRAME_SOURCES,
           frameAncestors: ["'none'"],
           upgradeInsecureRequests: null,
         },
