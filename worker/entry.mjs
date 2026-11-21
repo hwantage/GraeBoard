@@ -28,6 +28,7 @@ import {
   browserRoutes,
 } from "./sheet-clones/sheet-clones.mjs";
 import { calendarRoutes } from "./calendar/calendar.mjs";
+import { slideRoutes } from "./slides/slide-files.mjs";
 import { transferRoutes } from "./transfer/transfer.mjs";
 import { recoveryRoutes } from "./sync/recovery.mjs";
 import { profileSwitchRoutes } from "./sync/profile-switch.mjs";
@@ -306,6 +307,7 @@ export function createWorker({
           filterRoutes,
           browserRoutes,
           calendarRoutes,
+          slideRoutes,
           transferRoutes,
         ];
         for (const route of routes) {

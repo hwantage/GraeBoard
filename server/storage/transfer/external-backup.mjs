@@ -22,6 +22,19 @@ import {
 import { project } from "../../sync/core/reducer.mjs";
 import { postgresHistoryVersion } from "../../../shared/storage/postgres-schema-version.js";
 import { unfinishedJobError } from "../../../shared/transfer/backup-recovery.mjs";
+import {
+  backupSlides,
+  checkSlideTarget,
+  readSlideBackup,
+  restoreSlides,
+} from "../slides/slide-file-external-backup.mjs";
+
+// A backup that carries slide files uses the layout version plus this offset
+// (4·5·6 for 1·2·3), so a tool that predates slides refuses it instead of
+// restoring it without them.
+const SLIDES_VERSION_OFFSET = 3;
+const layoutVersion = (version) =>
+  version > SLIDES_VERSION_OFFSET ? version - SLIDES_VERSION_OFFSET : version;
 
 const CONTROL_TABLES = [
   "control_meta",
@@ -247,7 +260,7 @@ export async function backupExternal({ control, teams, destination }) {
       );
       manifest.control = { path: "control.json", hash: portableHash(data) };
     }
-    for (const { adapter, teamId, images, git } of teams) {
+    for (const { adapter, teamId, images, git, slides } of teams) {
       const jobId = await guardBackup(adapter, teamId);
       guards.push({ adapter, teamId, jobId });
       const bundle = await exportTeam(adapter, teamId, {
@@ -288,13 +301,22 @@ export async function backupExternal({ control, teams, destination }) {
         });
         assets.push({ url, hash, size: bytes.length });
       }
+      const slideFiles = await backupSlides({
+        adapter,
+        teamId,
+        blobs: slides,
+        folder,
+      });
       manifest.teams.push({
         teamId,
         path: teamId + "/team.json",
         hash: bundle.hash,
         assets,
+        ...(slideFiles ? { slides: slideFiles } : {}),
       });
     }
+    if (manifest.teams.some((team) => team.slides))
+      manifest.version += SLIDES_VERSION_OFFSET;
     await writeFile(
       join(partial, "manifest.json"),
       JSON.stringify({ ...manifest, hash: portableHash(manifest) }, null, 2) +
@@ -317,10 +339,13 @@ export async function readExternalBackup(directory) {
     { hash, ...body } = manifest;
   if (
     manifest.format !== "graeboard-external-backup" ||
-    ![1, 2, 3].includes(manifest.version) ||
+    ![1, 2, 3, 4, 5, 6].includes(manifest.version) ||
+    manifest.version > SLIDES_VERSION_OFFSET !==
+      manifest.teams.some((team) => team.slides) ||
     portableHash(body) !== hash
   )
     throw new Error("External backup manifest checksum mismatch");
+  const layout = layoutVersion(manifest.version);
   const teams = [];
   for (const entry of manifest.teams) {
     if (
@@ -353,7 +378,13 @@ export async function readExternalBackup(directory) {
         throw new Error("Backup image checksum mismatch");
       images.set(asset.url, bytes);
     }
-    teams.push({ bundle, images });
+    teams.push({
+      bundle,
+      images,
+      slides: entry.slides
+        ? await readSlideBackup(directory, entry.teamId, entry.slides)
+        : null,
+    });
   }
   let control;
   if (manifest.control) {
@@ -369,17 +400,11 @@ export async function readExternalBackup(directory) {
       throw new Error("Control backup checksum mismatch");
     if (
       Object.keys(control.tables).some(
-        (table) =>
-          !controlTables(manifest.version >= 2, manifest.version >= 3).includes(
-            table,
-          ),
+        (table) => !controlTables(layout >= 2, layout >= 3).includes(table),
       )
     )
       throw new Error("Invalid control backup table");
-    for (const table of controlTables(
-      manifest.version >= 2,
-      manifest.version >= 3,
-    )) {
+    for (const table of controlTables(layout >= 2, layout >= 3)) {
       if (!Array.isArray(control.tables[table]))
         throw new Error("Missing control backup table");
       for (const row of control.tables[table])
@@ -388,7 +413,7 @@ export async function readExternalBackup(directory) {
     }
   }
   if (
-    manifest.version >= 2 &&
+    layout >= 2 &&
     (!control ||
       control.tables.site_meta.length !== 1 ||
       teams.length !== 1 ||
@@ -407,7 +432,7 @@ export async function restoreExternal({
   dryRun = false,
 }) {
   const backup = await readExternalBackup(source);
-  if (!!control?.site !== backup.manifest.version >= 2)
+  if (!!control?.site !== layoutVersion(backup.manifest.version) >= 2)
     throw new Error("Site and legacy backup layouts cannot be interchanged");
   if (control) {
     if (!backup.control) throw new Error("Control snapshot is absent");
@@ -451,11 +476,21 @@ export async function restoreExternal({
       )
     )
       throw new Error("Requested target team is absent from backup");
+  // Slide files: the target store is empty (or already holds this backup), so
+  // a restored team is never paired with slide files of another point in time.
+  for (const target of teams)
+    await checkSlideTarget({
+      adapter: target.adapter,
+      teamId: target.teamId,
+      backup: backup.teams.find(
+        (entry) => entry.bundle.payload.teamId === target.teamId,
+      ).slides,
+    });
   if (dryRun) return { dryRun: true, teams: teams.length, verified: true };
   // Validate every image before the first target mutation. The target DB must
   // remain disconnected from live bindings until this operation and recovery end.
   for (const target of teams) {
-    const { bundle, images } = backup.teams.find(
+    const { bundle, images, slides } = backup.teams.find(
         (entry) => entry.bundle.payload.teamId === target.teamId,
       ),
       { state, pending, tables, link } = stateFrom(bundle);
@@ -486,6 +521,13 @@ export async function restoreExternal({
       installationId: target.installationId,
       restoreToken: backup.manifest.hash,
     });
+    if (slides)
+      await restoreSlides({
+        adapter: target.adapter,
+        teamId: target.teamId,
+        blobs: target.slides,
+        backup: slides,
+      });
   }
   if (control) {
     if (!backup.control) throw new Error("Control snapshot is absent");

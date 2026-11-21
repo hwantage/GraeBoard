@@ -61,6 +61,7 @@ const businessServices = new Set([
   "server/storage/tasks/task-service.mjs",
   "server/storage/sheet-clones/sheet-clone-command-rules.mjs",
   "server/storage/sheet-clones/sheet-clone-service.mjs",
+  "server/storage/slides/slide-file-service.mjs",
   "server/storage/transfer/transfer-service.mjs",
 ]);
 const isService = (path) => businessServices.has(path);

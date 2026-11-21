@@ -444,6 +444,10 @@
       "reason": "External API, PostgreSQL repositories and gateway adapters; worker/sheet-clones"
     },
     {
+      "path": "worker/slides",
+      "reason": "External slide file routes over the shared slide service"
+    },
+    {
       "path": "worker/storage",
       "reason": "External API, PostgreSQL repositories and gateway adapters; worker/storage"
     },
@@ -474,6 +478,10 @@
     {
       "path": "worker/storage/sheet-clones",
       "reason": "External API, PostgreSQL repositories and gateway adapters; worker/storage/sheet-clones"
+    },
+    {
+      "path": "worker/storage/slides",
+      "reason": "PostgreSQL slide file repository and R2 slide bytes"
     },
     {
       "path": "worker/storage/tasks",
