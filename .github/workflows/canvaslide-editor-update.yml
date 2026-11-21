@@ -77,10 +77,15 @@ jobs:
             git -C ../bundles rm -rfq .
           fi
           mkdir -p ../bundles/bundles
-          cp "dist-canvaslide/bundles/$build.tar.gz" ../bundles/bundles/
-          git -C ../bundles add bundles
-          git -C ../bundles commit -m "Keep editor bundle $build"
-          git -C ../bundles push origin HEAD:refs/heads/canvaslide-editor
+          bundle="bundles/$build.tar.gz"
+          if test -f "../bundles/$bundle"; then
+            cmp "dist-canvaslide/$bundle" "../bundles/$bundle"
+          else
+            cp "dist-canvaslide/$bundle" "../bundles/$bundle"
+            git -C ../bundles add "$bundle"
+            git -C ../bundles commit -m "Keep editor bundle $build"
+            git -C ../bundles push origin HEAD:refs/heads/canvaslide-editor
+          fi
           # 받는 쪽이 쓸 주소에서 같은 바이트가 나오는지 확인한다.
           for attempt in 1 2 3 4 5 6; do
             got=$(curl -fsSL "$(jq -r .bundle.url scripts/canvaslide/canvaslide-upstream.json)" | sha256sum | cut -d' ' -f1 || true)
@@ -96,11 +101,20 @@ jobs:
           BRANCH: ${{ steps.plan.outputs.branch }}
           COMMIT: ${{ steps.plan.outputs.commit }}
         run: |
-          build=$(jq -r .bundle.buildId scripts/canvaslide/canvaslide-upstream.json)
-          git checkout -b "$BRANCH"
-          git add scripts/canvaslide/canvaslide-upstream.json
-          git commit -m "Update the pinned CanvaSlide editor to ${COMMIT:0:12}"
-          git push origin "$BRANCH"
+          pin=scripts/canvaslide/canvaslide-upstream.json
+          build=$(jq -r .bundle.buildId "$pin")
+          if git ls-remote --exit-code --heads origin "refs/heads/$BRANCH"; then
+            # A previous run pushed the pin and stopped before opening its PR.
+            # Reuse only the exact pin we just checked and no unrelated changes.
+            git fetch origin "refs/heads/$BRANCH"
+            git diff --exit-code HEAD...FETCH_HEAD -- . ":(exclude)$pin"
+            git show "FETCH_HEAD:$pin" | cmp - "$pin"
+          else
+            git checkout -b "$BRANCH"
+            git add "$pin"
+            git commit -m "Update the pinned CanvaSlide editor to ${COMMIT:0:12}"
+            git push origin "$BRANCH"
+          fi
           gh pr create --base main --head "$BRANCH" \
             --title "CanvaSlide 편집기 갱신: ${COMMIT:0:7}" \
             --body "원본 CanvaSlide \`$COMMIT\`을 그래보드 어댑터와 조립해 빌드 \`$build\`를 만들었습니다. 조립(원본 형 검사·연결 지점 검사), \`tests/slides\`, 슬라이드 브라우저 검사(Chromium)를 통과했고 배포본을 \`canvaslide-editor\` 브랜치에 보관했습니다. 병합 전에 3개 브라우저 검사와 대표 자료의 신·구 버전 열기를 확인하세요."

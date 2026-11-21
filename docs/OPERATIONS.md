@@ -202,9 +202,11 @@ npm run build
 
 원본 그래보드 저장소의 workflow **CanvaSlide 편집기 갱신**(`.github/workflows/canvaslide-editor-update.yml`, 매일 1회·수동 실행)이 다음을 수행합니다. Fork에서는 실행되지 않고(`github.repository` 검사), CanvaSlide 쪽에는 아무것도 쓰지 않습니다.
 
-1. CanvaSlide `main`의 최신 커밋이 고정 커밋의 후손이고 원본 자체 검사를 모두 통과했을 때만 진행합니다. 늦게 끝난 실행이 고정 커밋을 뒤로 돌리지 않으며, 같은 커밋에 대한 PR·브랜치가 이미 있으면(닫힌 PR 포함) 다시 만들지 않습니다.
+1. CanvaSlide `main`의 최신 커밋이 고정 커밋의 후손이고 원본 자체 검사를 모두 통과했을 때만 진행합니다. 늦게 끝난 실행이 고정 커밋을 뒤로 돌리지 않으며, 같은 커밋의 PR이 이미 있으면(닫힌 PR 포함) 다시 만들지 않습니다. PR을 여는 단계에서 중단돼 브랜치만 남으면 다시 검사하고 같은 배포본과 명세를 재사용해 PR을 엽니다.
 2. `npm run build:canvaslide`로 원본의 lockfile·pnpm 버전으로 조립합니다. 원본 형 검사와 그래보드 연결 지점 검사가 포함되어, 원본이 연결 지점을 바꾸면 여기서 실패합니다. 이어 `npm run build:canvaslide:pack`으로 배포본을 묶어 고정 파일에 기록하고 `tests/slides`와 슬라이드 브라우저 검사를 실행합니다.
-3. 통과하면 배포본을 `canvaslide-editor` 브랜치에 추가하고(임시 Actions 보관물에 의존하지 않음) 주소에서 같은 SHA-256이 나오는지 확인한 뒤 버전 갱신 PR을 엽니다. 어느 단계든 실패하면 아무것도 게시하지 않고 기존 고정 버전이 그대로 남습니다.
+3. 통과하면 배포본을 `canvaslide-editor` 브랜치에 추가하고(임시 Actions 보관물에 의존하지 않음) 주소에서 같은 SHA-256이 나오는지 확인한 뒤 버전 갱신 PR을 엽니다. 실패한 실행은 main의 고정 버전을 바꾸지 않습니다. 배포본이나 갱신 브랜치가 먼저 올라갔으면 다음 실행에서 내용을 대조합니다.
+
+자동 PR에는 원본 GraeBoard 저장소의 **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** 권한이 필요합니다. 이 권한을 끈 저장소에서는 관리자가 검사를 통과한 `canvaslide/update-…` 브랜치로 PR을 직접 열 수 있습니다. 권한을 켠 뒤 워크플로를 다시 실행해도 됩니다. 편집기 갱신은 해당 PR이 병합되고 그래보드를 빌드할 때 반영됩니다.
 
 어댑터(`scripts/canvaslide/canvaslide-adapter-plugin.mjs`, `frame/`, `shared/slides/slide-frame-protocol.js`)를 고치면 빌드 ID가 바뀝니다. 같은 두 명령으로 다시 조립·묶은 뒤 배포본을 보관 브랜치에 올려야 하며, 고정 파일이 현재 소스의 빌드를 가리키지 않으면 `tests/slides/canvaslide-dist-pipeline.test.mjs`와 `npm run build`가 실패합니다. 수동 조립에는 Git, 고정 파일의 pnpm 버전, CanvaSlide 저장소와 npm 레지스트리 접속이 필요하고, 원본 저장소가 로컬에 있으면 `CANVASLIDE_SOURCE=/경로/CanvaSlide`로 지정합니다(읽기만 합니다).
 
@@ -217,7 +219,7 @@ npm run migrate -- --engine sqlite-slides --database /절대경로/slide-files/s
 npm run migrate -- --engine sqlite-slides --database /절대경로/slide-files/slide-files.sqlite
 ```
 
-외부 사이트는 같은 PostgreSQL의 **별도 스키마 `graeboard_slides`**와 팀 R2 버킷의 `slides/<팀 ID>/` 접두를 씁니다. 기존 `graeboard` 스키마와 그 이력(team v4)은 바뀌지 않으므로 배포 순서에 제약이 없고, 슬라이드 도입 전 릴리스를 다시 배포해도 같은 DB에서 그대로 동작합니다(슬라이드 자료는 스키마와 버킷에 남습니다). 새 릴리스를 배포한 뒤 스키마를 만들 때까지는 슬라이드 요청만 503으로 답하고 업무 기능은 정상입니다.
+외부 사이트는 같은 PostgreSQL의 **별도 스키마 `graeboard_slides`**와 팀 R2 버킷의 `slides/<팀 ID>/` 접두를 씁니다. 기존 `graeboard` 스키마와 그 이력(team v4)은 바뀌지 않으므로 배포 순서에 제약이 없고, 슬라이드 도입 전 릴리스를 다시 배포해도 같은 DB에서 그대로 동작합니다(슬라이드 자료는 스키마와 버킷에 남습니다). 새 릴리스를 배포한 뒤 스키마를 만들 때까지는 슬라이드 요청만 503으로 답하고 업무 기능은 정상입니다. 외부 관리 화면에서 연결 해제된 팀을 삭제하면 제어 DB의 팀 등록을 지웁니다. 팀 DB의 슬라이드 자료와 R2 객체는 보존되므로 팀 데이터를 영구 폐기할 때는 백업과 함께 별도로 처리합니다.
 
 ```sh
 PG_SITE_URL=… npm run migrate -- --engine postgres --scope slides --url-env PG_SITE_URL --dry-run

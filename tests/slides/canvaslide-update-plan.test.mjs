@@ -135,7 +135,7 @@ test("GitHub 응답을 검증 통과·후손·중복 여부로 해석한다", as
     }).ahead(pinned, newer),
     false,
   );
-  // A closed proposal for the same commit, or a leftover branch, also counts.
+  // A closed proposal counts. A branch on its own must be retried.
   const pulls = Object.keys(responses).at(-1);
   assert.equal(
     await api({ [pulls]: [{ state: "closed" }] }).proposed(updateBranch(newer)),
@@ -146,7 +146,7 @@ test("GitHub 응답을 검증 통과·후손·중복 여부로 해석한다", as
       [`/repos/hwantage/GraeBoard/branches/${encodeURIComponent(updateBranch(newer))}`]:
         { name: "x" },
     }).proposed(updateBranch(newer)),
-    true,
+    false,
   );
 });
 

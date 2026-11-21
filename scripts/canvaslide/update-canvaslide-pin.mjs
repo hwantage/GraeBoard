@@ -78,12 +78,9 @@ export function githubApi({ upstream, repository, token, fetcher = fetch }) {
       const pulls = await call(
         `/repos/${repository}/pulls?state=all&head=${owner}:${encodeURIComponent(branch)}`,
       );
-      return (
-        (pulls || []).length > 0 ||
-        !!(await call(
-          `/repos/${repository}/branches/${encodeURIComponent(branch)}`,
-        ))
-      );
+      // A pushed update branch can be left behind when PR creation fails.
+      // Only a real (open or closed) proposal suppresses another attempt.
+      return (pulls || []).length > 0;
     },
     version: async (commit) =>
       (await call(`/repos/${upstream}/contents/package.json?ref=${commit}`))
