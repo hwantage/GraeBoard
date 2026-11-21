@@ -231,7 +231,7 @@ test("백업의 슬라이드 파일이 손상됐거나 빠졌으면 아무것도
     if (damage === "missing") rmSync(blob);
     if (damage === "version") {
       const db = new DatabaseSync(join(backup + ".slides", SLIDE_STORE_FILE));
-      db.exec("PRAGMA user_version=2");
+      db.exec("PRAGMA user_version=3");
       db.close();
     }
     const target = options(state, damage);

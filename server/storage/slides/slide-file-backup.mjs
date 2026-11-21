@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -153,6 +153,19 @@ export function restoreSlideStore(backup, target) {
     try {
       // Share links are temporary, like sessions.
       restored.exec("DELETE FROM slide_shares");
+      // A restored store starts a new publication epoch and reads the sync
+      // branch from the beginning, so it never reuses a version ID.
+      for (const row of restored
+        .prepare("SELECT team_id FROM slide_sync_state")
+        .all())
+        restored
+          .prepare(
+            "UPDATE slide_sync_state SET head=NULL,epoch=?,next_seq=1 WHERE team_id=?",
+          )
+          .run(randomUUID(), row.team_id);
+      restored.exec(
+        "UPDATE slide_sync_files SET pending_version=NULL,pending_key=NULL",
+      );
     } finally {
       restored.close();
     }

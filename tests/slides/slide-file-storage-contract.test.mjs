@@ -608,7 +608,7 @@ test("지원하지 않는 슬라이드 저장소는 데이터를 둔 채 열기�
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const fresh = join(directory, "fresh");
   const db = openSlideDatabase(fresh);
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 1);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 2);
   assert.equal(
     db.prepare("PRAGMA integrity_check").get().integrity_check,
     "ok",
@@ -623,7 +623,7 @@ test("지원하지 않는 슬라이드 저장소는 데이터를 둔 채 열기�
     database.exec(sql);
     database.close();
   };
-  raw("newer", "CREATE TABLE slide_files(id TEXT); PRAGMA user_version=2;");
+  raw("newer", "CREATE TABLE slide_files(id TEXT); PRAGMA user_version=3;");
   raw("unversioned", "CREATE TABLE slide_files(id TEXT);");
   for (const name of ["newer", "unversioned"]) {
     assert.throws(() => openSlideDatabase(join(directory, name)));
