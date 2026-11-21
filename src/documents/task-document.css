@@ -451,11 +451,9 @@
   width: 100%;
   min-width: 100px;
 }
-/* The link under the caret: its address and actions below it. Only the
-   buttons take clicks, so the text the tip covers stays clickable. */
+/* Keep the address and actions reachable as the pointer moves onto the tip. */
 .document-link-tip {
   position: absolute;
-  pointer-events: none;
   z-index: 3;
   display: flex;
   align-items: center;
@@ -562,7 +560,8 @@
 .document-current[hidden] {
   display: none;
 }
-.modal.task-detail-modal.document-full-page {
+.modal.task-detail-modal.document-full-page,
+.modal.document-image-modal.document-image-preview {
   width: 100vw;
   max-width: none;
   height: 100dvh;
@@ -1038,6 +1037,7 @@ body.document-block-selecting * {
 .document-image-modal > header {
   flex-shrink: 0;
 }
+.document-image-preview > .modal-body,
 .task-detail-modal .document-image-modal .modal-body {
   padding: 0;
   overflow: hidden;
@@ -1046,19 +1046,33 @@ body.document-block-selecting * {
   display: flex;
   flex-direction: column;
 }
-.document-image-view-controls {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+.modal.document-image-preview > header {
   gap: 8px;
   padding: 8px 16px;
-  background: white;
 }
-.document-image-view-controls .button {
+.document-image-preview .modal-heading h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.document-image-view-controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+.document-image-preview .document-image-view-controls .button {
   min-height: 28px;
   padding: 4px 8px;
   gap: 5px;
   font-size: 12px;
+  color: var(--ink);
+}
+@media (max-width: 480px) {
+  .document-image-preview .document-image-view-controls .button span {
+    display: none;
+  }
 }
 .document-image-canvas {
   display: flex;
@@ -1080,9 +1094,15 @@ body.document-block-selecting * {
   display: block;
 }
 .document-image-canvas.actual-size img {
+  cursor: grab;
+  user-select: none;
   max-width: none;
   max-height: none;
   margin: auto;
+}
+.document-image-canvas[data-panning],
+.document-image-canvas[data-panning] img {
+  cursor: grabbing;
 }
 .task-documents {
   --document-tabs-height: 40px;

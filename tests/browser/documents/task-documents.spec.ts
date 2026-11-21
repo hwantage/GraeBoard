@@ -2991,16 +2991,21 @@ test("문서 응답보다 최신 셀 이벤트가 먼저 와도 셀과 문서 �
   await expect(rich(page)).toContainText("늦게 도착할 문서 저장 응답");
 });
 
-async function pasteImage(page: Page, color = "#408378", invalid = false) {
+async function pasteImage(
+  page: Page,
+  color = "#408378",
+  invalid = false,
+  size = { width: 320, height: 180 },
+) {
   await rich(page).focus();
   await rich(page).evaluate(
-    (element, { color, invalid }) => {
+    (element, { color, invalid, size }) => {
       const canvas = document.createElement("canvas");
-      canvas.width = 320;
-      canvas.height = 180;
+      canvas.width = size.width;
+      canvas.height = size.height;
       const ctx = canvas.getContext("2d")!;
       ctx.fillStyle = color;
-      ctx.fillRect(0, 0, 320, 180);
+      ctx.fillRect(0, 0, size.width, size.height);
       ctx.fillStyle = "white";
       ctx.font = "24px sans-serif";
       ctx.fillText("붙여넣기 검증", 20, 80);
@@ -3023,7 +3028,7 @@ async function pasteImage(page: Page, color = "#408378", invalid = false) {
       Object.defineProperty(event, "clipboardData", { value: data });
       element.dispatchEvent(event);
     },
-    { color, invalid },
+    { color, invalid, size },
   );
 }
 
@@ -4474,10 +4479,28 @@ test("이미지 원본은 재편집 뒤에도 확대 팝업에서만 보이고 �
   await page.setViewportSize({ width: 320, height: 844 });
   await preview.getByRole("button", { name: "원본 보기", exact: true }).click();
   await expect(preview.locator("img")).toHaveAttribute("src", originalSrc!);
-  for (const name of ["편집본 보기", "이미지 편집", "실제 크기"])
-    await expect(
-      preview.getByRole("button", { name, exact: true }),
-    ).toBeInViewport();
+  const header = preview.locator("header");
+  const closeButton = header.getByRole("button", { name: "닫기", exact: true });
+  const closeBox = (await closeButton.boundingBox())!;
+  let previousRight = 0;
+  for (const name of ["이미지 편집", "편집본 보기", "실제 크기"]) {
+    const button = header.getByRole("button", { name, exact: true });
+    await expect(button).toBeInViewport();
+    const box = (await button.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(previousRight);
+    expect(box.y + box.height / 2).toBeCloseTo(
+      closeBox.y + closeBox.height / 2,
+      0,
+    );
+    previousRight = box.x + box.width;
+  }
+  expect(closeBox.x - previousRight).toBeCloseTo(8, 0);
+  const headerBox = (await header.boundingBox())!;
+  expect(headerBox.height).toBeLessThanOrEqual(48);
+  const imageArea = (await preview
+    .locator(".document-image-canvas")
+    .boundingBox())!;
+  expect(imageArea.y).toBeCloseTo(headerBox.y + headerBox.height, 0);
   await preview.screenshot({
     path: info.outputPath("original-image-popup-mobile.png"),
   });
@@ -5154,6 +5177,49 @@ test("이미지 도형은 색·굵기 변경과 이동·크기·회전·삭제�
     .toBeGreaterThan(100);
 });
 
+test("이미지를 두 번 누르면 전체 화면에서 실제 크기로 끌어 볼 수 있다", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 960, height: 640 });
+  await open(page);
+  await pasteImage(page, "#408378", false, { width: 1500, height: 1100 });
+  await rich(page).locator(".document-image img[src]").dblclick();
+  const preview = page.getByRole("dialog", { name: "이미지 크게 보기" });
+  const canvas = preview.locator(".document-image-canvas");
+  const image = canvas.getByRole("img");
+  await expect(preview).toBeVisible();
+  expect(await preview.boundingBox()).toEqual({
+    x: 0,
+    y: 0,
+    width: 960,
+    height: 640,
+  });
+  await expect
+    .poll(async () => (await image.boundingBox())?.width ?? 1500)
+    .toBeLessThan(960);
+  await preview.getByRole("button", { name: "실제 크기" }).click();
+  await expect(image).toHaveCSS("cursor", "grab");
+  await expect.poll(async () => (await image.boundingBox())?.width).toBe(1500);
+  await image.hover({ position: { x: 300, y: 200 } });
+  await page.mouse.down();
+  await expect(image).toHaveCSS("cursor", "grabbing");
+  const box = (await image.boundingBox())!;
+  await page.mouse.move(box.x + 200, box.y + 125, { steps: 5 });
+  await page.mouse.up();
+  await expect(image).toHaveCSS("cursor", "grab");
+  expect(await canvas.evaluate((el) => [el.scrollLeft, el.scrollTop])).toEqual([
+    100, 75,
+  ]);
+  await preview.getByRole("button", { name: "화면에 맞추기" }).click();
+  await expect(image).not.toHaveCSS("cursor", "grab");
+  expect(await canvas.evaluate((el) => [el.scrollLeft, el.scrollTop])).toEqual([
+    0, 0,
+  ]);
+  await page.keyboard.press("Escape");
+  await expect(preview).toHaveCount(0);
+  await expect(rich(page)).toBeVisible();
+});
+
 test("이미지 보기 버튼 간격과 모바일 편집 도구·확대 이동은 화면 안에서 유지한다", async ({
   page,
 }, info) => {
@@ -5175,9 +5241,18 @@ test("이미지 보기 버튼 간격과 모바일 편집 도구·확대 이동�
     name: "실제 크기",
     exact: true,
   });
+  const closeBox = (await preview
+    .locator("header")
+    .getByRole("button", { name: "닫기" })
+    .boundingBox())!;
   const left = (await edit.boundingBox())!,
     right = (await actual.boundingBox())!;
   expect(right.x - left.x - left.width).toBeGreaterThanOrEqual(7);
+  expect(closeBox.x - right.x - right.width).toBeCloseTo(8, 0);
+  expect(right.y + right.height / 2).toBeCloseTo(
+    closeBox.y + closeBox.height / 2,
+    0,
+  );
   expect(left.height).toBeLessThanOrEqual(30);
   await expect(edit.locator("svg")).toBeVisible();
   await edit.click();
