@@ -4476,13 +4476,17 @@ test("이미지 원본은 재편집 뒤에도 확대 팝업에서만 보이고 �
   await image
     .getByRole("button", { name: "이미지 크게 보기", exact: true })
     .click();
+  const header = preview.locator(":scope > header");
+  const desktopHeight = (await header.boundingBox())!.height;
   await page.setViewportSize({ width: 320, height: 844 });
   await preview.getByRole("button", { name: "원본 보기", exact: true }).click();
   await expect(preview.locator("img")).toHaveAttribute("src", originalSrc!);
-  const header = preview.locator("header");
   const closeButton = header.getByRole("button", { name: "닫기", exact: true });
   const closeBox = (await closeButton.boundingBox())!;
-  let previousRight = 0;
+  const title = header.getByRole("heading", { name: "이미지 크게 보기" });
+  await expect(title).toBeInViewport();
+  const titleBox = (await title.boundingBox())!;
+  let previousRight = titleBox.x + titleBox.width;
   for (const name of ["이미지 편집", "편집본 보기", "실제 크기"]) {
     const button = header.getByRole("button", { name, exact: true });
     await expect(button).toBeInViewport();
@@ -4496,7 +4500,7 @@ test("이미지 원본은 재편집 뒤에도 확대 팝업에서만 보이고 �
   }
   expect(closeBox.x - previousRight).toBeCloseTo(8, 0);
   const headerBox = (await header.boundingBox())!;
-  expect(headerBox.height).toBeLessThanOrEqual(48);
+  expect(headerBox.height).toBe(desktopHeight);
   const imageArea = (await preview
     .locator(".document-image-canvas")
     .boundingBox())!;
@@ -5182,12 +5186,27 @@ test("이미지를 두 번 누르면 전체 화면에서 실제 크기로 끌어
 }) => {
   await page.setViewportSize({ width: 960, height: 640 });
   await open(page);
+  await detail(page)
+    .getByRole("button", { name: "문서 전체 페이지로 보기" })
+    .click();
+  const documentHeader = detail(page).locator(":scope > header");
+  const documentHeight = (await documentHeader.boundingBox())!.height;
+  const documentTitle = (await documentHeader
+    .getByRole("heading")
+    .boundingBox())!;
   await pasteImage(page, "#408378", false, { width: 1500, height: 1100 });
   await rich(page).locator(".document-image img[src]").dblclick();
   const preview = page.getByRole("dialog", { name: "이미지 크게 보기" });
   const canvas = preview.locator(".document-image-canvas");
   const image = canvas.getByRole("img");
   await expect(preview).toBeVisible();
+  const header = preview.locator(":scope > header");
+  const title = header.getByRole("heading", { name: "이미지 크게 보기" });
+  expect((await header.boundingBox())!.height).toBe(documentHeight);
+  expect((await title.boundingBox())!.x).toBe(documentTitle.x);
+  // The shared heading trims its line box to Latin cap height. Korean glyphs
+  // extend above and below that box and must remain visible.
+  await expect(title).toHaveCSS("overflow-y", "visible");
   expect(await preview.boundingBox()).toEqual({
     x: 0,
     y: 0,
@@ -5253,7 +5272,7 @@ test("이미지 보기 버튼 간격과 모바일 편집 도구·확대 이동�
     closeBox.y + closeBox.height / 2,
     0,
   );
-  expect(left.height).toBeLessThanOrEqual(30);
+  expect(left.height).toBe(right.height);
   await expect(edit.locator("svg")).toBeVisible();
   await edit.click();
   const editor = page.getByRole("dialog", { name: "이미지 편집", exact: true });

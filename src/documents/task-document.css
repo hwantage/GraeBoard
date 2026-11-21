@@ -1048,12 +1048,6 @@ body.document-block-selecting * {
 }
 .modal.document-image-preview > header {
   gap: 8px;
-  padding: 8px 16px;
-}
-.document-image-preview .modal-heading h2 {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .document-image-view-controls {
   display: flex;
@@ -1063,7 +1057,6 @@ body.document-block-selecting * {
   margin-left: auto;
 }
 .document-image-preview .document-image-view-controls .button {
-  min-height: 28px;
   padding: 4px 8px;
   gap: 5px;
   font-size: 12px;
