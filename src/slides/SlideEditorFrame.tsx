@@ -115,7 +115,7 @@ export default function SlideEditorFrame({
   start: SlideEditorStart;
   onClose: () => void;
   onNew: () => void;
-  onSaved: (file: SlideFile) => void;
+  onSaved: (file: SlideFile, bytes: Uint8Array<ArrayBuffer>) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const bridge = useRef<SlideFrameBridge | null>(null);
@@ -131,6 +131,7 @@ export default function SlideEditorFrame({
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const busy = !ready || saving || writingTeamFile;
   const activeSave = useRef(false);
+  const leaving = useRef(false);
   const unconfirmedCreate = useRef<{
     title: string;
     bytes: Uint8Array;
@@ -171,9 +172,9 @@ export default function SlideEditorFrame({
     setError(message);
     return new SlideShownError(message);
   };
-  const stored = (file: SlideFile) => {
+  const stored = (file: SlideFile, bytes: Uint8Array<ArrayBuffer>) => {
     setError("");
-    live.current.onSaved(file);
+    live.current.onSaved(file, bytes);
     return target(file);
   };
   async function openFile(fileId: string, discard = false) {
@@ -234,6 +235,7 @@ export default function SlideEditorFrame({
                   baseTitle === undefined ? undefined : { title, baseTitle },
                 ),
               ),
+              bytes,
             );
           } catch (failure) {
             if (!(failure instanceof ApiError) || failure.status !== 409)
@@ -253,6 +255,7 @@ export default function SlideEditorFrame({
                     bytes,
                     slideRequestId(),
                   ),
+                  bytes,
                 );
               } catch (copyFailure) {
                 throw fail(copyFailure);
@@ -288,7 +291,7 @@ export default function SlideEditorFrame({
               createSlideFile(teamId, title, bytes, requestId),
             );
             unconfirmedCreate.current = null;
-            return stored(file);
+            return stored(file, bytes);
           } catch (failure) {
             // A lost response can follow a committed create. Replay the identical
             // submission on a manual retry, even after both HTTP attempts failed.
@@ -387,25 +390,45 @@ export default function SlideEditorFrame({
     }
   }
   async function leave() {
-    if (saving || writingTeamFile || (!ready && start.kind === "new"))
+    if (
+      leaving.current ||
+      activeSave.current ||
+      saving ||
+      writingTeamFile ||
+      (!ready && start.kind === "new")
+    )
       return false;
     if (!bridge.current || !ready) return true;
-    const current = await bridge.current
-      .request<SlideEditorState>("state", {}, 3000)
-      .catch(() => null);
-    if (!current?.dirty && current?.binding?.fileId !== null) return true;
-    const choice = await ask<LeaveChoice>((resolve) => ({
-      kind: "leave",
-      resolve,
-    }));
-    if (choice === "save") return save();
-    if (choice !== "discard") return false;
-    await bridge.current?.request("discard", {}, 3000).catch(() => {});
-    return true;
+    leaving.current = true;
+    try {
+      const current = await bridge.current.request<SlideEditorState>(
+        "state",
+        {},
+        3000,
+      );
+      let discard = false;
+      if (current.dirty) {
+        const choice = await ask<LeaveChoice>((resolve) => ({
+          kind: "leave",
+          resolve,
+        }));
+        if (!choice || (choice === "save" && !(await save()))) return false;
+        discard = choice === "discard";
+      }
+      return await bridge.current.request<boolean>("prepare-leave", {
+        documentSession: current.documentSession,
+        discard,
+      });
+    } catch (failure) {
+      setError((failure as Error).message);
+      return false;
+    } finally {
+      leaving.current = false;
+    }
   }
   useImperativeHandle(ref, () => ({ leave }));
 
-  const dirty = !!state?.dirty || state?.binding?.fileId === null;
+  const dirty = !!state?.dirty;
   useEffect(() => {
     if (!dirty) return;
     const warn = (event: BeforeUnloadEvent) => {
@@ -421,7 +444,7 @@ export default function SlideEditorFrame({
       !busy &&
       canWrite &&
       current?.canStore &&
-      (current.dirty || current.binding?.fileId === null) &&
+      current.dirty &&
       (!current.binding ||
         !slideTitleProblem(current.name) ||
         (current.binding.fileId === null && !current.name.trim()))

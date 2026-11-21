@@ -86,6 +86,8 @@ export function verifyBuildDirectory(directory, expected) {
     if (statSync(path).size !== bytes || sha256(readFileSync(path)) !== hash)
       throw new Error(`편집기 배포본 파일이 명세와 다릅니다: ${file}`);
   }
+  if (!recorded.includes("thumbnail.js"))
+    throw new Error("편집기 배포본에 카드 미리보기 모듈이 없습니다.");
   const page = readFileSync(join(directory, "index.html"), "utf8");
   const base = `/tools/canvaslide/${expected.buildId}/`;
   const scripts = [...page.matchAll(/<script[^>]+src="([^"]+)"/g)].map(

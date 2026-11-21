@@ -1,16 +1,11 @@
 import { useRef, useState } from "react";
-import {
-  Copy,
-  Download,
-  FilePlus2,
-  Pencil,
-  Trash2,
-  Upload,
-} from "lucide-react";
+import { Copy, Download, Plus, Pencil, Trash2, Upload } from "lucide-react";
 import { saveFile } from "../platform/api";
 import { useRecentCreation } from "../sheet/NewTaskMark";
 import type { User } from "../types";
 import { Button } from "../ui/Button";
+import SlideCardThumbnail from "./SlideCardThumbnail";
+import type { SlideThumbnails } from "./slide-thumbnails";
 import SlideTitleDialog from "./SlideTitleDialog";
 import { Empty } from "../ui/Empty";
 import { Modal } from "../ui/Modal";
@@ -49,6 +44,7 @@ const time = (value: string) =>
 export default function SlideFileList({
   teamId,
   files,
+  thumbnails,
   canWrite,
   people,
   onOpen,
@@ -59,6 +55,7 @@ export default function SlideFileList({
 }: {
   teamId: string;
   files: SlideFile[];
+  thumbnails: SlideThumbnails | null;
   canWrite: boolean;
   people: User[];
   onOpen: (file: SlideFile) => void;
@@ -94,16 +91,16 @@ export default function SlideFileList({
         `자료는 ${MAX_SLIDE_FILE_BYTES / 1024 / 1024}MB까지 가져올 수 있습니다.`,
       );
     const title = slideTitleFromFileName(file.name) || "가져온 자료";
-    await run(
-      async () =>
-        createSlideFile(
-          teamId,
-          title,
-          new Uint8Array(await file.arrayBuffer()),
-          slideRequestId(),
-        ),
-      "팀 자료로 가져왔습니다.",
-    );
+    await run(async () => {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const created = await createSlideFile(
+        teamId,
+        title,
+        bytes,
+        slideRequestId(),
+      );
+      thumbnails?.remember(created, bytes);
+    }, "팀 자료로 가져왔습니다.");
   }
   async function download(file: SlideFile) {
     onError("");
@@ -146,32 +143,40 @@ export default function SlideFileList({
               <Upload size={15} />
               <span>파일 가져오기</span>
             </Button>
-            <Button
-              className="primary"
-              title="새 팀 자료"
-              disabled={busy}
-              onClick={onNew}
-            >
-              <FilePlus2 size={15} />
-              <span>새 자료</span>
-            </Button>
           </div>
         )}
       </header>
       <div className="board slides-board slide-list-body">
-        {files.length === 0 ? (
+        {files.length === 0 && !canWrite ? (
           <Empty
             title="아직 팀 자료가 없습니다"
-            description={
-              canWrite
-                ? "새 자료를 만들거나 이 기기의 CanvaSlide 파일을 가져오세요."
-                : "팀원이 자료를 저장하면 여기에 표시됩니다."
-            }
+            description="팀원이 자료를 저장하면 여기에 표시됩니다."
           />
         ) : (
           <ul className="slide-card-grid" aria-label="팀 자료">
+            {canWrite && (
+              <li className="slide-new-card">
+                <button
+                  type="button"
+                  aria-label="새 팀 자료"
+                  disabled={busy}
+                  onClick={onNew}
+                >
+                  <span className="slide-new-icon">
+                    <Plus aria-hidden="true" size={24} />
+                  </span>
+                  새 자료
+                </button>
+              </li>
+            )}
             {files.map((file) => (
               <li key={file.id} className="slide-file-card">
+                <SlideCardThumbnail
+                  key={file.contentHash}
+                  file={file}
+                  thumbnails={thumbnails}
+                  canWrite={canWrite}
+                />
                 <div className="slide-card-heading">
                   <button
                     type="button"

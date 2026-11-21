@@ -80,6 +80,30 @@ export function installSlideFileRoutes(
       res.json(await service(req).get(req.params.teamId, req.params.fileId)),
     ),
   );
+  app.get(`${base}/:fileId/thumbnail`, async (req, res, next) => {
+    try {
+      res
+        .set("Cache-Control", "no-store")
+        .json(
+          await service(req).thumbnail(req.params.teamId, req.params.fileId),
+        );
+    } catch (error) {
+      next(error);
+    }
+  });
+  app.put(`${base}/:fileId/thumbnail`, async (req, res, next) => {
+    try {
+      res.json(
+        await service(req).putThumbnail(
+          req.params.teamId,
+          req.params.fileId,
+          req.body ?? {},
+        ),
+      );
+    } catch (error) {
+      next(error);
+    }
+  });
   app.get(
     `${base}/:fileId/content`,
     route(async (req, res) => {

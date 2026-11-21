@@ -54,6 +54,54 @@
 .slide-file-card:has(.slide-open:is(:hover, :focus-visible)) {
   border-color: var(--accent);
 }
+.slide-new-card {
+  display: flex;
+  min-height: 214px;
+}
+.slide-new-card > button {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border: 1px dashed var(--accent-border);
+  border-radius: 8px;
+  background: var(--accent-surface);
+  color: var(--accent-strong);
+  font-weight: 700;
+  cursor: pointer;
+}
+.slide-new-card > button:is(:hover, :focus-visible) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.slide-new-icon {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--accent-strong);
+  color: #fff;
+}
+.slide-card-thumbnail {
+  display: grid;
+  place-items: center;
+  height: 132px;
+  margin: -14px -16px 10px;
+  border-radius: 7px 7px 0 0;
+  border-bottom: 1px solid var(--line);
+  overflow: hidden;
+  background: var(--accent-surface);
+  color: var(--accent-muted);
+}
+.slide-card-thumbnail img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
 .slide-card-heading {
   line-height: 1.4;
   overflow-wrap: anywhere;

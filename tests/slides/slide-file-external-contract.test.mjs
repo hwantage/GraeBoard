@@ -356,6 +356,40 @@ test("슬라이드 스키마는 graeboard 이력을 바꾸지 않고 한 번만 
   );
 });
 
+test("외부 썸네일은 팀 권한과 현재 파일 해시를 확인하고 원본 수정 뒤에는 다시 생성한다", async (t) => {
+  const site = await externalSite(t);
+  if (!site) return;
+  const { pg, lead, base } = site;
+  await migrateSlideSchema(pg.pool);
+  const viewer = clientAt(base, await site.member("viewer"));
+  const outsider = clientAt(base, await site.member(null));
+  const { body: file } = await lead.upload(
+    pg.teamId,
+    "미리보기",
+    slide("첫 내용"),
+  );
+  const path = `/teams/${pg.teamId}/slides/${file.id}/thumbnail`;
+  const put = (client, hash, image) =>
+    client.data(path, { method: "PUT", json: { hash, image } });
+  assert.deepEqual((await viewer.data(path)).body, {
+    hash: file.contentHash,
+    image: null,
+  });
+  assert.equal((await put(viewer, file.contentHash, "")).status, 403);
+  assert.equal(
+    (await put(lead, file.contentHash, "data:image/svg+xml,abc")).status,
+    400,
+  );
+  assert.equal((await put(lead, file.contentHash, "")).status, 200);
+  assert.equal((await viewer.data(path)).body.image, "");
+  assert.ok([403, 404].includes((await outsider.data(path)).status));
+  const changed = await lead.save(pg.teamId, file.id, 1, slide("둘째 내용"));
+  assert.deepEqual((await lead.data(path)).body, {
+    hash: changed.body.contentHash,
+    image: null,
+  });
+  assert.equal((await put(lead, file.contentHash, "")).status, 409);
+});
 test("외부 저장소도 사내와 같은 저장 계약을 지킨다", async (t) => {
   const site = await externalSite(t);
   if (!site) return;

@@ -119,6 +119,14 @@ export function graeboardCanvaslideAdapter({ graeboardRoot, upstreamRoot }) {
   return {
     name: "graeboard:canvaslide-adapter",
     enforce: "pre",
+    buildStart() {
+      this.emitFile({
+        type: "chunk",
+        id: resolve(frame, "slide-card-render.ts"),
+        fileName: "thumbnail.js",
+        preserveSignature: "strict",
+      });
+    },
     async resolveId(source, importer, options) {
       if (source.startsWith(UPSTREAM)) {
         const target = replaced[source.slice(UPSTREAM.length)];

@@ -91,9 +91,16 @@ export const saveSlideFile = (
       }),
     },
   });
-export async function readSlideFile(teamId: string, fileId: string) {
-  const response = await api<Response>(`${base(teamId)}/${fileId}/content`);
+export async function readSlideFile(
+  teamId: string,
+  fileId: string,
+  signal?: AbortSignal,
+) {
+  const response = await api<Response>(`${base(teamId)}/${fileId}/content`, {
+    signal,
+  });
   return {
+    hash: response.headers.get("X-Slide-Content-Sha256"),
     revision: Number(response.headers.get("X-Slide-Revision")),
     title: decodeURIComponent(response.headers.get("X-Slide-Title") || ""),
     bytes: new Uint8Array(await response.arrayBuffer()),

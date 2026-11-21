@@ -210,11 +210,14 @@ test("CanvaSlide 목록은 공통 제목줄과 원형 메뉴를 쓰고 화면 �
   const headingBox = (await heading.boundingBox())!;
   expect([headingBox.x, headingBox.y]).toEqual([annualBox.x, annualBox.y]);
   await expect(heading).toHaveCSS("font-size", titleFont);
-  await expect(page.getByRole("button", { name: "새 팀 자료" })).toHaveClass(
-    /\bprimary\b/,
-  );
+  await expect(
+    page
+      .getByRole("list", { name: "팀 자료" })
+      .getByRole("listitem")
+      .first()
+      .getByRole("button", { name: "새 팀 자료" }),
+  ).toBeVisible();
   for (const button of [
-    page.getByRole("button", { name: "새 팀 자료" }),
     page.getByRole("button", { name: /팀 자료로 가져오기/ }),
     download,
   ])
@@ -224,6 +227,77 @@ test("CanvaSlide 목록은 공통 제목줄과 원형 메뉴를 쓰고 화면 �
       name: /편집기만 열기|팀에 저장하지 않고 편집기 열기/,
     }),
   ).toHaveCount(0);
+});
+
+test("첫 프레임 사진을 썸네일에 그리고 다음 열람자는 원본을 내려받지 않는다", async ({
+  page,
+  context,
+}) => {
+  // Each browser must render its own cold first image rather than reusing
+  // the JPEG another engine already put in the shared cache.
+  const deck = JSON.parse(example("freefall.canvaslide").toString());
+  deck.name = `썸네일 ${randomUUID()}`;
+  const file = await upload(
+    page.request,
+    teamId,
+    deck.name,
+    Buffer.from(JSON.stringify(deck)),
+  );
+  const card = (p: Page) =>
+    p
+      .getByRole("listitem")
+      .filter({
+        has: p.getByRole("button", { name: file.title, exact: true }),
+      });
+  await page.goto("/slides");
+  await card(page).scrollIntoViewIfNeeded();
+  const img = card(page).locator(".slide-card-thumbnail img");
+  await expect(img).toBeVisible();
+  const pixels = await img.evaluate(async (el: HTMLImageElement) => {
+    await el.decode();
+    const canvas = document.createElement("canvas");
+    canvas.width = 32;
+    canvas.height = 18;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(el, 0, 0, 32, 18);
+    // Freefall's illuminated earth crosses the upper part of its first frame.
+    const pixel = ctx.getImageData(17, 0, 9, 4).data;
+    let colored = 0;
+    for (let i = 0; i < pixel.length; i += 4) {
+      if (
+        Math.max(pixel[i], pixel[i + 1], pixel[i + 2]) -
+          Math.min(pixel[i], pixel[i + 1], pixel[i + 2]) >
+        6
+      )
+        colored++;
+    }
+    return [el.naturalWidth, el.naturalHeight, colored];
+  });
+  expect(pixels.slice(0, 2)).toEqual([384, 216]);
+  expect(pixels[2]).toBeGreaterThan(3);
+  const remote = await json(
+    await page.request.get(`/api/teams/${teamId}/slides/${file.id}/thumbnail`),
+  );
+  expect(remote.image).toBe(await img.getAttribute("src"));
+  const viewer = await peerSession(page, context, "viewer");
+  try {
+    const view = await viewer.newPage();
+    const reads: string[] = [];
+    view.on("request", (r) => {
+      if (r.url().endsWith("/" + file.id + "/content")) reads.push(r.url());
+    });
+    await view.goto("/slides");
+    await card(view).scrollIntoViewIfNeeded();
+    await expect(
+      card(view).locator(".slide-card-thumbnail img"),
+    ).toHaveAttribute("src", remote.image);
+    await expect(view.getByRole("button", { name: "새 팀 자료" })).toHaveCount(
+      0,
+    );
+    expect(reads).toEqual([]);
+  } finally {
+    await viewer.close();
+  }
 });
 
 test("카드의 new 표시는 생성 시각을 기준으로 12시간이 지나면 열린 목록에서도 사라진다", async ({
@@ -484,6 +558,11 @@ test("새 자료는 이름 없이 편집하고 첫 저장 때만 팀 파일을 �
   await page.getByRole("button", { name: "저장 후 이동" }).click();
   await prompt.getByRole("textbox").fill(title);
   await prompt.getByRole("button", { name: "저장", exact: true }).click();
+  const savedCard = page
+    .getByRole("listitem")
+    .filter({ has: page.getByRole("button", { name: title, exact: true }) });
+  await savedCard.scrollIntoViewIfNeeded();
+  await expect(savedCard.locator(".slide-card-thumbnail img")).toBeVisible();
   await page.getByRole("button", { name: title, exact: true }).click();
   await expect(shape).toBeVisible();
   await expect(idleSave(page)).toBeDisabled();
@@ -519,8 +598,9 @@ test("새 자료는 이름 없이 편집하고 첫 저장 때만 팀 파일을 �
   }
   await newButton.click();
   await expect(titleInput(page)).toHaveValue("");
+  await expect(saveButton(page)).toBeDisabled();
   await listButton.click();
-  await page.getByRole("button", { name: "저장하지 않고 이동" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("list", { name: "팀 자료" })).toBeVisible();
   expect(created).toBe(1);
   await page.getByRole("button", { name: title, exact: true }).click();
@@ -608,11 +688,9 @@ test("새 자료 생성에 실패하면 같은 화면에서 다시 저장할 수
     return route.fulfill({ status: 503, json: { error: "응답 유실" } });
   });
   await page.getByRole("button", { name: "새 팀 자료" }).click();
-  await saveButton(page).click();
-  const dialog = page.getByRole("dialog", { name: "자료 저장" });
   const title = `다시 저장 ${randomUUID().slice(0, 8)}`;
-  await dialog.getByRole("textbox").fill(title);
-  await dialog.getByRole("button", { name: "저장", exact: true }).click();
+  await titleInput(page).fill(title);
+  await saveButton(page).click();
   await expect(page.locator(".slide-editor .error-note")).toBeVisible();
   await expect(saveButton(page)).toBeEnabled();
   await expect(titleInput(page)).toHaveValue(title);
@@ -873,6 +951,107 @@ test("편집 가능한 공유 링크는 팀 사본으로 저장하고 해당 파
   });
 });
 
+function snapshotCount(page: Page, database: string) {
+  return page.evaluate(async (name) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const open = indexedDB.open(name);
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    try {
+      if (!db.objectStoreNames.contains("snapshots")) return 0;
+      return await new Promise<number>((resolve, reject) => {
+        const count = db
+          .transaction("snapshots")
+          .objectStore("snapshots")
+          .count();
+        count.onsuccess = () => resolve(count.result);
+        count.onerror = () => reject(count.error);
+      });
+    } finally {
+      db.close();
+    }
+  }, database);
+}
+
+test("초안의 복구 사본이 있어도 저장 후 이동이 끝나면 복구를 묻지 않는다", async ({
+  page,
+}) => {
+  test.setTimeout(60000);
+  const user = (await json(await page.request.get("/api/bootstrap"))).user;
+  const scope = `canvaslide-recovery.${user.id}.${teamId}`;
+  await page.goto("/slides");
+  await page.getByRole("button", { name: "새 팀 자료", exact: true }).click();
+  const viewport = editor(page).getByTestId("canvas-viewport");
+  await expect(titleInput(page)).toHaveValue("");
+  await viewport.click();
+  await page.keyboard.press("r");
+  const box = (await viewport.boundingBox())!;
+  await page.mouse.move(box.x + 130, box.y + 130);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 235, box.y + 205, { steps: 4 });
+  await page.mouse.up();
+  await expect
+    .poll(() => snapshotCount(page, scope), { timeout: 40000 })
+    .toBe(1);
+  await page.getByRole("button", { name: "팀 자료 목록" }).click();
+  await page.getByRole("button", { name: "저장 후 이동" }).click();
+  const title = `저장 후 다시 열기 ${randomUUID()}`;
+  const prompt = page.getByRole("dialog", { name: "자료 저장" });
+  await prompt.getByRole("textbox").fill(title);
+  // Hold a competing transaction until after the save response. Closing the
+  // old iframe too early cancels its pending recovery-record deletion.
+  await page.evaluate(
+    (name) =>
+      new Promise<void>((resolve) => {
+        const open = indexedDB.open(name);
+        open.onsuccess = () => {
+          const db = open.result;
+          const tx = db.transaction("snapshots", "readwrite");
+          const store = tx.objectStore("snapshots");
+          let release = false;
+          window.addEventListener(
+            "release-test-recovery",
+            () => {
+              release = true;
+            },
+            { once: true },
+          );
+          const read = () => {
+            if (!release) store.get("hold").onsuccess = read;
+          };
+          tx.oncomplete = () => db.close();
+          read();
+          resolve();
+        };
+      }),
+    scope,
+  );
+  const posted = page.waitForResponse(
+    (r) =>
+      r.request().method() === "POST" &&
+      new URL(r.url()).pathname.endsWith("/slides") &&
+      r.status() === 201,
+  );
+  await prompt.getByRole("button", { name: "저장", exact: true }).click();
+  await posted;
+  await page.evaluate(() =>
+    setTimeout(
+      () => window.dispatchEvent(new Event("release-test-recovery")),
+      400,
+    ),
+  );
+  await page.getByRole("button", { name: title, exact: true }).click();
+  await expect(titleInput(page)).toHaveValue(title);
+  await expect(
+    editor(page).locator('[data-element-type="shape"]').first(),
+  ).toBeVisible();
+  await expect.poll(() => snapshotCount(page, scope)).toBe(0);
+  await expect(
+    editor(page).getByRole("dialog", { name: "Recover unsaved work" }),
+  ).toHaveCount(0);
+});
+
 test("복구본은 계정과 팀 범위로 나뉘어 다른 계정에는 보이지 않는다", async ({
   page,
   context,
@@ -887,37 +1066,9 @@ test("복구본은 계정과 팀 범위로 나뉘어 다른 계정에는 보이�
   );
   await openTeamFile(page, file.id);
   await nudge(page);
-  const frame = page.frame({ url: /\/tools\/canvaslide\// })!;
   const scope = `canvaslide-recovery.${user.id}.${teamId}`;
-  // The editor writes its recovery copy after edits settle.
   await expect
-    .poll(
-      () =>
-        frame.evaluate(
-          (name) =>
-            new Promise<number>((resolve) => {
-              const open = indexedDB.open(name);
-              open.onerror = () => resolve(-1);
-              open.onsuccess = () => {
-                const db = open.result;
-                if (!db.objectStoreNames.contains("snapshots")) {
-                  db.close();
-                  return resolve(0);
-                }
-                const count = db
-                  .transaction("snapshots")
-                  .objectStore("snapshots")
-                  .count();
-                count.onsuccess = () => {
-                  db.close();
-                  resolve(count.result);
-                };
-              };
-            }),
-          scope,
-        ),
-      { timeout: 45000 },
-    )
+    .poll(() => snapshotCount(page, scope), { timeout: 45000 })
     .toBe(1);
   await page.close();
 

@@ -52,6 +52,10 @@ function checkout(t) {
     join(made, "assets/index-abc.js"),
     `const channel=${JSON.stringify(SLIDE_FRAME_CHANNEL)};`,
   );
+  writeFileSync(
+    join(made, "thumbnail.js"),
+    "export function renderThumbnail() {}",
+  );
   writeFileSync(join(made, "examples/a.canvaslide"), '{"version":1}');
   const manifest = () =>
     writeFileSync(
@@ -143,6 +147,16 @@ test("깨끗한 checkout의 빌드는 보관한 배포본을 받아 검증한 �
     fetcher: async () => assert.fail("no download expected"),
   });
   assert.equal(again.source, "dist-canvaslide");
+});
+
+test("미리보기 모듈이 빠지면 명세의 파일 목록이 일치해도 배포하지 않는다", (t) => {
+  const site = checkout(t);
+  rmSync(join(site.made, "thumbnail.js"));
+  site.manifest();
+  assert.throws(
+    () => verifyBuildDirectory(site.made, site.expected),
+    /미리보기 모듈/,
+  );
 });
 
 test("배포본이 없거나 손상됐으면 빌드를 실패시키고 편집기 없는 앱을 만들지 않는다", async (t) => {
@@ -259,7 +273,7 @@ test("배포본 묶음은 같은 빌드에서 항상 같은 바이트이고 경�
   const first = packBundle(site.made);
   assert.equal(sha256(packBundle(site.made)), sha256(first));
   const out = join(site.root, "unpacked");
-  assert.equal(unpackBundle(first, out), 4);
+  assert.equal(unpackBundle(first, out), 5);
   assert.deepEqual(
     describeBuildDirectory(out),
     describeBuildDirectory(site.made),

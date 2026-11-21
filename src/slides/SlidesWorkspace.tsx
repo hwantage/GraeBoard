@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   useRef,
   useState,
   type Ref,
@@ -22,6 +23,7 @@ import SlideEditorFrame, {
   type SlideEditorHandle,
   type SlideEditorStart,
 } from "./SlideEditorFrame";
+import { SlideThumbnails } from "./slide-thumbnails";
 import SlideFileList from "./SlideFileList";
 import "./slides.css";
 
@@ -65,6 +67,10 @@ export default function SlidesWorkspace({
   onNotify: (message: string) => void;
 }) {
   const [editor, setEditor] = useState<SlideEditorBuild | null | undefined>();
+  const thumbnails = useMemo(
+    () => (editor ? new SlideThumbnails(editor.path) : null),
+    [editor, teamId, user.id],
+  );
   const [list, setList] = useState<SlideFiles | null>(null);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
@@ -170,7 +176,8 @@ export default function SlidesWorkspace({
           start={start}
           onClose={() => void close()}
           onNew={openNew}
-          onSaved={(file) => {
+          onSaved={(file, bytes) => {
+            thumbnails?.remember(file, bytes);
             writeAddress({ file: file.id });
             refresh();
           }}
@@ -187,6 +194,7 @@ export default function SlidesWorkspace({
         </p>
       )}
       <SlideFileList
+        thumbnails={thumbnails}
         teamId={teamId}
         files={list.files}
         canWrite={list.canWrite && !!editor}

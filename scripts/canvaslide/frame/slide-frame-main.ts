@@ -108,10 +108,29 @@ if (hosted) {
     return {};
   });
   handleHost("state", () => editorState());
-  // Leaving on purpose: the recovery copy of this session is no longer wanted.
-  handleHost("discard", async () => {
-    await useRecoveryStore.getState().prepareExit();
-    return {};
+  // The frame owns the recovery transaction. Unmount only after it has
+  // drained, and only while the user is still leaving the same document.
+  handleHost("prepare-leave", async ({ documentSession, discard }) => {
+    const before = useDocumentStore.getState();
+    if (before.session !== documentSession || (before.dirty && !discard))
+      return false;
+    const recovery = useRecoveryStore.getState();
+    try {
+      if (before.dirty) await recovery.prepareExit();
+      else await recovery.clear();
+      const after = useDocumentStore.getState();
+      if (
+        after.session === before.session &&
+        after.document === before.document &&
+        (discard || !after.dirty)
+      )
+        return true;
+      recovery.cancelExit();
+      return false;
+    } catch (error) {
+      recovery.cancelExit();
+      throw error;
+    }
   });
 
   let last = "";

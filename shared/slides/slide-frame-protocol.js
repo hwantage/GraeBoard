@@ -24,7 +24,7 @@ export const SLIDE_FRAME_ACTIONS = Object.freeze([
   "rename",
   "save",
   "state",
-  "discard",
+  "prepare-leave",
 ]);
 
 export function slideFrameMessage(session, kind, body = {}) {

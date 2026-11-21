@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { HttpError, requireThat } from "../../../shared/validation.js";
+import { slideThumbnailCache } from "./slide-thumbnail-cache.mjs";
 import { canContribute } from "../../../shared/domain.js";
 import {
   isSlideRequestId,
@@ -15,10 +16,15 @@ import {
 // repository keeps metadata and bytes; this service never interprets the
 // bytes. Every call checks the caller's team access again.
 export class SlideFileService {
-  constructor(repository, user, { teamAccess, now = () => new Date() }) {
+  constructor(
+    repository,
+    user,
+    { teamAccess, now = () => new Date(), thumbnailScope = repository },
+  ) {
     this.repository = repository;
     this.user = user;
     this.teamAccess = teamAccess;
+    this.thumbnailScope = thumbnailScope;
     this.now = now;
   }
   async #read(teamId) {
@@ -68,6 +74,22 @@ export class SlideFileService {
     const stored = await this.repository.read(teamId, fileId);
     requireThat(stored, 404, "자료를 찾을 수 없습니다.");
     return stored;
+  }
+  async thumbnail(teamId, fileId) {
+    const file = await this.get(teamId, fileId);
+    return {
+      hash: file.contentHash,
+      image: slideThumbnailCache(this.thumbnailScope).get(
+        teamId + "/" + file.contentHash,
+      ),
+    };
+  }
+  async putThumbnail(teamId, fileId, { hash, image }) {
+    await this.#write(teamId);
+    const file = await this.#file(teamId, fileId);
+    requireThat(hash === file.contentHash, 409, "자료가 변경되었습니다.");
+    slideThumbnailCache(this.thumbnailScope).put(teamId + "/" + hash, image);
+    return {};
   }
   async create(teamId, { title, bytes, requestId }) {
     await this.#write(teamId);

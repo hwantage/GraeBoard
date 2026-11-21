@@ -16,7 +16,7 @@ const security = {
 // internal site, over PostgreSQL metadata and R2 bytes.
 export async function slideRoutes(ctx, path, method, body) {
   const match =
-    /^\/teams\/([^/]+)\/(slides|slide-shares)(?:\/([^/]+))?(?:\/(content|copy))?$/.exec(
+    /^\/teams\/([^/]+)\/(slides|slide-shares)(?:\/([^/]+))?(?:\/(content|copy|thumbnail))?$/.exec(
       path,
     );
   if (!match) return undefined;
@@ -32,14 +32,18 @@ export async function slideRoutes(ctx, path, method, body) {
       );
     return result;
   };
+  const pool = databaseFor(ctx.env, profile).pool;
   const service = new SlideFileService(
     new PostgresSlideFileRepository({
-      pool: databaseFor(ctx.env, profile).pool,
+      pool,
       bucket: ctx.env[profile.bucketBinding],
       teamId,
     }),
     ctx.user,
-    { teamAccess: (_user, target) => ctx.team(target) },
+    {
+      teamAccess: (_user, target) => ctx.team(target),
+      thumbnailScope: ctx.env[profile.databaseBinding],
+    },
   );
   const header = (name) => ctx.request.headers.get(name);
   const bytes = async () => {
@@ -89,6 +93,11 @@ export async function slideRoutes(ctx, path, method, body) {
           }),
         ),
       );
+    return undefined;
+  }
+  if (action === "thumbnail") {
+    if (method === "GET") return service.thumbnail(teamId, id);
+    if (method === "PUT") return service.putThumbnail(teamId, id, body ?? {});
     return undefined;
   }
   if (action === "content") {
