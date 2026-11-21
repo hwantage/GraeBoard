@@ -448,6 +448,37 @@ test("터치로 카드를 길게 누르면 툴팁이 보이고 짧게 누르면 
   }
 });
 
+test("카드를 누르는 동안 썸네일이 표시돼도 원래 누른 자료를 연다", async ({
+  page,
+}) => {
+  const file = await upload(
+    page.request,
+    teamId,
+    `미리보기 전환 ${randomUUID().slice(0, 8)}`,
+    example("flowchart.canvaslide"),
+  );
+  const thumbnail = `**/api/teams/${teamId}/slides/${file.id}/thumbnail`;
+  let release!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route(thumbnail, async (route) => {
+    await paused;
+    await route.continue();
+  });
+  await page.goto("/slides");
+  const open = fileCard(page, file.title).getByRole("button");
+  const placeholder = open.locator(".slide-card-thumbnail svg");
+  await expect(placeholder).toBeVisible();
+  const svg = (await placeholder.boundingBox())!;
+  await page.mouse.move(svg.x + svg.width / 2, svg.y + svg.height / 2);
+  await page.mouse.down();
+  release();
+  await expect(open.locator(".slide-card-thumbnail img")).toBeVisible();
+  await page.mouse.up();
+  await expect(titleInput(page)).toHaveValue(file.title);
+});
+
 test("첫 프레임 사진을 썸네일에 그리고 다음 열람자는 원본을 내려받지 않는다", async ({
   page,
   context,

@@ -143,6 +143,8 @@
 }
 .slide-card-thumbnail {
   grid-area: 1 / 1;
+  /* Keep the card as the click target when the preview replaces its placeholder. */
+  pointer-events: none;
   display: grid;
   grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
