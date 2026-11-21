@@ -32,11 +32,66 @@ export function graeboardCanvaslideAdapter({ graeboardRoot, upstreamRoot }) {
     if (code.split(from).length !== 2) return null;
     return code.replace(from, to);
   };
+  // Patch only these upstream UI entry points. A renamed/missing target must
+  // stop the build instead of exposing local file commands in a team editor.
+  const hostedControls =
+    (edits, imports = "hosted") =>
+    (code) => {
+      for (const [from, to] of edits) {
+        const next = once(code, from, to);
+        if (next === null) return null;
+        code = next;
+      }
+      return `import { ${imports} } from ${host};\n${code}`;
+    };
+  const renderer = resolve(upstreamRoot, "src/renderer/src");
   const transforms = [
     {
       file: resolve(upstreamRoot, "src/renderer/src/main.tsx"),
       apply: (code) =>
         `import ${JSON.stringify(resolve(frame, "slide-frame-main.ts"))};\n${code}`,
+    },
+    {
+      file: resolve(renderer, "components/toolbar/top-bar.tsx"),
+      apply: hostedControls([
+        [
+          "{compact ? (\n        <ActionMenu\n          label={t('menu.file')}",
+          "{hosted ? null : compact ? (\n        <ActionMenu\n          label={t('menu.file')}",
+        ],
+        [
+          '{!compact && <div className="mx-1 h-5 w-px bg-border" />}\n      <div className="flex items-center gap-1">',
+          '{!hosted && !compact && <div className="mx-1 h-5 w-px bg-border" />}\n      <div className="flex items-center gap-1">',
+        ],
+        [
+          "<input\n          aria-label={t('file.documentName')}",
+          "{!hosted && <input\n          aria-label={t('file.documentName')}",
+        ],
+        [
+          "/>\n        {dirty && !compact && (",
+          "/>}\n        {!hosted && dirty && !compact && (",
+        ],
+      ]),
+    },
+    {
+      file: resolve(renderer, "hooks/use-document-commands.ts"),
+      apply: hostedControls(
+        [
+          [
+            "() => ({\n      saveDocument: () =>",
+            "() => hosted ? teamFileCommands : ({\n      saveDocument: () =>",
+          ],
+        ],
+        "hosted, teamFileCommands",
+      ),
+    },
+    {
+      file: resolve(renderer, "components/panels/cloud-share-dialog.tsx"),
+      apply: hostedControls([
+        [
+          "{ name: `.${DOCUMENT_FILE_EXTENSION}`, run: () => void commands.saveDocumentAs() },",
+          "...(hosted ? [] : [{ name: `.${DOCUMENT_FILE_EXTENSION}`, run: () => void commands.saveDocumentAs() }]),",
+        ],
+      ]),
     },
     {
       file: resolve(platform, "recovery-database.ts"),

@@ -11,6 +11,7 @@ export type SlideBinding = {
 };
 export type SlideEditorState = {
   dirty: boolean;
+  canStore: boolean;
   binding: SlideBinding | null;
   name: string;
   documentSession: number;

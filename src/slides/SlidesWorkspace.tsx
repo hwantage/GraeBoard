@@ -113,6 +113,9 @@ export default function SlidesWorkspace({
       return true;
     },
   }));
+  function openNew(title: string) {
+    open({ kind: "new", title, key: crypto.randomUUID() });
+  }
   function open(next: SlideEditorStart) {
     setError("");
     setStart(next);
@@ -166,6 +169,7 @@ export default function SlidesWorkspace({
           canWrite={list.canWrite}
           start={start}
           onClose={() => void close()}
+          onNew={openNew}
           onSaved={(file) => {
             writeAddress({ file: file.id });
             refresh();
@@ -188,7 +192,7 @@ export default function SlidesWorkspace({
         canWrite={list.canWrite && !!editor}
         people={people}
         onOpen={(file) => editor && open({ kind: "file", fileId: file.id })}
-        onNew={(title) => open({ kind: "new", title })}
+        onNew={openNew}
         onChanged={refresh}
         onError={setError}
         onNotify={onNotify}

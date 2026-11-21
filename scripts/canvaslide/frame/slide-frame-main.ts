@@ -11,6 +11,7 @@ import {
   replaceDocument,
 } from "@/lib/document/document-replacement";
 import { saveCurrentDocument } from "@/lib/document/save-document";
+import { useCloudShareStore } from "@/store/cloud-share-store";
 import { useDocumentStore } from "@/store/document-store";
 import { useRecoveryStore } from "@/store/recovery-store";
 import type { OpenedDocument } from "graeboard-upstream:document-file-access";
@@ -27,12 +28,16 @@ type OpenRequest = {
   discard?: boolean;
 };
 
+const shareLink = new URLSearchParams(location.search).has("share");
+let editableShareLoaded = false;
+
 function editorState() {
   const { dirty, filePath, document, session } = useDocumentStore.getState();
   const binding = parseBinding(filePath);
   return {
     dirty,
     binding,
+    canStore: !!binding || (shareLink ? editableShareLoaded : session > 0),
     name: document.name,
     documentSession: session,
   };
@@ -87,8 +92,9 @@ if (hosted) {
   });
 
   // The same queue the editor's menu and Ctrl/Cmd+S use.
-  handleHost("save", async () => ({
-    saved: await saveCurrentDocument(),
+  handleHost("save", async ({ asCopy }) => ({
+    saved:
+      editorState().canStore && (await saveCurrentDocument(asCopy === true)),
     ...editorState(),
   }));
   handleHost("rename", ({ name, documentSession }) => {
@@ -117,6 +123,18 @@ if (hosted) {
       notifyHost("state", state);
     }
   };
+  if (shareLink)
+    useCloudShareStore.subscribe((next, previous) => {
+      if (
+        previous.mode === "load" &&
+        previous.busy &&
+        next.mode === "load" &&
+        !next.busy
+      ) {
+        editableShareLoaded = !next.open && !next.error && !next.presentation;
+        report();
+      }
+    });
   const sameContent = createDocumentContentComparator();
   useDocumentStore.subscribe((current, previous) => {
     // Save As and conflict copies may get their team title after the snapshot

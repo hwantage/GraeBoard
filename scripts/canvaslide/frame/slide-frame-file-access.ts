@@ -3,8 +3,8 @@
  *
  * Everything is the upstream module except Save: a document bound to a team
  * file is encoded with the editor's own codec and handed to GraeBoard, and the
- * editor's save command completes only after the server stored it. Local files
- * keep the upstream pickers and downloads.
+ * editor's save command completes only after the server stored it. Standalone files
+ * use the upstream pickers and downloads.
  */
 import * as upstream from "graeboard-upstream:document-file-access";
 import type {
@@ -28,9 +28,6 @@ type StoredFile = {
   revision: number;
   title: string;
 };
-type SaveTargetChoice =
-  { kind: "team"; title: string } | { kind: "device" } | null;
-
 const requestId = (): string =>
   crypto.randomUUID?.() ??
   `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -67,39 +64,26 @@ export async function saveDocumentFile(
     return upstream.saveDocumentFile(document, target, forcePrompt);
   }
   const binding = parseBinding(target.filePath);
-  if (forcePrompt) {
-    const choice = await requestHost<SaveTargetChoice>("save-target", {
-      name: document.name,
-      bound: binding !== null,
-    });
-    if (!choice) {
-      return null;
-    }
-    if (choice.kind === "team") {
-      return storeTeamFile(
-        document,
-        {
-          fileId: null,
-          revision: 0,
-          title: choice.title,
-        },
-        choice.title.trim().normalize("NFC"),
-      );
-    }
-    if (!binding) {
-      return upstream.saveDocumentFile(document, target, true);
-    }
-    // A copy for this device: the open document stays the team file, still unsaved there.
-    await upstream.saveDocumentFile(
+  if (binding && !forcePrompt)
+    return storeTeamFile(
       document,
-      { filePath: null, fileHandle: null },
-      true,
+      binding,
+      document.name.trim().normalize("NFC"),
     );
-    return null;
-  }
-  return binding
-    ? storeTeamFile(document, binding, document.name.trim().normalize("NFC"))
-    : upstream.saveDocumentFile(document, target, false);
+  const choice = await requestHost<{ kind: "team"; title: string } | null>(
+    "save-target",
+    {
+      name: document.name,
+      bound: binding?.fileId != null,
+    },
+  );
+  if (choice?.kind !== "team") return null;
+  const title = choice.title;
+  return storeTeamFile(
+    document,
+    { fileId: null, revision: 0, title },
+    title.trim().normalize("NFC"),
+  );
 }
 
 /** The parent already told the author about a failed team save. */

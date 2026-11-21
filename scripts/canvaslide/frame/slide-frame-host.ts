@@ -5,6 +5,7 @@
  * Opened on its own (no parent, or no session parameter) the editor is the
  * unmodified upstream web editor: every adapter falls back to upstream.
  */
+import type { DocumentCommands } from "@/hooks/use-document-commands";
 import {
   isSlideFrameMessage,
   isSlideRecoveryScope,
@@ -19,6 +20,17 @@ const scope = params.get(SLIDE_FRAME_SCOPE_PARAM);
 const parent = window.parent !== window ? window.parent : null;
 
 export const hosted = parent !== null && session !== null && session !== "";
+
+// The hosted editor's keyboard shortcuts use the same actions as the team toolbar.
+const fileCommand = (command: string) =>
+  requestHost<void>("file-command", { command });
+export const teamFileCommands: DocumentCommands = {
+  newDocument: () => fileCommand("new"),
+  openDocument: () => fileCommand("open"),
+  openDocumentPath: () => fileCommand("open"),
+  saveDocument: () => fileCommand("save"),
+  saveDocumentAs: () => fileCommand("save-as"),
+};
 
 /** Suffix that keeps recovery copies of one account and team apart from every other. */
 export const recoveryScopeSuffix = isSlideRecoveryScope(scope)

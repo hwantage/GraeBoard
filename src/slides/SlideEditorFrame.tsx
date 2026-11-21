@@ -6,7 +6,8 @@ import {
   useState,
   type Ref,
 } from "react";
-import { ArrowLeft, Save } from "lucide-react";
+import { ArrowLeft, Copy, FilePlus2, Save } from "lucide-react";
+import SlideTitleDialog from "./SlideTitleDialog";
 import { ApiError } from "../platform/api";
 import { Button } from "../ui/Button";
 import { ErrorNote } from "../ui/ErrorNote";
@@ -39,20 +40,18 @@ import {
 
 export type SlideEditorStart =
   | { kind: "file"; fileId: string }
-  | { kind: "new"; title: string }
+  | { kind: "new"; title: string; key: string }
   | { kind: "share"; shareId: string };
 export type SlideEditorHandle = { leave: () => Promise<boolean> };
 
-type SaveTarget = { kind: "team"; title: string } | { kind: "device" } | null;
 type ConflictChoice =
   { kind: "copy"; title: string } | { kind: "reload" } | null;
 type LeaveChoice = "save" | "discard" | null;
 type Dialog =
   | {
-      kind: "save-target";
+      kind: "save-target" | "new-file";
       name: string;
-      bound: boolean;
-      resolve: (value: SaveTarget) => void;
+      resolve: (value: string | null) => void;
     }
   | {
       kind: "conflict";
@@ -104,6 +103,7 @@ export default function SlideEditorFrame({
   canWrite,
   start,
   onClose,
+  onNew,
   onSaved,
 }: {
   ref?: Ref<SlideEditorHandle>;
@@ -113,6 +113,7 @@ export default function SlideEditorFrame({
   canWrite: boolean;
   start: SlideEditorStart;
   onClose: () => void;
+  onNew: (title: string) => void;
   onSaved: (file: SlideFile) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
@@ -127,8 +128,22 @@ export default function SlideEditorFrame({
     name: string;
   } | null>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
-  const live = useRef({ canWrite, onSaved, start });
-  live.current = { canWrite, onSaved, start };
+  const busy = !ready || saving || writingTeamFile;
+  const activeSave = useRef(false);
+  const unconfirmedCreate = useRef<{
+    title: string;
+    bytes: Uint8Array;
+    requestId: string;
+  } | null>(null);
+  const live = useRef({
+    canWrite,
+    onSaved,
+    start,
+    runFileCommand,
+    dialog,
+    state,
+  });
+  live.current = { canWrite, onSaved, start, runFileCommand, dialog, state };
   const session = useMemo(() => crypto.randomUUID(), []);
   const source = useMemo(() => {
     const query = new URLSearchParams({
@@ -177,9 +192,14 @@ export default function SlideEditorFrame({
         const outcome = await openFile(first.fileId);
         if (outcome !== "replaced" && outcome !== "declined")
           throw new Error("자료를 열지 못했습니다. 다시 시도하세요.");
-      } else if (first.kind === "new")
-        await bridge.current!.request("new", { teamId, title: first.title });
-      setError("");
+      } else if (first.kind === "new") {
+        const result = await bridge.current!.request<{ outcome: string }>(
+          "new",
+          { teamId, title: first.title },
+        );
+        if (result.outcome === "replaced")
+          await bridge.current!.request("save");
+      }
     } catch (failure) {
       setError((failure as Error).message);
     }
@@ -199,11 +219,7 @@ export default function SlideEditorFrame({
           bytes,
         }) {
           if (!live.current.canWrite)
-            throw fail(
-              new Error(
-                "이 팀의 자료를 저장할 권한이 없습니다. 다른 이름으로 저장에서 이 기기에 내려받을 수 있습니다.",
-              ),
-            );
+            throw fail(new Error("이 팀의 자료를 저장할 권한이 없습니다."));
           setWritingTeamFile(true);
           try {
             return stored(
@@ -257,26 +273,44 @@ export default function SlideEditorFrame({
         async create({ requestId, title, bytes }) {
           if (!live.current.canWrite)
             throw fail(new Error("이 팀에 자료를 만들 권한이 없습니다."));
+          const previous = unconfirmedCreate.current;
+          if (
+            previous &&
+            previous.title === title &&
+            previous.bytes.length === bytes.length &&
+            previous.bytes.every((byte, index) => byte === bytes[index])
+          )
+            requestId = previous.requestId;
           setWritingTeamFile(true);
           try {
-            return stored(
-              await withRetry(() =>
-                createSlideFile(teamId, title, bytes, requestId),
-              ),
+            const file = await withRetry(() =>
+              createSlideFile(teamId, title, bytes, requestId),
             );
+            unconfirmedCreate.current = null;
+            return stored(file);
           } catch (failure) {
+            // A lost response can follow a committed create. Replay the identical
+            // submission on a manual retry, even after both HTTP attempts failed.
+            unconfirmedCreate.current = transient(failure)
+              ? { title, bytes, requestId }
+              : null;
             throw fail(failure);
           } finally {
             setWritingTeamFile(false);
           }
         },
-        "save-target": ({ name, bound }) =>
-          ask<SaveTarget>((resolve) => ({
+        async "save-target"({ name, bound }) {
+          if (!live.current.canWrite)
+            throw fail(new Error("이 팀에 자료를 만들 권한이 없습니다."));
+          if (!live.current.state?.canStore || live.current.dialog) return null;
+          const title = await ask<string | null>((resolve) => ({
             kind: "save-target",
-            name,
-            bound,
+            name: bound ? `${name} 사본` : name,
             resolve,
-          })),
+          }));
+          return title ? { kind: "team", title } : null;
+        },
+        "file-command": ({ command }) => live.current.runFileCommand(command),
         async "share-create"({ body }) {
           try {
             const { id } = await createSlideShare(teamId, body);
@@ -315,28 +349,40 @@ export default function SlideEditorFrame({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, teamId]);
 
-  async function save() {
-    if (!bridge.current || saving) return false;
+  async function newFile() {
+    const title = await ask<string | null>((resolve) => ({
+      kind: "new-file",
+      name: "",
+      resolve,
+    }));
+    if (title && (await leave())) onNew(title);
+  }
+  async function save(asCopy = false) {
+    if (!bridge.current || activeSave.current) return false;
+    activeSave.current = true;
     setSaving(true);
     try {
       const result = await bridge.current.request<
         SlideEditorState & { saved: boolean }
-      >("save");
+      >("save", { asCopy });
       return result.saved && !result.dirty;
     } catch (failure) {
       // The save handlers already showed their own failures.
       if (!error) setError((failure as Error).message);
       return false;
     } finally {
+      activeSave.current = false;
       setSaving(false);
     }
   }
   async function leave() {
+    if (saving || writingTeamFile || (!ready && start.kind === "new"))
+      return false;
     if (!bridge.current || !ready) return true;
     const current = await bridge.current
       .request<SlideEditorState>("state", {}, 3000)
       .catch(() => null);
-    if (!current?.dirty) return true;
+    if (!current?.dirty && current?.binding?.fileId !== null) return true;
     const choice = await ask<LeaveChoice>((resolve) => ({
       kind: "leave",
       resolve,
@@ -348,7 +394,7 @@ export default function SlideEditorFrame({
   }
   useImperativeHandle(ref, () => ({ leave }));
 
-  const dirty = !!state?.dirty;
+  const dirty = !!state?.dirty || state?.binding?.fileId === null;
   useEffect(() => {
     if (!dirty) return;
     const warn = (event: BeforeUnloadEvent) => {
@@ -361,12 +407,11 @@ export default function SlideEditorFrame({
   const binding = state?.binding ?? null;
   function canSave(current: SlideEditorState | null) {
     return (
-      ready &&
-      !saving &&
-      !writingTeamFile &&
-      !!current &&
+      !busy &&
+      canWrite &&
+      current?.canStore &&
       (current.dirty || current.binding?.fileId === null) &&
-      (!current.binding || (canWrite && !slideTitleProblem(current.name)))
+      (!current.binding || !slideTitleProblem(current.name))
     );
   }
   function rename(name: string) {
@@ -375,24 +420,43 @@ export default function SlideEditorFrame({
       ?.request("rename", { name, documentSession: state.documentSession })
       .catch((failure) => setError((failure as Error).message));
   }
-  // Ctrl/Cmd+S pressed on GraeBoard's own bar saves the open document too.
+  async function runFileCommand(command: string) {
+    if (busy || dialog) return;
+    if (command === "open") return onClose();
+    if (!canWrite) return;
+    if (command === "new") return newFile();
+    if (command !== "save" && command !== "save-as") return;
+    // A keystroke in the title can still be on its way to the frame.
+    const current = await bridge.current?.request<SlideEditorState>("state");
+    if (
+      current &&
+      (command === "save-as" ? current.canStore : canSave(current))
+    )
+      await save(command === "save-as");
+  }
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (
-        (event.ctrlKey || event.metaKey) &&
-        !event.altKey &&
-        event.key.toLowerCase() === "s" &&
-        !document.querySelector("dialog[open]")
-      ) {
-        event.preventDefault();
-        // A keystroke in the title can still be on its way to the frame.
-        void bridge.current
-          ?.request<SlideEditorState>("state")
-          .then((current) => {
-            if (canSave(current)) return save();
-          })
-          .catch((failure) => setError((failure as Error).message));
-      }
+        !(event.ctrlKey || event.metaKey) ||
+        event.altKey ||
+        event.isComposing ||
+        document.querySelector("dialog[open]")
+      )
+        return;
+      const key = event.key.toLowerCase();
+      const command =
+        key === "s"
+          ? event.shiftKey
+            ? "save-as"
+            : "save"
+          : !event.shiftKey &&
+            (key === "n" ? "new" : key === "o" ? "open" : null);
+      if (!command) return;
+      event.preventDefault();
+      void runFileCommand(command).catch((failure) =>
+        setError((failure as Error).message),
+      );
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -436,18 +500,37 @@ export default function SlideEditorFrame({
             {state?.name || "CanvaSlide"}
           </strong>
         )}
-        {ready && state && !binding && (
-          <span className="tag">이 기기의 문서</span>
-        )}
-        <Button
-          title="저장 (Ctrl/Cmd+S)"
-          aria-busy={!ready || saving || writingTeamFile}
-          disabled={!canSave(state)}
-          onClick={() => void save()}
-        >
-          <Save size={15} />
-          <span>저장</span>
-        </Button>
+        <div className="heading-actions">
+          {canWrite && (
+            <Button
+              title="새 팀 자료"
+              disabled={busy}
+              onClick={() => void newFile()}
+            >
+              <FilePlus2 size={15} />
+              <span>새 자료</span>
+            </Button>
+          )}
+          <Button
+            title="저장 (Ctrl/Cmd+S)"
+            aria-busy={!ready || saving || writingTeamFile}
+            disabled={!canSave(state)}
+            onClick={() => void save()}
+          >
+            <Save size={15} />
+            <span>저장</span>
+          </Button>
+          {canWrite && (
+            <Button
+              title="다른 이름으로 저장"
+              disabled={busy || !state?.canStore}
+              onClick={() => void save(true)}
+            >
+              <Copy size={15} />
+              <span>다른 이름으로 저장</span>
+            </Button>
+          )}
+        </div>
       </header>
       <ErrorNote error={error} />
       <div className="slide-editor-stage">
@@ -461,11 +544,16 @@ export default function SlideEditorFrame({
           allowFullScreen
         />
       </div>
-      {dialog?.kind === "save-target" && (
-        <SaveTargetDialog
-          name={dialog.name}
-          canWrite={canWrite}
-          onChoose={dialog.resolve}
+      {(dialog?.kind === "save-target" || dialog?.kind === "new-file") && (
+        <SlideTitleDialog
+          heading={
+            dialog.kind === "new-file" ? "새 자료" : "다른 이름으로 저장"
+          }
+          action={dialog.kind === "new-file" ? "만들기" : "팀 사본으로 저장"}
+          initial={dialog.name}
+          busy={false}
+          onClose={() => dialog.resolve(null)}
+          onSubmit={dialog.resolve}
         />
       )}
       {dialog?.kind === "conflict" && (
@@ -482,70 +570,18 @@ export default function SlideEditorFrame({
             >
               저장하지 않고 이동
             </Button>
-            <Button className="primary" onClick={() => dialog.resolve("save")}>
-              저장 후 이동
-            </Button>
+            {canWrite && (
+              <Button
+                className="primary"
+                onClick={() => dialog.resolve("save")}
+              >
+                저장 후 이동
+              </Button>
+            )}
           </div>
         </Modal>
       )}
     </section>
-  );
-}
-
-function SaveTargetDialog({
-  name,
-  canWrite,
-  onChoose,
-}: {
-  name: string;
-  canWrite: boolean;
-  onChoose: (value: SaveTarget) => void;
-}) {
-  const [title, setTitle] = useState(name);
-  const input = useRef<HTMLInputElement>(null);
-  const problem = slideTitleProblem(title);
-  return (
-    <Modal
-      title="다른 이름으로 저장"
-      onClose={() => onChoose(null)}
-      initialFocus={input}
-    >
-      <form
-        className="slide-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (canWrite && !problem) onChoose({ kind: "team", title });
-        }}
-      >
-        <label>
-          <span>팀 자료 이름</span>
-          <input
-            ref={input}
-            value={title}
-            disabled={!canWrite}
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </label>
-        {!canWrite && (
-          <p className="field-help">
-            이 팀에는 저장 권한이 없어 이 기기에만 저장할 수 있습니다.
-          </p>
-        )}
-        <div className="form-actions">
-          <Button onClick={() => onChoose(null)}>취소</Button>
-          <Button onClick={() => onChoose({ kind: "device" })}>
-            이 기기에 저장
-          </Button>
-          <Button
-            className="primary"
-            type="submit"
-            disabled={!canWrite || !!problem}
-          >
-            팀 사본으로 저장
-          </Button>
-        </div>
-      </form>
-    </Modal>
   );
 }
 

@@ -93,12 +93,13 @@ async function nudge(page: Page, canWrite = true) {
   await page.keyboard.press("ArrowRight");
   await expect(saveButton(page)).toBeEnabled({ enabled: canWrite });
 }
-async function saveShortcut(page: Page) {
+async function fileShortcut(page: Page, key: string) {
   const mod = await page.evaluate(() =>
     /Mac/.test(navigator.userAgent) ? "Meta" : "Control",
   );
-  await page.keyboard.press(`${mod}+s`);
+  await page.keyboard.press(`${mod}+${key}`);
 }
+const saveShortcut = (page: Page) => fileShortcut(page, "s");
 async function peerSession(
   page: Page,
   context: BrowserContext,
@@ -257,15 +258,14 @@ test("상세 제목을 고쳐 본문과 함께 저장하고 목록과 다시 연
   const editorTitle = editor(page).getByRole("textbox", {
     name: /^(Document name|문서 이름)$/,
   });
-  await editorTitle.fill("편집기에서 바꾼 이름");
-  await expect(input).toHaveValue("편집기에서 바꾼 이름");
+  await expect(editorTitle).toHaveCount(0);
   await input.fill("상단에서 바로 저장");
   await saveShortcut(page);
   await expect
     .poll(async () => (await meta(page.request, teamId, file.id)).title)
     .toBe("상단에서 바로 저장");
   await expect(idleSave(page)).toBeDisabled();
-  await expect(editorTitle).toHaveValue("상단에서 바로 저장");
+  await expect(input).toHaveValue("상단에서 바로 저장");
 });
 
 test("팀 자료를 열어 편집하고 Ctrl/Cmd+S로 저장하면 다른 팀원이 같은 내용을 열고 내려받는다", async ({
@@ -404,47 +404,159 @@ test("다른 팀원이 먼저 저장하면 두 내용을 모두 보존하고 사
   });
 });
 
-test("새 자료는 첫 저장에서 팀 파일이 되고, 편집기의 새 문서는 팀 파일을 덮어쓰지 않는다", async ({
+test("목록과 상세에서 만든 자료는 즉시 서버에 저장되고 새로 만들기와 열기 단축키도 팀 자료를 사용한다", async ({
   page,
 }) => {
-  await page.addInitScript(() => {
-    // Every engine then saves a local document as a download.
-    delete (window as any).showSaveFilePicker;
-    delete (window as any).showOpenFilePicker;
-  });
   await page.goto("/slides");
-  await page.getByRole("button", { name: "새 팀 자료" }).click();
+  const newButton = page.getByRole("button", { name: "새 팀 자료" });
   const prompt = page.getByRole("dialog", { name: "새 자료" });
-  await prompt.getByRole("textbox").fill("분기 계획");
+  await newButton.click();
+  const title = `분기 계획 ${randomUUID().slice(0, 8)}`;
+  await prompt.getByRole("textbox").fill(title);
   await prompt.getByRole("button", { name: "만들기" }).click();
-  await expect(titleInput(page)).toHaveValue("분기 계획");
-  await expect(saveButton(page)).toBeEnabled();
-  await expect(editor(page).getByTestId("canvas-viewport")).toBeVisible();
-  await editor(page).getByTestId("canvas-viewport").click();
-  await saveShortcut(page);
-  await expect(idleSave(page)).toBeDisabled();
   await expect(page).toHaveURL(/file=/);
+  await expect(idleSave(page)).toBeDisabled();
   const fileId = new URL(page.url()).searchParams.get("file")!;
-  const created = await meta(page.request, teamId, fileId);
-  expect(created).toMatchObject({ title: "분기 계획", revision: 1 });
-
-  // The editor's own New command replaces the document: it is no longer the team file.
-  let writes = 0;
-  page.on("request", (request) => {
-    if (
-      request.url().includes("/slides") &&
-      ["PUT", "POST"].includes(request.method())
-    )
-      writes++;
+  expect(await meta(page.request, teamId, fileId)).toMatchObject({
+    title,
+    revision: 1,
   });
-  await editor(page).getByRole("button", { name: /^New/ }).click();
-  await expect(page.getByText("이 기기의 문서", { exact: true })).toBeVisible();
-  const download = page.waitForEvent("download");
+  await expect(titleInput(page)).toHaveValue(title);
+  for (const width of [1200, 390]) {
+    await page.setViewportSize({ width, height: 850 });
+    await expect(newButton).toBeInViewport();
+    await expect(
+      page.getByRole("button", { name: "다른 이름으로 저장" }),
+    ).toBeInViewport();
+    await expect(
+      editor(page).getByRole("button", {
+        name: /^(?:(?:New|Open|Save)(?: \(.*\))?|Save as(?:…|\.\.\.)?|File)$/i,
+      }),
+    ).toHaveCount(0);
+    await expect(
+      editor(page).getByRole("textbox", { name: "Document name" }),
+    ).toHaveCount(0);
+    await expect(
+      editor(page).getByRole("button", { name: /^Undo/ }),
+    ).toBeVisible();
+  }
+  await newButton.click();
+  await prompt.getByRole("button", { name: "취소" }).click();
+  await titleInput(page).fill("아직 저장하지 않은 이름");
   await editor(page).getByTestId("canvas-viewport").click();
-  await saveShortcut(page);
-  expect((await download).suggestedFilename()).toMatch(/\.canvaslide$/);
-  expect(writes).toBe(0);
-  expect((await meta(page.request, teamId, fileId)).revision).toBe(1);
+  await fileShortcut(page, "n");
+  await prompt.getByRole("textbox").fill(title);
+  await prompt.getByRole("button", { name: "만들기" }).click();
+  await page.getByRole("button", { name: "저장하지 않고 이동" }).click();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("file"))
+    .toBeTruthy();
+  await expect
+    .poll(() => new URL(page.url()).searchParams.get("file"))
+    .not.toBe(fileId);
+  await expect(idleSave(page)).toBeDisabled();
+  const second = new URL(page.url()).searchParams.get("file")!;
+  expect(await meta(page.request, teamId, second)).toMatchObject({
+    title,
+    revision: 1,
+  });
+  expect(await meta(page.request, teamId, fileId)).toMatchObject({
+    title,
+    revision: 1,
+  });
+  await editor(page).getByTestId("canvas-viewport").click();
+  await fileShortcut(page, "o");
+  await expect(
+    page.getByRole("button", { name: title, exact: true }),
+  ).toHaveCount(2);
+});
+
+test("다른 이름으로 저장은 미저장 본문을 팀 사본으로 저장하고 후속 저장을 사본에 반영한다", async ({
+  page,
+}) => {
+  const original = example("flowchart.canvaslide");
+  const file = await upload(page.request, teamId, "팀 원본", original);
+  await openTeamFile(page, file.id);
+  const copy = page.getByRole("button", {
+    name: "다른 이름으로 저장",
+    exact: true,
+  });
+  const dialog = page.getByRole("dialog", { name: "다른 이름으로 저장" });
+  await copy.click();
+  await expect(dialog.getByRole("textbox")).toHaveValue("팀 원본 사본");
+  await expect(
+    dialog.getByRole("button", { name: "이 기기에 저장" }),
+  ).toHaveCount(0);
+  await dialog.getByRole("button", { name: "취소" }).click();
+  await expect(page).toHaveURL(new RegExp(file.id));
+  await nudge(page);
+  await fileShortcut(page, "Shift+s");
+  await dialog.getByRole("textbox").fill("팀 사본");
+  await dialog.getByRole("button", { name: "팀 사본으로 저장" }).click();
+  await expect(idleSave(page)).toBeDisabled();
+  const copyId = new URL(page.url()).searchParams.get("file")!;
+  expect(copyId).not.toBe(file.id);
+  await expect(titleInput(page)).toHaveValue("팀 사본");
+  const copyBytes = await (await content(page.request, teamId, copyId)).body();
+  const saved = JSON.parse(copyBytes.toString());
+  expect(saved.name).toBe("팀 사본");
+  expect(saved.elements).not.toEqual(JSON.parse(original.toString()).elements);
+  await titleInput(page).fill("사본 개명");
+  await saveButton(page).click();
+  await expect(idleSave(page)).toBeDisabled();
+  expect(await meta(page.request, teamId, copyId)).toMatchObject({
+    title: "사본 개명",
+    revision: 2,
+  });
+  expect(await meta(page.request, teamId, file.id)).toMatchObject({
+    title: file.title,
+    revision: 1,
+  });
+  expect(await (await content(page.request, teamId, file.id)).body()).toEqual(
+    original,
+  );
+});
+
+test("새 자료 생성에 실패하면 같은 화면에서 다시 저장할 수 있다", async ({
+  page,
+}) => {
+  await page.goto("/slides");
+  const list = "**/api/teams/*/slides";
+  const committedIds: string[] = [];
+  await page.route(list, async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    const committed = await route.fetch();
+    expect(committed.ok()).toBe(true);
+    committedIds.push((await json(committed)).id);
+    return route.fulfill({ status: 503, json: { error: "응답 유실" } });
+  });
+  await page.getByRole("button", { name: "새 팀 자료" }).click();
+  const dialog = page.getByRole("dialog", { name: "새 자료" });
+  const title = `다시 저장 ${randomUUID().slice(0, 8)}`;
+  await dialog.getByRole("textbox").fill(title);
+  await dialog.getByRole("button", { name: "만들기" }).click();
+  await expect(page.locator(".slide-editor .error-note")).toBeVisible();
+  await expect(saveButton(page)).toBeEnabled();
+  await expect(titleInput(page)).toHaveValue(title);
+  expect(new URL(page.url()).searchParams.get("file")).toBeNull();
+  await page.getByRole("button", { name: "팀 자료 목록" }).click();
+  await page.getByRole("button", { name: "계속 편집" }).click();
+  await page.unroute(list);
+  await saveButton(page).click();
+  await expect(page).toHaveURL(/file=/);
+  await expect(idleSave(page)).toBeDisabled();
+  expect(committedIds).toHaveLength(2);
+  expect(
+    new Set([...committedIds, new URL(page.url()).searchParams.get("file")])
+      .size,
+  ).toBe(1);
+  expect(
+    await meta(
+      page.request,
+      teamId,
+      new URL(page.url()).searchParams.get("file")!,
+    ),
+  ).toMatchObject({ title, revision: 1 });
 });
 
 test("미저장 변경이 있으면 화면 이동 전에 묻고, 계속 편집하면 그대로 남는다", async ({
@@ -500,9 +612,11 @@ test("열람자는 읽기만 하고, 팀 밖 사용자는 원본을 받을 수 �
   await expect(titleInput(viewerPage)).toHaveCount(0);
   await nudge(viewerPage, false);
   await saveShortcut(viewerPage);
-  await expect(viewerPage.locator(".slide-editor .error-note")).toContainText(
-    "권한",
-  );
+  await fileShortcut(viewerPage, "Shift+s");
+  await expect(viewerPage.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    viewerPage.getByRole("button", { name: "다른 이름으로 저장" }),
+  ).toHaveCount(0);
   await expect(idleSave(viewerPage)).toBeDisabled();
   await viewer.close();
 
@@ -606,6 +720,16 @@ test("공유는 그래보드의 임시 스냅샷으로 만들어지고 팀원만
   // Sharing is a snapshot: the team original keeps its revision.
   expect((await meta(page.request, teamId, file.id)).revision).toBe(1);
 
+  const writerPage = await context.newPage();
+  await writerPage.goto(url.pathname + url.search);
+  await expect(
+    editor(writerPage).getByTestId("presentation-stage"),
+  ).toBeVisible();
+  await expect(
+    writerPage.getByRole("button", { name: "다른 이름으로 저장" }),
+  ).toBeDisabled();
+  await writerPage.close();
+
   const member = await peerSession(page, context, "viewer");
   const memberPage = await member.newPage();
   await memberPage.goto(url.pathname + url.search);
@@ -626,6 +750,31 @@ test("공유는 그래보드의 임시 스냅샷으로 만들어지고 팀원만
     ).status(),
   ).toBe(403);
   await outsider.close();
+});
+
+test("편집 가능한 공유 링크는 팀 사본으로 저장하고 해당 파일에서 계속 작업한다", async ({
+  page,
+}) => {
+  const doc = JSON.parse(example("flowchart.canvaslide").toString());
+  const shared = await page.request.post(`/api/teams/${teamId}/slide-shares`, {
+    headers: { ...headers, "Content-Type": "text/plain" },
+    data: JSON.stringify({ access: "edit", document: doc }),
+  });
+  expect(shared.ok()).toBe(true);
+  const { id } = await json(shared);
+  await page.goto(`/slides?team=${teamId}&share=${id}`);
+  await expect(editor(page).getByTestId("canvas-viewport")).toBeVisible();
+  await page.getByRole("button", { name: "다른 이름으로 저장" }).click();
+  const prompt = page.getByRole("dialog", { name: "다른 이름으로 저장" });
+  await prompt.getByRole("textbox").fill("공유에서 만든 팀 파일");
+  await prompt.getByRole("button", { name: "팀 사본으로 저장" }).click();
+  await expect(page).toHaveURL(/file=/);
+  await expect(titleInput(page)).toHaveValue("공유에서 만든 팀 파일");
+  const fileId = new URL(page.url()).searchParams.get("file")!;
+  expect(await meta(page.request, teamId, fileId)).toMatchObject({
+    revision: 1,
+    title: "공유에서 만든 팀 파일",
+  });
 });
 
 test("복구본은 계정과 팀 범위로 나뉘어 다른 계정에는 보이지 않는다", async ({

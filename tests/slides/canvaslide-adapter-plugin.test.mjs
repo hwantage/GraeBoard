@@ -36,6 +36,16 @@ const sources = {
     "const DATABASE_NAME = 'canvaslide-recovery'\nconst STORE_NAME = 'snapshots'\n",
   [`${platform}/recovery-session.ts`]:
     "const LOCK_PREFIX = 'canvaslide.recovery.session.'\n",
+  [`${upstreamRoot}/src/renderer/src/components/toolbar/top-bar.tsx`]: [
+    "{compact ? (\n        <ActionMenu\n          label={t('menu.file')}",
+    '{!compact && <div className="mx-1 h-5 w-px bg-border" />}\n      <div className="flex items-center gap-1">',
+    "<input\n          aria-label={t('file.documentName')}",
+    "/>\n        {dirty && !compact && (",
+  ].join("\n"),
+  [`${upstreamRoot}/src/renderer/src/hooks/use-document-commands.ts`]:
+    "() => ({\n      saveDocument: () =>",
+  [`${upstreamRoot}/src/renderer/src/components/panels/cloud-share-dialog.tsx`]:
+    "{ name: `.${DOCUMENT_FILE_EXTENSION}`, run: () => void commands.saveDocumentAs() },",
 };
 const imports = {
   "@/platform/document-file-access": `${platform}/document-file-access.ts`,

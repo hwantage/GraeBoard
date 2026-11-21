@@ -12,6 +12,7 @@ export const SLIDE_HOST_ACTIONS = Object.freeze([
   "save",
   "create",
   "save-target",
+  "file-command",
   "share-create",
   "share-read",
 ]);

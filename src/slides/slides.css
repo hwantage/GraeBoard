@@ -146,6 +146,16 @@ input.slide-editor-title:hover {
 input.slide-editor-title:focus {
   border-color: var(--accent);
 }
+@media (max-width: 600px) {
+  .slide-editor-bar {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .slide-editor-bar .heading-actions {
+    flex-basis: 100%;
+    justify-content: flex-end;
+  }
+}
 .slide-editor-stage {
   position: relative;
   flex: 1;
