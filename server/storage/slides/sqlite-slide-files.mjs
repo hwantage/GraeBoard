@@ -466,10 +466,27 @@ export class SqliteSlideFileRepository {
       return { ...read() };
     });
   }
-  syncSetHead(teamId, head) {
-    this.#open()
-      .prepare("UPDATE slide_sync_state SET head=? WHERE team_id=?")
-      .run(head, teamId);
+  // Whether this team has anything to synchronize; never creates the store.
+  syncHasFiles(teamId) {
+    if (!this.#db && !existsSync(join(this.directory, SLIDE_STORE_FILE)))
+      return false;
+    return !!this.#open()
+      .prepare(
+        `SELECT 1 FROM slide_files WHERE team_id=?
+         UNION ALL SELECT 1 FROM slide_sync_files WHERE team_id=? LIMIT 1`,
+      )
+      .get(teamId, teamId);
+  }
+  // Moves the cursor only from the head this pass started at, so a slower
+  // pass can never move it back. False when another pass moved it first.
+  syncSetHead(teamId, head, previous) {
+    return (
+      this.#open()
+        .prepare(
+          "UPDATE slide_sync_state SET head=? WHERE team_id=? AND head IS ?",
+        )
+        .run(head, teamId, previous ?? null).changes === 1
+    );
   }
   // A restored store never continues the version numbering of the store it
   // was copied from, and reads the whole branch again.
@@ -551,12 +568,28 @@ export class SqliteSlideFileRepository {
   // Applies a version received from the branch. `take` says which parts of it
   // replace the local file; `copy` first keeps the local content as a file of
   // its own. Bytes are complete on disk before any row changes.
-  syncApply(teamId, { meta, metaOid, bytes, take, copy }) {
+  // False (nothing applied) when the file no longer looks like `expect`: it
+  // was saved, renamed or deleted here after the decision was made.
+  syncApply(teamId, { meta, metaOid, bytes, take, copy, expect }) {
     if (bytes) this.#writeBlob(teamId, meta.contentHash, bytes);
-    this.#transaction((db) => {
+    return this.#transaction((db) => {
       const file = db
         .prepare("SELECT * FROM slide_files WHERE id=? AND team_id=?")
         .get(meta.id, teamId);
+      const record = db
+        .prepare(
+          "SELECT shared_version FROM slide_sync_files WHERE team_id=? AND file_id=?",
+        )
+        .get(teamId, meta.id);
+      if (
+        !!file !== expect.exists ||
+        (record?.shared_version ?? null) !== expect.sharedVersion ||
+        (file &&
+          (file.content_hash !== expect.contentHash ||
+            file.title !== expect.title ||
+            (file.deleted_at ?? null) !== expect.deletedAt))
+      )
+        return false;
       const insert = (
         id,
         title,
@@ -660,6 +693,7 @@ export class SqliteSlideFileRepository {
         chunks: meta.chunks,
         metaOid,
       });
+      return true;
     });
   }
   #stagePath(teamId, hash) {

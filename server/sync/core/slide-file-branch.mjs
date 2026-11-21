@@ -33,10 +33,14 @@ export function slideChunks(bytes) {
   return chunks;
 }
 // The file a site keeps its own unpublished content in when the other site's
-// version was published first. The ID follows from the file, the content and
-// the site, so seeing the same conflict again creates nothing new.
-export function slideConflictCopyId(fileId, contentHash, site) {
-  const hex = digest(`slide-conflict:${fileId}:${contentHash}:${site}`);
+// version was published first. The ID names one conflict: this file, this
+// content, this site and the published version it lost to. Seeing the same
+// conflict again creates nothing new; the same content losing to a later
+// version is another conflict and gets a file of its own.
+export function slideConflictCopyId(fileId, contentHash, site, version) {
+  const hex = digest(
+    `slide-conflict:${fileId}:${contentHash}:${site}:${version}`,
+  );
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 const conflictTitle = (title, site) =>
@@ -76,6 +80,25 @@ export function slideFileDirty(file) {
     !!file.deletedAt !== !!file.shared.deletedAt
   );
 }
+// The branch this site followed is gone or was replaced by unrelated history.
+// Nothing is applied or published; the last state both sites agreed on stays.
+export class SlideBranchDiverged extends Error {
+  constructor() {
+    super(
+      "Slide sync branch was removed or rewritten; slide synchronization is stopped until it is restored",
+    );
+    this.code = "SLIDE_BRANCH_DIVERGED";
+  }
+}
+// What the decision about a received version was based on. The store applies
+// the version only while the file still looks like this.
+const expectation = (mine) => ({
+  exists: !!mine && !mine.missing,
+  contentHash: mine?.contentHash ?? null,
+  title: mine?.title ?? null,
+  deletedAt: mine?.deletedAt ?? null,
+  sharedVersion: mine?.shared?.version ?? null,
+});
 const snapshotKey = (file) =>
   digest(
     canonical({
@@ -99,8 +122,30 @@ export async function syncSlideFiles({
   limits = { chunks: 64, files: 50 },
   warn = () => {},
 }) {
-  const state = await store.syncState(teamId);
   const head = (await transport.readHead(SLIDE_BRANCH)) || null;
+  // A team that has never used slides on either site needs no state at all.
+  if (!head && !(await store.syncHasFiles(teamId)))
+    return {
+      head,
+      received: 0,
+      published: 0,
+      conflicts: 0,
+      pending: 0,
+      raced: false,
+    };
+  const state = await store.syncState(teamId);
+  // The branch only ever moves forward from the head this site applied.
+  if (state.head && head !== state.head) {
+    let follows = false;
+    if (head)
+      try {
+        follows = await transport.verifyReachable(state.head, head);
+      } catch (error) {
+        // GitHub answers 404 when two commits share no history.
+        if (error.status !== 404) throw error;
+      }
+    if (!follows) throw new SlideBranchDiverged();
+  }
   const result = {
     head,
     received: 0,
@@ -160,7 +205,10 @@ export async function syncSlideFiles({
   }
   async function receive(meta, metaOid, mine) {
     const shared = mine?.shared || null;
-    const record = { meta, metaOid };
+    // A save, rename or delete made here while chunks were being fetched
+    // changes the answer: the store then applies nothing and this file is
+    // decided again on the next pass.
+    const record = { meta, metaOid, expect: expectation(mine) };
     // Our own publication, whose answer was lost.
     if (
       mine?.pendingVersion === meta.version ||
@@ -180,18 +228,21 @@ export async function syncSlideFiles({
       const bytes =
         !meta.deletedAt && needs(meta.contentHash) ? await content(meta) : null;
       if (!meta.deletedAt && needs(meta.contentHash) && !bytes) return false;
-      await store.syncApply(teamId, {
-        ...record,
-        bytes,
-        take: { content: !meta.deletedAt, title: true, deleted: true },
-      });
+      if (
+        !(await store.syncApply(teamId, {
+          ...record,
+          bytes,
+          take: { content: !meta.deletedAt, title: true, deleted: true },
+        }))
+      )
+        return false;
       await store.syncUnstage(teamId, meta.chunks);
       return true;
     }
     if (meta.deletedAt) {
       // Deleted there, changed here: the change wins and restores the file
       // with the next publication. Deleted on both sides: agreed.
-      await store.syncApply(teamId, {
+      return store.syncApply(teamId, {
         ...record,
         bytes: null,
         take: {
@@ -200,17 +251,19 @@ export async function syncSlideFiles({
           deleted: localDeleted && !localContent,
         },
       });
-      return true;
     }
     if (localDeleted && !localContent) {
       // Deleted here, changed there: the change wins and the file comes back.
       const bytes = needs(meta.contentHash) ? await content(meta) : null;
       if (needs(meta.contentHash) && !bytes) return false;
-      await store.syncApply(teamId, {
-        ...record,
-        bytes,
-        take: { content: true, title: true, deleted: true },
-      });
+      if (
+        !(await store.syncApply(teamId, {
+          ...record,
+          bytes,
+          take: { content: true, title: true, deleted: true },
+        }))
+      )
+        return false;
       await store.syncUnstage(teamId, meta.chunks);
       return true;
     }
@@ -224,15 +277,23 @@ export async function syncSlideFiles({
       // file; this site's content is kept as a file of its own.
       const bytes = await content(meta);
       if (!bytes) return false;
-      await store.syncApply(teamId, {
-        ...record,
-        bytes,
-        take: { content: true, title: true, deleted: true },
-        copy: {
-          id: slideConflictCopyId(meta.id, mine.contentHash, site),
-          title: conflictTitle(mine.title, site),
-        },
-      });
+      if (
+        !(await store.syncApply(teamId, {
+          ...record,
+          bytes,
+          take: { content: true, title: true, deleted: true },
+          copy: {
+            id: slideConflictCopyId(
+              meta.id,
+              mine.contentHash,
+              site,
+              meta.version,
+            ),
+            title: conflictTitle(mine.title, site),
+          },
+        }))
+      )
+        return false;
       await store.syncUnstage(teamId, meta.chunks);
       result.conflicts++;
       return true;
@@ -243,15 +304,18 @@ export async function syncSlideFiles({
     const bytes =
       takeContent && needs(meta.contentHash) ? await content(meta) : null;
     if (takeContent && needs(meta.contentHash) && !bytes) return false;
-    await store.syncApply(teamId, {
-      ...record,
-      bytes,
-      take: {
-        content: takeContent,
-        title: !localTitle || meta.title !== (shared?.title ?? null),
-        deleted: true,
-      },
-    });
+    if (
+      !(await store.syncApply(teamId, {
+        ...record,
+        bytes,
+        take: {
+          content: takeContent,
+          title: !localTitle || meta.title !== (shared?.title ?? null),
+          deleted: true,
+        },
+      }))
+    )
+      return false;
     await store.syncUnstage(teamId, meta.chunks);
     return true;
   }
@@ -279,7 +343,12 @@ export async function syncSlideFiles({
     }
     // The cursor moves only when every changed file has its bytes and row.
     if (complete) {
-      await store.syncSetHead(teamId, head);
+      // Another pass of this site may have moved the cursor meanwhile; it
+      // never moves back.
+      if (!(await store.syncSetHead(teamId, head, state.head))) {
+        result.raced = true;
+        return result;
+      }
       state.head = head;
     } else result.pending++;
   }
@@ -368,7 +437,7 @@ export async function syncSlideFiles({
       meta.id,
       sharedOf(meta, published.get(slideMetaPath(meta.id))),
     );
-  await store.syncSetHead(teamId, commit);
+  await store.syncSetHead(teamId, commit, head);
   result.head = commit;
   result.published = metas.length;
   return result;

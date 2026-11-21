@@ -348,13 +348,31 @@ export class PostgresSlideFileRepository {
       ).rows[0];
     });
   }
-  async syncSetHead(teamId, head) {
+  async syncHasFiles(teamId) {
     this.#team(teamId);
-    await this.#read((client) =>
-      client.query(
-        `UPDATE ${S}.slide_sync_state SET head=$1 WHERE team_id=$2`,
-        [head, teamId],
-      ),
+    return this.#read(
+      async (client) =>
+        (
+          await client.query(
+            `SELECT 1 FROM ${S}.slide_files WHERE team_id=$1
+             UNION ALL SELECT 1 FROM ${S}.slide_sync_files WHERE team_id=$1 LIMIT 1`,
+            [teamId],
+          )
+        ).rowCount > 0,
+    );
+  }
+  // Moves the cursor only from the head this pass started at, so a slower
+  // pass (another Cron run) can never move it back.
+  async syncSetHead(teamId, head, previous) {
+    this.#team(teamId);
+    return this.#read(
+      async (client) =>
+        (
+          await client.query(
+            `UPDATE ${S}.slide_sync_state SET head=$1 WHERE team_id=$2 AND head IS NOT DISTINCT FROM $3`,
+            [head, teamId, previous ?? null],
+          )
+        ).rowCount === 1,
     );
   }
   async syncFiles(teamId) {
@@ -424,16 +442,33 @@ export class PostgresSlideFileRepository {
     this.#team(teamId);
     await this.#read((client) => this.#markShared(client, fileId, shared));
   }
-  async syncApply(teamId, { meta, metaOid, bytes, take, copy }) {
+  // False (nothing applied) when the file no longer looks like `expect`: it
+  // was saved, renamed or deleted here after the decision was made.
+  async syncApply(teamId, { meta, metaOid, bytes, take, copy, expect }) {
     this.#team(teamId);
     if (bytes) await this.blobs.write(meta.contentHash, bytes);
-    await this.#transaction(async (client) => {
+    return this.#transaction(async (client) => {
       const file = (
         await client.query(
           `SELECT * FROM ${S}.slide_files WHERE id=$1 AND team_id=$2`,
           [meta.id, teamId],
         )
       ).rows[0];
+      const record = (
+        await client.query(
+          `SELECT shared_version FROM ${S}.slide_sync_files WHERE team_id=$1 AND file_id=$2`,
+          [teamId, meta.id],
+        )
+      ).rows[0];
+      if (
+        !!file !== expect.exists ||
+        (record?.shared_version ?? null) !== expect.sharedVersion ||
+        (file &&
+          (file.content_hash !== expect.contentHash ||
+            file.title !== expect.title ||
+            (file.deleted_at ?? null) !== expect.deletedAt))
+      )
+        return false;
       const insert = async (id, title, hash, length, by, at, requestId) => {
         await client.query(
           `INSERT INTO ${S}.slide_files
@@ -524,6 +559,7 @@ export class PostgresSlideFileRepository {
         chunks: meta.chunks,
         metaOid,
       });
+      return true;
     });
   }
   // Chunks received so far wait in the bucket until their file is complete.

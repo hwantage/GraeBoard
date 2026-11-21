@@ -256,7 +256,12 @@ export function slideSyncContract(name, makeStores) {
     assert.equal((await inside.sync()).published, 1);
     const late = await outside.sync();
     assert.equal(late.conflicts, 1);
-    const copyId = slideConflictCopyId(file.id, sha(fromOutside), "external");
+    const copyId = slideConflictCopyId(
+      file.id,
+      sha(fromOutside),
+      "external",
+      (await inside.store.syncFiles(teamId))[0].shared.version,
+    );
     assert.equal((await outside.read(file.id)).equals(fromInside), true);
     assert.equal((await outside.read(copyId)).equals(fromOutside), true);
     assert.equal(
@@ -269,8 +274,12 @@ export function slideSyncContract(name, makeStores) {
     assert.equal((await inside.list()).length, 2);
     assert.equal((await inside.read(copyId)).equals(fromOutside), true);
     // Seeing the same branch again creates no further copy on either side.
-    await outside.store.syncSetHead(teamId, null);
-    await inside.store.syncSetHead(teamId, null);
+    for (const peer of [outside, inside])
+      await peer.store.syncSetHead(
+        teamId,
+        null,
+        (await peer.store.syncState(teamId)).head,
+      );
     await settle(outside, inside);
     assert.equal((await inside.list()).length, 2);
     assert.equal((await outside.list()).length, 2);
@@ -330,6 +339,209 @@ export function slideSyncContract(name, makeStores) {
       true,
     );
     assert.equal((await inside.store.syncFiles(teamId)).length, 3);
+  });
+
+  test(`${name}: 받는 동안 이쪽에서 저장·이름 변경·삭제하면 덮어쓰지 않고 다음 회차에 다시 판단한다`, async (t) => {
+    const peers = await twoPeers(t, makeStores);
+    if (!peers) return;
+    const { inside, outside, teamId } = peers;
+    const edited = await inside.create("저장하는 자료", slide("처음 1"));
+    const renamed = await inside.create("이름 바꾸는 자료", slide("처음 2"));
+    const removed = await inside.create("지우는 자료", slide("처음 3"));
+    await settle(inside, outside);
+    for (const [file, text] of [
+      [edited, "사내의 새 내용 1"],
+      [renamed, "사내의 새 내용 2"],
+      [removed, "사내의 새 내용 3"],
+    ])
+      await inside.save(file.id, slide(text));
+    assert.equal((await inside.sync()).published, 3);
+
+    // While the external site fetches the chunks, its users keep working.
+    const readFile = outside.transport.readFile.bind(outside.transport);
+    let interrupted = false;
+    outside.transport.readFile = async (oid, path) => {
+      if (path.startsWith("chunks/") && !interrupted) {
+        interrupted = true;
+        await outside.save(edited.id, slide("외부에서 그 사이 저장"));
+        await outside.rename(renamed.id, "외부에서 그 사이 바꾼 이름");
+        await outside.remove(removed.id);
+      }
+      return readFile(oid, path);
+    };
+    const before = (await outside.store.syncState(teamId)).head;
+    const pass = await outside.sync();
+    outside.transport.readFile = readFile;
+    // Nothing of the three was applied over the newer local state.
+    assert.deepEqual([pass.received, pass.pending, pass.conflicts], [0, 1, 0]);
+    assert.equal((await outside.store.syncState(teamId)).head, before);
+    assert.equal(
+      (await outside.read(edited.id)).equals(slide("외부에서 그 사이 저장")),
+      true,
+    );
+    assert.equal(
+      (await outside.store.get(teamId, renamed.id)).title,
+      "외부에서 그 사이 바꾼 이름",
+    );
+    assert.equal(await outside.store.get(teamId, removed.id), null);
+
+    // The next pass sees them as local changes and keeps both sides' work.
+    await settle(outside, inside);
+    assert.deepEqual(await inside.list(), await outside.list());
+    const titles = (await inside.list()).map((item) => item.split("=")[0]);
+    assert.deepEqual(
+      titles.sort(),
+      [
+        // Both edited the content: the published one stays, the other is kept.
+        "저장하는 자료",
+        "저장하는 자료 (충돌 · 외부)",
+        // Renamed here, content changed there: both are in one file.
+        "외부에서 그 사이 바꾼 이름",
+        // Deleted here, changed there: the change wins.
+        "지우는 자료",
+      ].sort(),
+    );
+    assert.equal(
+      (await outside.read(edited.id)).equals(slide("사내의 새 내용 1")),
+      true,
+    );
+    assert.equal(
+      (await inside.read(renamed.id)).equals(slide("사내의 새 내용 2")),
+      true,
+    );
+    assert.equal(
+      (await outside.read(removed.id)).equals(slide("사내의 새 내용 3")),
+      true,
+    );
+  });
+
+  test(`${name}: 같은 내용이 다른 버전에 다시 지면 새 사본으로 보존하고, 같은 충돌의 재시도는 늘리지 않는다`, async (t) => {
+    const peers = await twoPeers(t, makeStores);
+    if (!peers) return;
+    const { inside, outside, teamId } = peers;
+    const file = await inside.create("자료", slide("처음"));
+    await settle(inside, outside);
+    const mine = slide("외부가 고집하는 내용");
+    const sharedVersion = async () =>
+      (await outside.store.syncFiles(teamId)).find(
+        (item) => item.id === file.id,
+      ).shared.version;
+
+    await inside.save(file.id, slide("사내 1"));
+    await outside.save(file.id, mine);
+    await inside.sync();
+    assert.equal((await outside.sync()).conflicts, 1);
+    const firstCopy = slideConflictCopyId(
+      file.id,
+      sha(mine),
+      "external",
+      await sharedVersion(),
+    );
+    assert.equal((await outside.read(firstCopy)).equals(mine), true);
+    await settle(outside, inside);
+
+    // The first copy is dealt with (deleted), then the same content loses again.
+    await outside.remove(firstCopy);
+    await settle(outside, inside);
+    await inside.save(file.id, slide("사내 2"));
+    await outside.save(file.id, mine);
+    await inside.sync();
+    assert.equal((await outside.sync()).conflicts, 1);
+    const secondCopy = slideConflictCopyId(
+      file.id,
+      sha(mine),
+      "external",
+      await sharedVersion(),
+    );
+    assert.notEqual(secondCopy, firstCopy);
+    assert.equal(
+      (await outside.read(secondCopy)).equals(mine),
+      true,
+      "the late content is kept again",
+    );
+    await settle(outside, inside);
+    assert.deepEqual(await inside.list(), await outside.list());
+    assert.deepEqual(
+      (await inside.list()).map((item) => item.split("=")[0]).sort(),
+      ["자료", "자료 (충돌 · 외부)"],
+    );
+
+    // Reading the whole branch again repeats no conflict.
+    for (const peer of [outside, inside])
+      await peer.store.syncSetHead(
+        teamId,
+        null,
+        (await peer.store.syncState(teamId)).head,
+      );
+    await settle(outside, inside);
+    assert.equal((await outside.list()).length, 2);
+    assert.equal((await inside.list()).length, 2);
+  });
+
+  test(`${name}: 브랜치가 사라지거나 다른 이력으로 바뀌면 슬라이드 동기화만 멈추고 마지막 상태를 보존한다`, async (t) => {
+    const peers = await twoPeers(t, makeStores);
+    if (!peers) return;
+    const { inside, outside, teamId, remote } = peers;
+    const file = await inside.create("자료", slide("처음"));
+    await settle(inside, outside);
+    const head = (await outside.store.syncState(teamId)).head;
+    const identity = {
+      ...process.env,
+      GIT_AUTHOR_NAME: "x",
+      GIT_AUTHOR_EMAIL: "x@x",
+      GIT_COMMITTER_NAME: "x",
+      GIT_COMMITTER_EMAIL: "x@x",
+    };
+    const git = (...args) =>
+      execFileSync("git", ["-C", remote, ...args], {
+        stdio: "pipe",
+        env: identity,
+      })
+        .toString()
+        .trim();
+
+    // Replaced by unrelated history.
+    const tree = git("hash-object", "-w", "-t", "tree", "/dev/null");
+    const unrelated = git("commit-tree", tree, "-m", "unrelated");
+    git("update-ref", `refs/heads/${SLIDE_BRANCH}`, unrelated);
+    await outside.save(file.id, slide("외부의 미게시 수정"));
+    for (const peer of [inside, outside]) {
+      await assert.rejects(peer.sync(), { code: "SLIDE_BRANCH_DIVERGED" });
+      assert.equal((await peer.store.syncState(teamId)).head, head);
+    }
+    assert.equal(
+      git("rev-parse", SLIDE_BRANCH),
+      unrelated,
+      "nothing was pushed",
+    );
+    assert.equal((await inside.read(file.id)).equals(slide("처음")), true);
+    assert.equal(
+      (await outside.read(file.id)).equals(slide("외부의 미게시 수정")),
+      true,
+    );
+
+    // Removed altogether.
+    git("update-ref", "-d", `refs/heads/${SLIDE_BRANCH}`);
+    await assert.rejects(outside.sync(), { code: "SLIDE_BRANCH_DIVERGED" });
+    assert.throws(() => git("rev-parse", "--verify", SLIDE_BRANCH));
+
+    // Put back: both continue from where they were, with nothing lost.
+    git("update-ref", `refs/heads/${SLIDE_BRANCH}`, head);
+    await settle(outside, inside);
+    assert.equal(
+      (await inside.read(file.id)).equals(slide("외부의 미게시 수정")),
+      true,
+    );
+
+    // A slower pass of the same site cannot move the cursor back.
+    const current = (await inside.store.syncState(teamId)).head;
+    assert.notEqual(current, head);
+    assert.equal(await inside.store.syncSetHead(teamId, head, head), false);
+    assert.equal((await inside.store.syncState(teamId)).head, current);
+    assert.equal(
+      await inside.store.syncSetHead(teamId, current, current),
+      true,
+    );
   });
 
   test(`${name}: 게시 응답을 잃거나 경합에서 지면 같은 버전으로 다시 시도하고 중복을 만들지 않는다`, async (t) => {

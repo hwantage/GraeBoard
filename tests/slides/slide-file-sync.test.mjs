@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -19,7 +20,10 @@ import {
   migrateSlideStore,
   slideStoreChecksums,
 } from "../../server/storage/slides/sqlite-slide-files.mjs";
-import { SLIDE_BRANCH } from "../../server/sync/core/slide-file-branch.mjs";
+import {
+  SLIDE_BRANCH,
+  syncSlideFiles,
+} from "../../server/sync/core/slide-file-branch.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 // The release before slides (see slide-file-external-contract.test.mjs).
@@ -254,4 +258,37 @@ test("v1 슬라이드 저장소는 명시적 변환으로만 v2가 되고 자료
     () => migrateSlideStore(join(directory, "none.sqlite")),
     /없습니다/,
   );
+});
+
+test("슬라이드를 쓰지 않는 팀은 동기화가 돌아도 저장소를 만들지 않는다", async (t) => {
+  const { inside, directory, teamId } = await twoPeers(t, sqliteStores);
+  const unused = join(directory, "unused-store");
+  const store = new SqliteSlideFileRepository({ directory: unused });
+  t.after(() => store.close());
+  const result = await syncSlideFiles({
+    transport: inside.transport,
+    store,
+    teamId,
+    site: "internal",
+  });
+  assert.deepEqual(
+    [result.head, result.received, result.published],
+    [null, 0, 0],
+  );
+  assert.equal(existsSync(unused), false);
+  // Once the other site has published, the state is created to receive it.
+  await inside.create("자료", slide("처음"));
+  await inside.sync();
+  assert.equal(
+    (
+      await syncSlideFiles({
+        transport: inside.transport,
+        store,
+        teamId,
+        site: "external",
+      })
+    ).received,
+    1,
+  );
+  assert.equal(existsSync(join(unused, SLIDE_STORE_FILE)), true);
 });
