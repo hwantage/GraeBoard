@@ -14,6 +14,7 @@ import {
 import { DatabaseSync } from "node:sqlite";
 import { join, resolve } from "node:path";
 import { SLIDE_FILE_EXTENSION } from "../../../shared/slides/slide-file-rules.js";
+import { requireThat } from "../../../shared/validation.js";
 
 export const SLIDE_STORE_VERSION = 1;
 export const SLIDE_STORE_FILE = "slide-files.sqlite";
@@ -110,6 +111,25 @@ const meta = (row) =>
     updatedAt: row.updated_at,
   };
 
+// What a save answered when it was first stored. A repeated request ID gets
+// this again, whatever other members saved since: the caller must keep
+// working from the revision it actually wrote, never a newer one it never saw.
+const replay = (file, revision, contentHash) => {
+  requireThat(
+    revision.content_hash === contentHash,
+    409,
+    "같은 저장 요청 ID가 다른 내용에 쓰였습니다.",
+  );
+  return {
+    ...meta(file),
+    revision: revision.revision,
+    byteLength: revision.byte_length,
+    contentHash: revision.content_hash,
+    updatedBy: revision.saved_by,
+    updatedAt: revision.saved_at,
+  };
+};
+
 // Slide files of the internal Node site: metadata in the slide store database
 // and immutable bytes at blobs/<team>/<SHA-256>.canvaslide. The database opens
 // on first use, so a server that never touches slides creates nothing.
@@ -204,12 +224,24 @@ export class SqliteSlideFileRepository {
       : null;
   }
   create({ id, teamId, title, bytes, contentHash, requestId, userId, at }) {
-    const earlier = this.#open()
+    const db = this.#open();
+    // Also a file deleted since: the first answer is replayed, and the next
+    // save of that session is refused instead of touching newer content.
+    const earlier = db
       .prepare(
         "SELECT * FROM slide_files WHERE team_id=? AND create_request_id=?",
       )
       .get(teamId, requestId);
-    if (earlier) return meta(earlier);
+    if (earlier)
+      return replay(
+        earlier,
+        db
+          .prepare(
+            "SELECT * FROM slide_file_revisions WHERE file_id=? AND revision=1",
+          )
+          .get(earlier.id),
+        contentHash,
+      );
     this.#writeBlob(teamId, contentHash, bytes);
     return this.#transaction((db) => {
       db.prepare(
@@ -260,17 +292,7 @@ export class SqliteSlideFileRepository {
         )
         .get(fileId, requestId);
       if (earlier)
-        return {
-          saved: true,
-          file: {
-            ...meta(file),
-            revision: earlier.revision,
-            byteLength: earlier.byte_length,
-            contentHash: earlier.content_hash,
-            updatedBy: earlier.saved_by,
-            updatedAt: earlier.saved_at,
-          },
-        };
+        return { saved: true, file: replay(file, earlier, contentHash) };
       if (file.revision !== baseRevision)
         return { saved: false, file: meta(file) };
       const revision = file.revision + 1;

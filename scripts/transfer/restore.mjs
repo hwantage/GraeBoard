@@ -22,17 +22,32 @@ import {
   readDocumentImage,
   writeDocumentImage,
 } from "../../server/documents/document-images.mjs";
+import { slideFilesDirectory } from "../../server/storage/slides/sqlite-slide-files.mjs";
+import {
+  assertEmptySlideTarget,
+  restoreSlideStore,
+  verifySlideBackup,
+} from "../../server/storage/slides/slide-file-backup.mjs";
 
 // Restore into a NEW destination. Switching DB_PATH is a separate operator action.
 export function restoreDatabase(
   backup,
   destination,
-  { documentImagesDir = documentImagesDirectory() } = {},
+  {
+    documentImagesDir = documentImagesDirectory(),
+    slideFilesDir = slideFilesDirectory(),
+  } = {},
 ) {
   backup = resolve(backup);
   destination = resolve(destination);
   if (existsSync(destination))
     throw new Error("복구 경로에 파일이 있습니다. 새로운 경로를 사용하세요.");
+  // The restored database starts with the slide files of the same backup, or
+  // with none when the backup predates slides. Files left in the slide
+  // directory belong to another point in time and are never mixed in.
+  const slides = backup + ".slides";
+  assertEmptySlideTarget(slideFilesDir);
+  if (existsSync(slides)) verifySlideBackup(slides);
   const source = new DatabaseSync(backup, { readOnly: true });
   try {
     if (
@@ -71,6 +86,7 @@ export function restoreDatabase(
       }
     // Validate the entire bundle before publishing a database or any assets.
     for (const url of urls) readDocumentImage(backup + ".images", url);
+    if (existsSync(slides)) restoreSlideStore(slides, slideFilesDir);
     for (const url of urls.filter(
       (url) =>
         !activeByTeam.has(url.split("/")[3]) ||
@@ -122,10 +138,15 @@ if (
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
   try {
-    if (process.argv.length !== 4)
-      throw new Error("사용법: npm run restore -- 백업.sqlite 새경로.sqlite");
+    if (![4, 5].includes(process.argv.length))
+      throw new Error(
+        "사용법: npm run restore -- 백업.sqlite 새경로.sqlite [새-슬라이드-폴더]",
+      );
+    const slideFilesDir = process.argv[4]
+      ? resolve(process.argv[4])
+      : slideFilesDirectory();
     console.log(
-      `복구 검증 완료: ${restoreDatabase(process.argv[2], process.argv[3])}\n서버 중지 후 DB_PATH를 이 파일로 지정하여 재시작하세요. 기존 로그인은 해제됩니다.`,
+      `복구 검증 완료: ${restoreDatabase(process.argv[2], process.argv[3], { slideFilesDir })}\n서버 중지 후 DB_PATH를 이 파일로, SLIDE_FILES_DIR를 ${slideFilesDir}로 지정하여 재시작하세요. 기존 로그인은 해제됩니다.`,
     );
   } catch (e) {
     console.error(e.message);

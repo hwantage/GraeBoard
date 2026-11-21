@@ -18,16 +18,26 @@ import {
   readDocumentImage,
   writeDocumentImage,
 } from "../../server/documents/document-images.mjs";
+import { slideFilesDirectory } from "../../server/storage/slides/sqlite-slide-files.mjs";
+import { backupSlideStore } from "../../server/storage/slides/slide-file-backup.mjs";
 
 export function backupDatabase(
   source,
   destination,
-  { documentImagesDir = documentImagesDirectory() } = {},
+  {
+    documentImagesDir = documentImagesDirectory(),
+    slideFilesDir = slideFilesDirectory(),
+  } = {},
 ) {
   source = resolve(source);
   destination = resolve(destination);
   if (!existsSync(source)) throw new Error("백업할 데이터베이스가 없습니다.");
-  if (existsSync(destination) || existsSync(destination + ".images"))
+  const slides = destination + ".slides";
+  if (
+    existsSync(destination) ||
+    existsSync(destination + ".images") ||
+    existsSync(slides)
+  )
     throw new Error("백업 파일이 이미 있습니다. 다른 이름을 지정하세요.");
   mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
   const temporary = destination + ".partial";
@@ -134,14 +144,19 @@ export function backupDatabase(
     } finally {
       verify.close();
     }
+    // Slide files live in their own store; they join this backup as a
+    // companion folder taken in the same run.
+    backupSlideStore(slideFilesDir, slides);
     if (existsSync(temporaryImages)) renameSync(temporaryImages, images);
     renameSync(temporary, destination);
     return destination;
   } catch (e) {
     if (existsSync(temporary)) unlinkSync(temporary);
     rmSync(temporaryImages, { recursive: true, force: true });
-    if (!existsSync(destination))
+    if (!existsSync(destination)) {
       rmSync(images, { recursive: true, force: true });
+      rmSync(slides, { recursive: true, force: true });
+    }
     throw e;
   } finally {
     if (guard) {

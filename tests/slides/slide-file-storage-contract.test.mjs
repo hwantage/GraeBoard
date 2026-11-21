@@ -268,6 +268,104 @@ test("기준 버전이 다르면 저장하지 않고 두 내용을 모두 보존
   assert.equal((await lead.save(teamId, file.id, 0, mine)).status, 428);
 });
 
+test("응답을 잃은 생성 요청을 다시 보내면 처음 만든 결과를 받고, 그 사이의 다른 저장을 덮지 않는다", async (t) => {
+  const { lead, teamId, add } = await team(t);
+  const member = await add("member");
+  const mine = slide("내가 만든 내용");
+  const requestId = randomUUID();
+  // The response of this create never reached the author.
+  const created = await lead.upload(teamId, "새 자료", mine, requestId);
+  const theirs = slide("다른 팀원이 고친 내용");
+  assert.equal(
+    (await member.save(teamId, created.body.id, 1, theirs)).body.revision,
+    2,
+  );
+  await member.data(`/api/teams/${teamId}/slides/${created.body.id}`, {
+    method: "PATCH",
+    json: { title: "바뀐 이름" },
+  });
+
+  const retried = await lead.upload(teamId, "새 자료", mine, requestId);
+  assert.equal(retried.status, 201);
+  assert.deepEqual(
+    {
+      id: retried.body.id,
+      revision: retried.body.revision,
+      contentHash: retried.body.contentHash,
+      byteLength: retried.body.byteLength,
+      updatedBy: retried.body.updatedBy,
+    },
+    {
+      id: created.body.id,
+      revision: 1,
+      contentHash: sha(mine),
+      byteLength: mine.byteLength,
+      updatedBy: created.body.updatedBy,
+    },
+  );
+  // The author's session is bound to revision 1, so its next save is refused.
+  const stale = await lead.save(
+    teamId,
+    created.body.id,
+    retried.body.revision,
+    slide("내 다음 변경"),
+  );
+  assert.equal(stale.status, 409);
+  assert.equal(stale.body.details.current.revision, 2);
+  assert.equal(
+    (await lead.bytes(teamId, created.body.id)).bytes.equals(theirs),
+    true,
+  );
+
+  // The same holds for a repeated save, and when the file was deleted since.
+  const saveId = randomUUID();
+  const third = slide("세 번째");
+  assert.equal(
+    (await member.save(teamId, created.body.id, 2, third, saveId)).body
+      .revision,
+    3,
+  );
+  assert.equal(
+    (await lead.save(teamId, created.body.id, 3, slide("네 번째"))).body
+      .revision,
+    4,
+  );
+  const replayed = await member.save(teamId, created.body.id, 2, third, saveId);
+  assert.deepEqual(
+    [replayed.status, replayed.body.revision, replayed.body.contentHash],
+    [200, 3, sha(third)],
+  );
+  assert.equal(
+    (await member.save(teamId, created.body.id, 2, slide("다른 내용"), saveId))
+      .status,
+    409,
+    "a request ID names one payload",
+  );
+  assert.equal(
+    (await lead.upload(teamId, "새 자료", slide("다른 내용"), requestId))
+      .status,
+    409,
+  );
+
+  await member.data(`/api/teams/${teamId}/slides/${created.body.id}`, {
+    method: "DELETE",
+  });
+  const afterDelete = await lead.upload(teamId, "새 자료", mine, requestId);
+  assert.deepEqual(
+    [afterDelete.body.id, afterDelete.body.revision],
+    [created.body.id, 1],
+  );
+  assert.equal(
+    (await lead.save(teamId, created.body.id, 1, slide("삭제 뒤 저장"))).status,
+    404,
+  );
+  assert.equal(
+    (await lead.data(`/api/teams/${teamId}/slides`)).body.files.length,
+    0,
+    "the retry did not bring the deleted file back",
+  );
+});
+
 test("열람자는 읽기만 하고 팀 밖 사용자와 비로그인 요청은 원본을 받지 못한다", async (t) => {
   const { lead, teamId, add, client } = await team(t);
   const bytes = slide("권한");
