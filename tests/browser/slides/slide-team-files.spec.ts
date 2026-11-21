@@ -10,9 +10,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unpack } from "../../../shared/formatting/compact.js";
 
-// These checks drive the real assembled CanvaSlide editor. Build it first:
-//   npm run build:canvaslide
-const distRoot = process.env.CANVASLIDE_DIST_DIR || "dist-canvaslide";
+// These checks drive the real CanvaSlide editor that `npm run build` installed.
+const distRoot = "dist/tools/canvaslide";
 const current = existsSync(join(distRoot, "current.json"))
   ? JSON.parse(readFileSync(join(distRoot, "current.json"), "utf8"))
   : null;
@@ -65,7 +64,7 @@ let teamId = "";
 test.beforeAll(() => {
   expect(
     current,
-    "CanvaSlide 편집기 배포본이 없습니다. npm run build:canvaslide 를 먼저 실행하세요.",
+    "CanvaSlide 편집기 배포본이 없습니다. npm run build 를 먼저 실행하세요.",
   ).not.toBeNull();
 });
 test.beforeEach(async ({ page }) => {

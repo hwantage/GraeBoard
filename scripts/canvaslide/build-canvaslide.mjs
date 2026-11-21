@@ -7,25 +7,27 @@
 //
 // Output: dist-canvaslide/<build id>/ and dist-canvaslide/current.json.
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
-  readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
+import {
+  adapterDigest,
+  buildIdFor,
+  describeBuildDirectory,
+  graeboardRoot,
+  readPin,
+  sha256,
+  verifyBuildDirectory,
+} from "./canvaslide-build-identity.mjs";
 
-const graeboardRoot = resolve(fileURLToPath(import.meta.url), "../../..");
 const adapterDir = join(graeboardRoot, "scripts/canvaslide");
-const pin = JSON.parse(
-  readFileSync(join(adapterDir, "canvaslide-upstream.json"), "utf8"),
-);
+const pin = readPin();
 const args = process.argv.slice(2);
 const option = (name) => {
   const index = args.indexOf(name);
@@ -52,34 +54,6 @@ const run = (command, commandArgs, options = {}) =>
   });
 const read = (command, commandArgs) =>
   execFileSync(command, commandArgs, { cwd: work, encoding: "utf8" }).trim();
-
-function listFiles(directory) {
-  return readdirSync(directory, { withFileTypes: true })
-    .flatMap((entry) =>
-      entry.isDirectory()
-        ? listFiles(join(directory, entry.name))
-        : [join(directory, entry.name)],
-    )
-    .sort();
-}
-const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
-
-// The adapter is part of the build's identity: changing only GraeBoard's side
-// must produce a new build ID and a new static path.
-function adapterDigest() {
-  const hash = createHash("sha256");
-  const files = [
-    ...listFiles(adapterDir),
-    join(graeboardRoot, "shared/slides/slide-frame-protocol.js"),
-  ];
-  for (const file of files) {
-    hash.update(relative(graeboardRoot, file));
-    hash.update("\0");
-    hash.update(readFileSync(file));
-    hash.update("\0");
-  }
-  return hash.digest("hex");
-}
 
 function checkout() {
   mkdirSync(work, { recursive: true });
@@ -154,7 +128,7 @@ if (pnpm !== pin.pnpm && !process.env.CANVASLIDE_ALLOW_PNPM)
     `CanvaSlide ${commit.slice(0, 7)} builds with pnpm ${pin.pnpm}; found ${pnpm}`,
   );
 const digest = adapterDigest();
-const buildId = `${commit.slice(0, 12)}-${digest.slice(0, 12)}`;
+const buildId = buildIdFor(commit, digest);
 const out = join(outRoot, buildId);
 console.log(`CanvaSlide ${commit} + adapter ${digest.slice(0, 12)} -> ${out}`);
 
@@ -182,12 +156,7 @@ for (const name of ["_headers", "_routes.json"])
   rmSync(join(out, name), { force: true });
 if (!existsSync(join(out, "index.html")))
   throw new Error("CanvaSlide build produced no index.html");
-const files = Object.fromEntries(
-  listFiles(out).map((file) => [
-    relative(out, file).split("\\").join("/"),
-    { bytes: statSync(file).size, sha256: sha256(readFileSync(file)) },
-  ]),
-);
+const files = describeBuildDirectory(out);
 const manifest = {
   buildId,
   upstream: { repository: pin.repository, commit, version: pin.version },
@@ -212,4 +181,6 @@ writeFileSync(
     2,
   ),
 );
+// The same check `npm run build` and the tests apply to a build.
+verifyBuildDirectory(out, { commit, digest, buildId });
 console.log(`CanvaSlide build ${buildId}: ${Object.keys(files).length} files`);

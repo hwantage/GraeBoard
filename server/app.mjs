@@ -256,7 +256,7 @@ export function createApp({
     teamAccess,
     onChange: (teamId) => slideFileSync.schedule(teamId),
   });
-  installSlideEditorStatic(app, { directory: slideEditorDir });
+  installSlideEditorStatic(app, { staticDir, directory: slideEditorDir });
   installEventStreams(app);
   app.locals.presenceEvents = installPresenceRoutes(app, {
     refreshUser,

@@ -1,23 +1,20 @@
 import express from "express";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import {
   SLIDE_EDITOR_PATH,
   slideEditorHeaders,
   slideEditorRequest,
 } from "../../shared/slides/slide-editor-policy.js";
 
-export function slideEditorDirectory() {
-  return resolve(process.env.CANVASLIDE_DIST_DIR || "dist-canvaslide");
-}
-
 // Serves `/tools/canvaslide/current.json` and `/tools/canvaslide/<build id>/`
-// from the assembled editor builds. Files are read on each request, so a new
-// build is offered without a restart. A missing file is a 404, never the
-// application page.
+// from where `npm run build` installed the verified editor build
+// (dist/tools/canvaslide), with the editor's own response policy. A missing
+// file is a 404, never the application page.
 export function installSlideEditorStatic(
   app,
-  { directory = slideEditorDirectory() } = {},
+  { staticDir = resolve("dist"), directory } = {},
 ) {
+  directory ??= join(staticDir, "tools/canvaslide");
   const files = express.static(directory, {
     index: "index.html",
     redirect: false,

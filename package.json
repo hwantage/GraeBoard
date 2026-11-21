@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "concurrently -k -n api,web \"node --env-file-if-exists=.env --watch server/index.mjs\" \"vite --host 127.0.0.1\"",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && node scripts/canvaslide/prepare-canvaslide-dist.mjs",
     "start": "node --env-file-if-exists=.env server/index.mjs",
     "test": "node scripts/testing/run-node-tests.mjs",
     "test:postgres": "node scripts/testing/test-postgres.mjs",
@@ -25,7 +25,7 @@
     "migrate": "node --env-file-if-exists=.env scripts/admin/migrate.mjs",
     "build:edge": "node scripts/deploy/build-edge.mjs",
     "build:canvaslide": "node scripts/canvaslide/build-canvaslide.mjs",
-    "build:canvaslide:install": "node scripts/canvaslide/install-canvaslide-dist.mjs",
+    "build:canvaslide:pack": "node scripts/canvaslide/pack-canvaslide-bundle.mjs",
     "build:pages": "wrangler pages functions build --outdir dist-pages --build-output-directory dist --compatibility-date 2026-10-23",
     "sync:credential": "node --env-file-if-exists=.env scripts/sync/sync-credential.mjs",
     "sync:history-maintenance": "node --env-file-if-exists=.env scripts/sync/sync-history-maintenance.mjs",
