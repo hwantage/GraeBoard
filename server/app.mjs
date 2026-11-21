@@ -31,6 +31,9 @@ import {
 } from "./documents/document-images.mjs";
 
 import { installCalendarRoutes } from "./calendar/calendar.mjs";
+import { installSlideFileRoutes } from "./slides/slide-file-routes.mjs";
+import { installSlideEditorStatic } from "./slides/slide-editor-static.mjs";
+import { MemorySlideFileRepository } from "./storage/slides/memory-slide-files.mjs";
 import { installDocumentBrowserRoutes } from "./documents/document-browser.mjs";
 
 import { installFilterRoutes } from "./sheet/filters.mjs";
@@ -59,6 +62,8 @@ export function createApp({
   cellEventOptions,
   syncOptions = {},
   documentImagesDir = documentImagesDirectory(),
+  slideFileRepository = new MemorySlideFileRepository(),
+  slideEditorDir,
 } = {}) {
   const site = deploymentSite(process.env, "internal");
   db ??= openDatabase();
@@ -229,6 +234,11 @@ export function createApp({
     teamAccess,
     documentEvents,
   });
+  installSlideFileRoutes(app, {
+    repository: slideFileRepository,
+    teamAccess,
+  });
+  installSlideEditorStatic(app, { directory: slideEditorDir });
   installEventStreams(app);
   app.locals.presenceEvents = installPresenceRoutes(app, {
     refreshUser,

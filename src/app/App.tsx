@@ -20,6 +20,7 @@ import SheetTabs from "../sheet/SheetTabs";
 import DocumentBrowser from "../documents/DocumentBrowser";
 import useWorkspaceNavigation from "./useWorkspaceNavigation";
 import Insights from "../insights/Insights";
+import SlidesWorkspace from "../slides/SlidesWorkspace";
 import type { TaskMetrics } from "../insights/insights-types";
 import DocumentLinkPanel, {
   loadDocumentLink,
@@ -76,6 +77,7 @@ import {
   Bookmark,
   X,
   Presentation,
+  Projector,
   Pencil,
   Users,
   UserRound,
@@ -310,6 +312,7 @@ function Workspace({
     documentBrowser,
     annualMemoRef,
     documentBrowserRef,
+    slidesRef,
     calendarBusy,
     setCalendarBusy,
     insightsBusy,
@@ -490,6 +493,7 @@ function Workspace({
       documents: "문서",
       calendar: "캘린더",
       insights: "인사이트",
+      slides: "슬라이드",
     }[workspaceRoute.route];
   useEffect(() => {
     document.title = `${browserTitle} · 그래보드`;
@@ -2018,6 +2022,7 @@ function Workspace({
           if (
             documentBrowser ||
             screen === "insights" ||
+            screen === "slides" ||
             presentation ||
             e.nativeEvent.isComposing ||
             e.defaultPrevented
@@ -2139,6 +2144,24 @@ function Workspace({
               >
                 <FolderOpen size={15} />
                 <span>문서 브라우저</span>
+              </Button>
+              <Button
+                title="슬라이드"
+                active={screen === "slides"}
+                aria-pressed={screen === "slides"}
+                {...busyProps(
+                  calendarBusy || insightsBusy,
+                  workspaceNavigating ||
+                    !!pending ||
+                    !!failed ||
+                    !!editor ||
+                    sheetCloneDraft.dirty ||
+                    sheetCloneDraft.saving,
+                )}
+                onClick={() => void workspaceRoute.navigate("slides")}
+              >
+                <Projector size={15} />
+                <span>슬라이드</span>
               </Button>
               <Button
                 className="calendar-launch"
@@ -2352,6 +2375,20 @@ function Workspace({
             user={user}
             reloadKey={linkReload}
             onBusyChange={setCalendarBusy}
+            onNotify={(message) => {
+              setUndoToast(null);
+              setToast(message);
+            }}
+          />
+        ) : screen === "slides" ? (
+          <SlidesWorkspace
+            key={teamId}
+            ref={slidesRef}
+            teamId={teamId}
+            user={user}
+            people={boot.users}
+            teams={boot.teams}
+            onSelectTeam={(id) => void navigateWorkspace(() => setTeamId(id))}
             onNotify={(message) => {
               setUndoToast(null);
               setToast(message);
