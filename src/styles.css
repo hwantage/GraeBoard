@@ -264,8 +264,9 @@ small {
   color: var(--muted);
   text-align: center;
 }
-.empty-grae {
-  width: 96px;
+.empty > img {
+  width: auto;
+  max-width: 100%;
   height: 96px;
   margin-bottom: -4px;
   user-select: none;
@@ -625,7 +626,7 @@ small {
   margin-left: auto;
   flex-shrink: 0;
 }
-.heading-actions .button,
+.heading-actions > .button,
 .slide-editor-bar > .button,
 .page-heading > .insights-toggle,
 .toolbar-add-task.button {

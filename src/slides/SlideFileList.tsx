@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { Plus, Upload } from "lucide-react";
+import ray from "../../assets/character/canvaslide-ray-384.png";
 import { showTouchTooltip } from "../ui/Tooltip";
 import { useRecentCreation } from "../sheet/NewTaskMark";
 import { useTouchPress } from "../ui/useTouchPress";
@@ -127,6 +128,9 @@ export default function SlideFileList({
         {files.length === 0 ? (
           <Empty
             title="아직 팀 자료가 없습니다"
+            illustration={
+              <img src={ray} width={144} height={96} alt="" draggable={false} />
+            }
             description={
               canWrite
                 ? "새 자료를 만들거나 이 기기의 CanvaSlide 파일을 가져오세요."

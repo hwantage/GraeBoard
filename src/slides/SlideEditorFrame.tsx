@@ -48,7 +48,7 @@ export type SlideEditorHandle = { leave: () => Promise<boolean> };
 
 type ConflictChoice =
   { kind: "copy"; title: string } | { kind: "reload" } | null;
-type LeaveChoice = "save" | "discard" | null;
+type LeaveChoice = "save" | "save-as" | "discard" | null;
 type Dialog =
   | {
       kind: "save-target" | "first-save";
@@ -420,8 +420,9 @@ export default function SlideEditorFrame({
           kind: "leave",
           resolve,
         }));
-        if (!choice || (choice === "save" && !(await save()))) return false;
+        if (!choice) return false;
         discard = choice === "discard";
+        if (!discard && !(await save(choice === "save-as"))) return false;
       }
       return await bridge.current.request<boolean>("prepare-leave", {
         documentSession: current.documentSession,
@@ -630,7 +631,7 @@ export default function SlideEditorFrame({
       {dialog?.kind === "leave" && (
         <Modal title="저장하지 않은 변경" onClose={() => dialog.resolve(null)}>
           <p>저장하지 않은 변경이 있습니다. 이동하기 전에 저장할까요?</p>
-          <div className="form-actions">
+          <div className="form-actions slide-leave-actions">
             <Button onClick={() => dialog.resolve(null)}>계속 편집</Button>
             <Button
               className="danger"
@@ -639,12 +640,20 @@ export default function SlideEditorFrame({
               저장하지 않고 이동
             </Button>
             {canWrite && (
-              <Button
-                className="primary"
-                onClick={() => dialog.resolve("save")}
-              >
-                저장 후 이동
-              </Button>
+              <>
+                <Button
+                  className="primary"
+                  onClick={() => dialog.resolve("save")}
+                >
+                  저장 후 이동
+                </Button>
+                <Button
+                  disabled={!state?.canStore}
+                  onClick={() => dialog.resolve("save-as")}
+                >
+                  다른 이름으로 저장
+                </Button>
+              </>
             )}
           </div>
         </Modal>

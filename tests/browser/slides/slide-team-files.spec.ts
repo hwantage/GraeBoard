@@ -129,6 +129,22 @@ const fileCard = (page: Page, title: string) =>
     has: page.getByRole("button", { name: title, exact: true }),
   });
 
+test("빈 팀 자료 목록에 CanvaSlide 가오리를 표시한다", async ({ page }) => {
+  await page.route(`**/api/teams/${teamId}/slides`, (route) =>
+    route.fulfill({ json: { canWrite: false, files: [] } }),
+  );
+  await page.goto("/slides");
+  const empty = page.getByRole("region", { name: "팀 자료 목록" });
+  await expect(empty.getByText("아직 팀 자료가 없습니다")).toBeVisible();
+  const ray = empty.locator(".empty img");
+  await expect(ray).toHaveAttribute("src", /canvaslide-ray/);
+  await ray.evaluate((el: HTMLImageElement) => el.decode());
+  expect(await ray.boundingBox()).toMatchObject({ width: 144, height: 96 });
+  await expect(
+    empty.getByText("팀원이 자료를 저장하면 여기에 표시됩니다."),
+  ).toBeVisible();
+});
+
 test("CanvaSlide 제목 옆에서 새 자료를 만들고 카드의 두 줄 제목과 썸네일 바깥 툴팁을 표시한다", async ({
   page,
   browserName,
@@ -836,6 +852,11 @@ test("상세에서 사본을 삭제할 때 취소와 실패는 편집을 유지�
   await openTeamFile(page, file.id);
   await page.getByRole("button", { name: "다른 이름으로 저장" }).click();
   const saveAs = page.getByRole("dialog", { name: "다른 이름으로 저장" });
+  const regularButton = saveAs.getByRole("button", { name: "취소" });
+  const height = (await regularButton.boundingBox())!.height;
+  const fontSize = await regularButton.evaluate(
+    (el) => getComputedStyle(el).fontSize,
+  );
   const copyName = `삭제할 사본 ${randomUUID()}`;
   await saveAs.getByRole("textbox").fill(copyName);
   await saveAs.getByRole("button", { name: "팀 사본으로 저장" }).click();
@@ -874,6 +895,11 @@ test("상세에서 사본을 삭제할 때 취소와 실패는 편집을 유지�
   await remove.click();
   await expect(confirm).toContainText(copyName);
   await expect(confirm).toContainText("저장하지 않은 변경");
+  for (const button of ["취소", "삭제"]) {
+    const action = confirm.getByRole("button", { name: button, exact: true });
+    await expect(action).toHaveCSS("height", `${height}px`);
+    await expect(action).toHaveCSS("font-size", fontSize);
+  }
   await confirm.getByRole("button", { name: "취소" }).click();
   await expect(saveButton(page)).toBeEnabled();
   expect((await content(page.request, teamId, copy)).status()).toBe(200);
@@ -1013,6 +1039,84 @@ test("미저장 변경이 있으면 화면 이동 전에 묻고, 계속 편집�
   expect((await meta(page.request, teamId, file.id)).revision).toBe(2);
 });
 
+test("이동 전에 다른 이름으로 저장하면 편집한 내용을 사본으로 남기고 목록으로 돌아간다", async ({
+  page,
+}) => {
+  const original = example("flowchart.canvaslide");
+  const file = await upload(page.request, teamId, "이동 전 원본", original);
+  const copyTitle = `이동 전 사본 ${randomUUID().slice(0, 8)}`;
+  await openTeamFile(page, file.id);
+  await nudge(page);
+  const list = page.getByRole("button", { name: "팀 자료 목록" });
+  const leave = page.getByRole("dialog", { name: "저장하지 않은 변경" });
+  const saveAs = leave.getByRole("button", { name: "다른 이름으로 저장" });
+  const name = page.getByRole("dialog", { name: "다른 이름으로 저장" });
+  await list.click();
+  await expect(leave.locator(".form-actions button")).toHaveText([
+    "계속 편집",
+    "저장하지 않고 이동",
+    "저장 후 이동",
+    "다른 이름으로 저장",
+  ]);
+  await expect(leave.locator(".form-actions .primary")).toHaveText(
+    "저장 후 이동",
+  );
+  const viewport = page.viewportSize()!;
+  for (const width of [viewport.width, 320]) {
+    await page.setViewportSize({ width, height: viewport.height });
+    const actions = leave.locator(".form-actions");
+    const row = (await actions.boundingBox())!;
+    const last = (await saveAs.boundingBox())!;
+    expect(last.x + last.width).toBeCloseTo(row.x + row.width, 0);
+    expect(
+      await actions.evaluate((el) => el.scrollWidth <= el.clientWidth),
+    ).toBe(true);
+  }
+  await page.setViewportSize(viewport);
+  await saveAs.click();
+  await name.getByRole("button", { name: "취소" }).click();
+  await expect(idleSave(page)).toBeEnabled();
+  await expect(page).toHaveURL(new RegExp(file.id));
+
+  const endpoint = `**/api/teams/${teamId}/slides`;
+  await page.route(endpoint, (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status: 400, json: { error: "사본 저장 실패" } })
+      : route.fallback(),
+  );
+  await list.click();
+  await saveAs.click();
+  await name.getByRole("textbox").fill(copyTitle);
+  await name.getByRole("button", { name: "팀 사본으로 저장" }).click();
+  await expect(page.locator(".slide-editor .error-note")).toBeVisible();
+  await expect(idleSave(page)).toBeEnabled();
+  await expect(page).toHaveURL(new RegExp(file.id));
+  await page.unroute(endpoint);
+
+  await list.click();
+  await saveAs.click();
+  await name.getByRole("textbox").fill(copyTitle);
+  await name.getByRole("button", { name: "팀 사본으로 저장" }).click();
+  const card = fileCard(page, copyTitle);
+  await expect(card).toBeVisible();
+  expect(await meta(page.request, teamId, file.id)).toMatchObject({
+    title: file.title,
+    revision: 1,
+  });
+  expect(await (await content(page.request, teamId, file.id)).body()).toEqual(
+    original,
+  );
+  await card.getByRole("button").click();
+  await expect(titleInput(page)).toHaveValue(copyTitle);
+  await expect(idleSave(page)).toBeDisabled();
+  const copyId = new URL(page.url()).searchParams.get("file")!;
+  expect(copyId).not.toBe(file.id);
+  const bytes = await (await content(page.request, teamId, copyId)).body();
+  const copy = JSON.parse(bytes.toString());
+  expect(copy.name).toBe(copyTitle);
+  expect(copy.elements).not.toEqual(JSON.parse(original.toString()).elements);
+});
+
 test("열람자는 읽기만 하고, 팀 밖 사용자는 원본을 받을 수 없다", async ({
   page,
   context,
@@ -1057,6 +1161,12 @@ test("열람자는 읽기만 하고, 팀 밖 사용자는 원본을 받을 수 �
     viewerPage.getByRole("button", { name: "다른 이름으로 저장" }),
   ).toHaveCount(0);
   await expect(idleSave(viewerPage)).toBeDisabled();
+  await viewerPage.getByRole("button", { name: "팀 자료 목록" }).click();
+  const leave = viewerPage.getByRole("dialog", { name: "저장하지 않은 변경" });
+  await expect(leave).toBeVisible();
+  await expect(
+    leave.getByRole("button", { name: /저장 후 이동|다른 이름으로 저장/ }),
+  ).toHaveCount(0);
   await viewer.close();
 
   const outsider = await peerSession(page, context, null);
