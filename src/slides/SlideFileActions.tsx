@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { Download, Trash2 } from "lucide-react";
 import { slideDownloadName } from "../../shared/slides/slide-file-rules.js";
 import { ApiError, saveFile } from "../platform/api";
 import { Button } from "../ui/Button";
@@ -87,7 +88,8 @@ export default function SlideFileActions({
         disabled={disabled || busy}
         onClick={() => void download()}
       >
-        내려받기
+        <Download size={15} aria-hidden="true" />
+        <span>내려받기</span>
       </Button>
       {canWrite && (
         <Button
@@ -95,7 +97,8 @@ export default function SlideFileActions({
           disabled={disabled || busy}
           onClick={() => setConfirming(true)}
         >
-          삭제
+          <Trash2 size={15} aria-hidden="true" />
+          <span>삭제</span>
         </Button>
       )}
       {confirming && (

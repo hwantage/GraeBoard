@@ -162,9 +162,9 @@ export default function SlideFileList({
                   />
                   <span className="slide-card-heading">
                     <span className="slide-card-title">{file.title}</span>
-                    <SlideNewMark createdAt={file.createdAt} />
                   </span>
                 </button>
+                <SlideNewMark createdAt={file.createdAt} />
               </li>
             ))}
           </ul>
@@ -177,6 +177,8 @@ export default function SlideFileList({
 function SlideNewMark({ createdAt }: { createdAt: string }) {
   const isNew = useRecentCreation(createdAt);
   return isNew ? (
-    <span className="task-new-mark" role="img" aria-label="새 자료" />
+    <span className="slide-card-new" role="img" aria-label="새 자료">
+      NEW
+    </span>
   ) : null;
 }

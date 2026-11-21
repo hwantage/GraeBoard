@@ -47,11 +47,13 @@
   }
 }
 .slide-file-card {
+  position: relative;
   min-width: 0;
 }
 .slide-open {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) 46px;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  overflow: hidden;
   width: 100%;
   height: 168px;
   padding: 0;
@@ -71,12 +73,11 @@
   border-color: var(--accent);
 }
 .slide-card-thumbnail {
+  grid-area: 1 / 1;
   display: grid;
   grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   overflow: hidden;
-  border-bottom: 1px solid var(--line);
-  border-radius: 5px 5px 0 0;
   background: var(--accent-surface);
   color: var(--accent-muted);
 }
@@ -87,11 +88,14 @@
   object-fit: contain;
 }
 .slide-card-heading {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
+  grid-area: 1 / 1;
+  align-self: end;
+  display: grid;
+  align-content: center;
+  min-height: 46px;
   padding: 4px 10px;
+  background: rgb(25 29 31 / 64%);
+  color: #fff;
 }
 .slide-card-title {
   display: -webkit-box;
@@ -101,11 +105,20 @@
   overflow-wrap: anywhere;
   line-height: 18px;
 }
-.slide-card-heading .task-new-mark {
-  flex: none;
-}
-.slide-open:not([aria-describedby]) .task-new-mark {
-  display: none;
+.slide-card-new {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  padding: 0 7px;
+  border: 1px solid #fff;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--new-task-ink) 85%, black);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  letter-spacing: 0.03em;
+  pointer-events: none;
 }
 .slide-form label {
   display: grid;

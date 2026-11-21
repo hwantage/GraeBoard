@@ -156,6 +156,8 @@ test("CanvaSlide 제목 옆에서 새 자료를 만들고 카드의 두 줄 제�
   const tooltip = page.getByRole("tooltip");
   const image = card.locator(".slide-card-thumbnail img");
   const caption = card.locator(".slide-card-title");
+  const band = card.locator(".slide-card-heading");
+  const newBadge = card.getByRole("img", { name: "새 자료" });
   await expect(tooltip).toHaveCount(0);
   await expect(image).toBeVisible();
   await expect(card.getByRole("button")).toHaveCount(1);
@@ -176,6 +178,24 @@ test("CanvaSlide 제목 옆에서 새 자료를 만들고 카드의 두 줄 제�
     const idle = (await card.boundingBox())!;
     expect(idle.height).toBe(168);
     expect((await other.boundingBox())!.height).toBe(idle.height);
+    await expect(newBadge).toHaveText("NEW");
+    await expect(newBadge).toBeVisible();
+    const badge = (await newBadge.boundingBox())!;
+    const strip = (await band.boundingBox())!;
+    const previewBox = (await image.boundingBox())!;
+    const topGap = badge.y - idle.y;
+    const rightGap = idle.x + idle.width - badge.x - badge.width;
+    expect(topGap).toBeGreaterThanOrEqual(0);
+    expect(topGap).toBeLessThanOrEqual(12);
+    expect(rightGap).toBeGreaterThanOrEqual(0);
+    expect(rightGap).toBeLessThanOrEqual(12);
+    expect(badge.y + badge.height).toBeLessThan(strip.y);
+    expect(strip.y).toBeGreaterThan(previewBox.y);
+    expect(strip.y + strip.height).toBeCloseTo(
+      previewBox.y + previewBox.height,
+      0,
+    );
+    expect(strip.width).toBeCloseTo(previewBox.width, 0);
     await expect(caption).toHaveCSS("-webkit-line-clamp", "2");
     expect(
       await caption.evaluate((el) => ({
@@ -438,9 +458,8 @@ test("카드의 new 표시는 생성 시각을 기준으로 12시간이 지나�
       .getByRole("listitem")
       .filter({ has: page.getByRole("button", { name: title, exact: true }) })
       .getByRole("img", { name: "새 자료" });
-  await fileCard(page, "생성 12시간 경과").hover();
+  await page.getByRole("heading", { name: "CanvaSlide" }).hover();
   await expect(badge("생성 12시간 경과")).toHaveCount(0);
-  await fileCard(page, "만료 직전").hover();
   await expect(badge("만료 직전")).toBeVisible();
   await page.clock.fastForward(61_000);
   await expect(badge("만료 직전")).toHaveCount(0);
@@ -828,6 +847,12 @@ test("상세에서 사본을 삭제할 때 취소와 실패는 편집을 유지�
     .toBeGreaterThan(0);
 
   const remove = page.getByRole("button", { name: "자료 삭제", exact: true });
+  await expect(
+    page
+      .getByRole("button", { name: "서버에 저장된 파일 내려받기" })
+      .locator("svg.lucide-download"),
+  ).toBeVisible();
+  await expect(remove.locator("svg.lucide-trash-2")).toBeVisible();
   const confirm = page.getByRole("dialog", { name: "자료 삭제" });
   for (const width of [320, 768]) {
     await page.setViewportSize({ width, height: 800 });
