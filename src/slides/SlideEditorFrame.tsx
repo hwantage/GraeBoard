@@ -41,7 +41,7 @@ import {
 
 export type SlideEditorStart =
   | { kind: "file"; fileId: string }
-  | { kind: "new"; title: string; key: string }
+  | { kind: "new"; key: string }
   | { kind: "share"; shareId: string };
 export type SlideEditorHandle = { leave: () => Promise<boolean> };
 
@@ -50,7 +50,7 @@ type ConflictChoice =
 type LeaveChoice = "save" | "discard" | null;
 type Dialog =
   | {
-      kind: "save-target" | "new-file";
+      kind: "save-target" | "first-save";
       name: string;
       resolve: (value: string | null) => void;
     }
@@ -114,7 +114,7 @@ export default function SlideEditorFrame({
   canWrite: boolean;
   start: SlideEditorStart;
   onClose: () => void;
-  onNew: (title: string) => void;
+  onNew: () => void;
   onSaved: (file: SlideFile) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
@@ -196,10 +196,10 @@ export default function SlideEditorFrame({
       } else if (first.kind === "new") {
         const result = await bridge.current!.request<{ outcome: string }>(
           "new",
-          { teamId, title: first.title },
+          { teamId, title: "" },
         );
-        if (result.outcome === "replaced")
-          await bridge.current!.request("save");
+        if (result.outcome !== "replaced" && result.outcome !== "declined")
+          throw new Error("새 자료를 열지 못했습니다. 다시 시도하세요.");
       }
     } catch (failure) {
       setError((failure as Error).message);
@@ -351,18 +351,28 @@ export default function SlideEditorFrame({
   }, [session, teamId]);
 
   async function newFile() {
-    const title = await ask<string | null>((resolve) => ({
-      kind: "new-file",
-      name: "",
-      resolve,
-    }));
-    if (title && (await leave())) onNew(title);
+    if (await leave()) onNew();
   }
   async function save(asCopy = false) {
     if (!bridge.current || activeSave.current) return false;
     activeSave.current = true;
     setSaving(true);
     try {
+      if (!asCopy) {
+        const current = await bridge.current.request<SlideEditorState>("state");
+        if (current.binding?.fileId === null && !current.name.trim()) {
+          const title = await ask<string | null>((resolve) => ({
+            kind: "first-save",
+            name: "",
+            resolve,
+          }));
+          if (!title) return false;
+          await bridge.current.request("rename", {
+            name: title,
+            documentSession: current.documentSession,
+          });
+        }
+      }
       const result = await bridge.current.request<
         SlideEditorState & { saved: boolean }
       >("save", { asCopy });
@@ -412,7 +422,9 @@ export default function SlideEditorFrame({
       canWrite &&
       current?.canStore &&
       (current.dirty || current.binding?.fileId === null) &&
-      (!current.binding || !slideTitleProblem(current.name))
+      (!current.binding ||
+        !slideTitleProblem(current.name) ||
+        (current.binding.fileId === null && !current.name.trim()))
     );
   }
   function rename(name: string) {
@@ -475,6 +487,7 @@ export default function SlideEditorFrame({
             key={state.documentSession}
             className="slide-editor-title"
             aria-label="자료 제목"
+            placeholder="자료 제목"
             value={
               titleDraft?.session === state.documentSession
                 ? titleDraft.name
@@ -545,12 +558,12 @@ export default function SlideEditorFrame({
           allowFullScreen
         />
       </div>
-      {(dialog?.kind === "save-target" || dialog?.kind === "new-file") && (
+      {(dialog?.kind === "save-target" || dialog?.kind === "first-save") && (
         <SlideTitleDialog
           heading={
-            dialog.kind === "new-file" ? "새 자료" : "다른 이름으로 저장"
+            dialog.kind === "first-save" ? "자료 저장" : "다른 이름으로 저장"
           }
-          action={dialog.kind === "new-file" ? "만들기" : "팀 사본으로 저장"}
+          action={dialog.kind === "first-save" ? "저장" : "팀 사본으로 저장"}
           initial={dialog.name}
           busy={false}
           onClose={() => dialog.resolve(null)}

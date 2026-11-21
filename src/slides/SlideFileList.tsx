@@ -8,6 +8,7 @@ import {
   Upload,
 } from "lucide-react";
 import { saveFile } from "../platform/api";
+import { useRecentCreation } from "../sheet/NewTaskMark";
 import type { User } from "../types";
 import { Button } from "../ui/Button";
 import SlideTitleDialog from "./SlideTitleDialog";
@@ -30,7 +31,6 @@ import {
 } from "./slide-file-api";
 
 type Prompt =
-  | { kind: "new" }
   | { kind: "rename"; file: SlideFile }
   | { kind: "copy"; file: SlideFile }
   | { kind: "delete"; file: SlideFile };
@@ -62,7 +62,7 @@ export default function SlideFileList({
   canWrite: boolean;
   people: User[];
   onOpen: (file: SlideFile) => void;
-  onNew: (title: string) => void;
+  onNew: () => void;
   onChanged: () => void;
   onError: (message: string) => void;
   onNotify: (message: string) => void;
@@ -150,7 +150,7 @@ export default function SlideFileList({
               className="primary"
               title="새 팀 자료"
               disabled={busy}
-              onClick={() => setPrompt({ kind: "new" })}
+              onClick={onNew}
             >
               <FilePlus2 size={15} />
               <span>새 자료</span>
@@ -169,67 +169,73 @@ export default function SlideFileList({
             }
           />
         ) : (
-          <table className="settings-table slide-table">
-            <thead>
-              <tr>
-                <th>이름</th>
-                <th>마지막 저장</th>
-                <th>저장한 사람</th>
-                <th>크기</th>
-                <th aria-label="작업" />
-              </tr>
-            </thead>
-            <tbody>
-              {files.map((file) => (
-                <tr key={file.id}>
-                  <td>
-                    <button
-                      type="button"
-                      className="slide-open"
-                      onClick={() => onOpen(file)}
+          <ul className="slide-card-grid" aria-label="팀 자료">
+            {files.map((file) => (
+              <li key={file.id} className="slide-file-card">
+                <div className="slide-card-heading">
+                  <button
+                    type="button"
+                    className="slide-open"
+                    onClick={() => onOpen(file)}
+                  >
+                    {file.title}
+                  </button>
+                  <SlideNewMark createdAt={file.createdAt} />
+                </div>
+                <dl className="slide-card-details">
+                  <dt>생성 일시</dt>
+                  <dd>
+                    <time dateTime={file.createdAt}>
+                      {time(file.createdAt)}
+                    </time>
+                  </dd>
+                  <dt>마지막 저장</dt>
+                  <dd>
+                    <time dateTime={file.updatedAt}>
+                      {time(file.updatedAt)}
+                    </time>
+                  </dd>
+                  <dt>저장한 사람</dt>
+                  <dd>{name(file.updatedBy)}</dd>
+                </dl>
+                <div className="slide-card-footer">
+                  <span className="slide-card-size">
+                    {size(file.byteLength)}
+                  </span>
+                  <div className="slide-card-actions">
+                    <Button
+                      tooltip="내려받기"
+                      onClick={() => void download(file)}
                     >
-                      {file.title}
-                    </button>
-                  </td>
-                  <td>{time(file.updatedAt)}</td>
-                  <td>{name(file.updatedBy)}</td>
-                  <td>{size(file.byteLength)}</td>
-                  <td>
-                    <div className="slide-row-actions">
-                      <Button
-                        tooltip="내려받기"
-                        onClick={() => void download(file)}
-                      >
-                        <Download size={15} />
-                      </Button>
-                      {canWrite && (
-                        <>
-                          <Button
-                            tooltip="이름 변경"
-                            onClick={() => setPrompt({ kind: "rename", file })}
-                          >
-                            <Pencil size={15} />
-                          </Button>
-                          <Button
-                            tooltip="사본 만들기"
-                            onClick={() => setPrompt({ kind: "copy", file })}
-                          >
-                            <Copy size={15} />
-                          </Button>
-                          <Button
-                            tooltip="삭제"
-                            onClick={() => setPrompt({ kind: "delete", file })}
-                          >
-                            <Trash2 size={15} />
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                      <Download size={15} />
+                    </Button>
+                    {canWrite && (
+                      <>
+                        <Button
+                          tooltip="이름 변경"
+                          onClick={() => setPrompt({ kind: "rename", file })}
+                        >
+                          <Pencil size={15} />
+                        </Button>
+                        <Button
+                          tooltip="사본 만들기"
+                          onClick={() => setPrompt({ kind: "copy", file })}
+                        >
+                          <Copy size={15} />
+                        </Button>
+                        <Button
+                          tooltip="삭제"
+                          onClick={() => setPrompt({ kind: "delete", file })}
+                        >
+                          <Trash2 size={15} />
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
       {prompt?.kind === "delete" && (
@@ -256,34 +262,17 @@ export default function SlideFileList({
       )}
       {prompt && prompt.kind !== "delete" && (
         <SlideTitleDialog
-          heading={
-            prompt.kind === "new"
-              ? "새 자료"
-              : prompt.kind === "rename"
-                ? "이름 변경"
-                : "사본 만들기"
-          }
-          action={
-            prompt.kind === "new"
-              ? "만들기"
-              : prompt.kind === "rename"
-                ? "변경"
-                : "사본 만들기"
-          }
+          heading={prompt.kind === "rename" ? "이름 변경" : "사본 만들기"}
+          action={prompt.kind === "rename" ? "변경" : "사본 만들기"}
           initial={
-            prompt.kind === "new"
-              ? ""
-              : prompt.kind === "rename"
-                ? prompt.file.title
-                : slideCopyTitle(prompt.file.title)
+            prompt.kind === "rename"
+              ? prompt.file.title
+              : slideCopyTitle(prompt.file.title)
           }
           busy={busy}
           onClose={() => setPrompt(null)}
           onSubmit={(title) => {
-            if (prompt.kind === "new") {
-              setPrompt(null);
-              onNew(title);
-            } else if (prompt.kind === "rename")
+            if (prompt.kind === "rename")
               void run(
                 () => renameSlideFile(teamId, prompt.file.id, title),
                 "이름을 변경했습니다.",
@@ -298,4 +287,11 @@ export default function SlideFileList({
       )}
     </section>
   );
+}
+
+function SlideNewMark({ createdAt }: { createdAt: string }) {
+  const isNew = useRecentCreation(createdAt);
+  return isNew ? (
+    <span className="task-new-mark" role="img" aria-label="새 자료" />
+  ) : null;
 }

@@ -135,16 +135,24 @@ test("CanvaSlide 목록은 공통 제목줄과 원형 메뉴를 쓰고 화면 �
     example("freefall.canvaslide"),
   );
   await page.goto("/slides");
-  const row = page
-    .getByRole("row")
+  const card = page
+    .getByRole("listitem")
     .filter({ has: page.getByRole("button", { name: title, exact: true }) });
-  const cells = row.getByRole("cell");
-  const size = cells.nth(3);
+  await expect(card.getByRole("img", { name: "새 자료" })).toBeVisible();
+  await expect(card.locator("time").first()).toHaveAttribute(
+    "datetime",
+    file.createdAt,
+  );
+  await expect(card.locator("time").last()).toHaveAttribute(
+    "datetime",
+    file.updatedAt,
+  );
+  const size = card.locator(".slide-card-size");
   await expect(size).toHaveText(
     `${(file.byteLength / 1024 ** 2).toFixed(1)}MB`,
   );
-  const download = row.getByRole("button", { name: "내려받기" });
-  const remove = row.getByRole("button", { name: "삭제" });
+  const download = card.getByRole("button", { name: "내려받기" });
+  const remove = card.getByRole("button", { name: "삭제" });
   for (const width of [1280, 768, 540, 390, 320]) {
     await page.setViewportSize({ width, height: 800 });
     const sizeBox = await size.evaluate((el) => {
@@ -216,6 +224,40 @@ test("CanvaSlide 목록은 공통 제목줄과 원형 메뉴를 쓰고 화면 �
       name: /편집기만 열기|팀에 저장하지 않고 편집기 열기/,
     }),
   ).toHaveCount(0);
+});
+
+test("카드의 new 표시는 생성 시각을 기준으로 12시간이 지나면 열린 목록에서도 사라진다", async ({
+  page,
+}) => {
+  const now = Date.now();
+  const stamp = (offset: number) => new Date(now + offset).toISOString();
+  const period = 12 * 60 * 60 * 1000;
+  await page.clock.install({ time: new Date(now) });
+  await page.route("**/api/teams/*/slides", async (route) => {
+    const files = [
+      { title: "만료 직전", createdAt: stamp(-period + 60_000) },
+      { title: "생성 12시간 경과", createdAt: stamp(-period) },
+    ].map((file) => ({
+      ...file,
+      id: randomUUID(),
+      updatedAt: stamp(0),
+      byteLength: 123,
+    }));
+    await route.fulfill({
+      json: { canWrite: true, files },
+      headers: { "X-Server-Time": stamp(0) },
+    });
+  });
+  await page.goto("/slides");
+  const badge = (title: string) =>
+    page
+      .getByRole("listitem")
+      .filter({ has: page.getByRole("button", { name: title, exact: true }) })
+      .getByRole("img", { name: "새 자료" });
+  await expect(badge("만료 직전")).toBeVisible();
+  await expect(badge("생성 12시간 경과")).toHaveCount(0);
+  await page.clock.fastForward(61_000);
+  await expect(badge("만료 직전")).toHaveCount(0);
 });
 
 test("상세 제목을 고쳐 본문과 함께 저장하고 목록과 다시 연 파일에서 확인한다", async ({
@@ -404,24 +446,53 @@ test("다른 팀원이 먼저 저장하면 두 내용을 모두 보존하고 사
   });
 });
 
-test("목록과 상세에서 만든 자료는 즉시 서버에 저장되고 새로 만들기와 열기 단축키도 팀 자료를 사용한다", async ({
+test("새 자료는 이름 없이 편집하고 첫 저장 때만 팀 파일을 만든다", async ({
   page,
 }) => {
   await page.goto("/slides");
   const newButton = page.getByRole("button", { name: "새 팀 자료" });
-  const prompt = page.getByRole("dialog", { name: "새 자료" });
-  await newButton.click();
+  const listButton = page.getByRole("button", { name: "팀 자료 목록" });
+  const prompt = page.getByRole("dialog", { name: "자료 저장" });
   const title = `분기 계획 ${randomUUID().slice(0, 8)}`;
+  let created = 0;
+  page.on("request", (r) => {
+    if (r.method() === "POST" && new URL(r.url()).pathname.endsWith("/slides"))
+      created++;
+  });
+  await newButton.click();
+  await expect(titleInput(page)).toHaveValue("");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page).not.toHaveURL(/file=/);
+  const viewport = editor(page).getByTestId("canvas-viewport");
+  await viewport.click();
+  await page.keyboard.press("r");
+  const box = (await viewport.boundingBox())!;
+  await page.mouse.move(box.x + 150, box.y + 150);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 270, box.y + 230, { steps: 4 });
+  await page.mouse.up();
+  const shape = editor(page).locator('[data-element-type="shape"]').first();
+  await expect(shape).toBeVisible();
+  await listButton.click();
+  await page.getByRole("button", { name: "저장 후 이동" }).click();
+  await prompt.getByRole("button", { name: "취소" }).click();
+  await expect(shape).toBeVisible();
+  await expect(titleInput(page)).toHaveValue("");
+  expect(created).toBe(0);
+
+  await listButton.click();
+  await page.getByRole("button", { name: "저장 후 이동" }).click();
   await prompt.getByRole("textbox").fill(title);
-  await prompt.getByRole("button", { name: "만들기" }).click();
-  await expect(page).toHaveURL(/file=/);
+  await prompt.getByRole("button", { name: "저장", exact: true }).click();
+  await page.getByRole("button", { name: title, exact: true }).click();
+  await expect(shape).toBeVisible();
   await expect(idleSave(page)).toBeDisabled();
   const fileId = new URL(page.url()).searchParams.get("file")!;
   expect(await meta(page.request, teamId, fileId)).toMatchObject({
     title,
     revision: 1,
   });
-  await expect(titleInput(page)).toHaveValue(title);
+  expect(created).toBe(1);
   for (const width of [1200, 390]) {
     await page.setViewportSize({ width, height: 850 });
     await expect(
@@ -447,30 +518,28 @@ test("목록과 상세에서 만든 자료는 즉시 서버에 저장되고 새�
     ).toBeVisible();
   }
   await newButton.click();
-  await prompt.getByRole("button", { name: "취소" }).click();
-  await titleInput(page).fill("아직 저장하지 않은 이름");
-  await editor(page).getByTestId("canvas-viewport").click();
-  await fileShortcut(page, "n");
-  await prompt.getByRole("textbox").fill(title);
-  await prompt.getByRole("button", { name: "만들기" }).click();
+  await expect(titleInput(page)).toHaveValue("");
+  await listButton.click();
   await page.getByRole("button", { name: "저장하지 않고 이동" }).click();
-  await expect
-    .poll(() => new URL(page.url()).searchParams.get("file"))
-    .toBeTruthy();
-  await expect
-    .poll(() => new URL(page.url()).searchParams.get("file"))
-    .not.toBe(fileId);
+  await expect(page.getByRole("list", { name: "팀 자료" })).toBeVisible();
+  expect(created).toBe(1);
+  await page.getByRole("button", { name: title, exact: true }).click();
+  await expect(titleInput(page)).toHaveValue(title);
+  await viewport.click();
+  await fileShortcut(page, "n");
+  await expect(titleInput(page)).toHaveValue("");
+  await titleInput(page).fill(title);
+  await saveShortcut(page);
+  await expect(page).toHaveURL(/file=/);
   await expect(idleSave(page)).toBeDisabled();
   const second = new URL(page.url()).searchParams.get("file")!;
+  expect(second).not.toBe(fileId);
   expect(await meta(page.request, teamId, second)).toMatchObject({
     title,
     revision: 1,
   });
-  expect(await meta(page.request, teamId, fileId)).toMatchObject({
-    title,
-    revision: 1,
-  });
-  await editor(page).getByTestId("canvas-viewport").click();
+  expect(created).toBe(2);
+  await viewport.click();
   await fileShortcut(page, "o");
   await expect(
     page.getByRole("button", { name: title, exact: true }),
@@ -539,10 +608,11 @@ test("새 자료 생성에 실패하면 같은 화면에서 다시 저장할 수
     return route.fulfill({ status: 503, json: { error: "응답 유실" } });
   });
   await page.getByRole("button", { name: "새 팀 자료" }).click();
-  const dialog = page.getByRole("dialog", { name: "새 자료" });
+  await saveButton(page).click();
+  const dialog = page.getByRole("dialog", { name: "자료 저장" });
   const title = `다시 저장 ${randomUUID().slice(0, 8)}`;
   await dialog.getByRole("textbox").fill(title);
-  await dialog.getByRole("button", { name: "만들기" }).click();
+  await dialog.getByRole("button", { name: "저장", exact: true }).click();
   await expect(page.locator(".slide-editor .error-note")).toBeVisible();
   await expect(saveButton(page)).toBeEnabled();
   await expect(titleInput(page)).toHaveValue(title);

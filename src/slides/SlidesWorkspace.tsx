@@ -113,8 +113,8 @@ export default function SlidesWorkspace({
       return true;
     },
   }));
-  function openNew(title: string) {
-    open({ kind: "new", title, key: crypto.randomUUID() });
+  function openNew() {
+    open({ kind: "new", key: crypto.randomUUID() });
   }
   function open(next: SlideEditorStart) {
     setError("");
