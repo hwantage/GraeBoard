@@ -30,7 +30,9 @@ const dateTime = new Intl.DateTimeFormat("ko-KR", {
 });
 const date = new Intl.DateTimeFormat("ko-KR", {
   timeZone: "Asia/Seoul",
-  dateStyle: "short",
+  year: "2-digit",
+  month: "2-digit",
+  day: "2-digit",
 });
 
 export type SlideListView = "cards" | "table";
