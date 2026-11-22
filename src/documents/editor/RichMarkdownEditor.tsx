@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import DocumentImageEditor from "./DocumentImageEditor";
 import DocumentImagePreview from "./DocumentImagePreview";
 import useDocumentLinkActions from "./useDocumentLinkActions";
@@ -105,7 +106,6 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
   const links = useDocumentLinkActions({
     props,
     editorRef,
-    latest,
     shell,
     run,
   });
@@ -114,8 +114,10 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
     setLink,
     linkError,
     linkTip,
-    setLinkTip,
-    linkTipRef,
+    showLinkTip,
+    leaveLinkTip,
+    keepLinkTip,
+    editHoveredLink,
     linkTipBox,
     notice,
     noticeFailed,
@@ -431,6 +433,11 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
                 </label>
               )}
               <button type="submit">적용</button>
+              {link.existing && (
+                <button type="button" onClick={removeLink}>
+                  링크 제거
+                </button>
+              )}
               <button type="button" onClick={closeLinkForm}>
                 취소
               </button>
@@ -453,6 +460,8 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
         )}
         <div
           ref={root}
+          onPointerOver={showLinkTip}
+          onPointerOut={leaveLinkTip}
           className="document-prose"
           data-readonly={props.readOnly || undefined}
           onMouseDown={(event) => {
@@ -490,16 +499,8 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
           role="group"
           aria-label="링크"
           style={{ left: linkTip.left, top: linkTip.top }}
-          onBlur={(event) => {
-            const next = event.relatedTarget as globalThis.Node | null;
-            if (
-              !event.currentTarget.contains(next) &&
-              !root.current?.contains(next)
-            ) {
-              linkTipRef.current = null;
-              setLinkTip(null);
-            }
-          }}
+          onPointerEnter={keepLinkTip}
+          onPointerLeave={leaveLinkTip}
         >
           <span className="document-link-tip-href" title={linkTip.href}>
             {linkTip.href}
@@ -511,7 +512,7 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
               (event: MouseEvent) => openLink(linkTip.href, event),
             ],
             ["링크 주소 복사", Copy, () => void copyLink(linkTip.href)],
-            ["링크 수정", Pencil, openLinkForm],
+            ["링크 수정", Pencil, editHoveredLink],
             ["링크 제거", Unlink, removeLink],
           ].map(([label, Icon, onClick]: any) => (
             <button
@@ -542,20 +543,23 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
       {preview?.edit && (
         <DocumentImageEditor image={preview} onClose={() => setPreview(null)} />
       )}
-      {preview && !preview.edit && (
-        <DocumentImagePreview
-          key={preview.src}
-          image={preview}
-          zoom={imageZoom}
-          onZoom={() => setImageZoom((value) => !value)}
-          onClose={() => setPreview(null)}
-          onEdit={
-            !props.readOnly && preview.apply
-              ? (src) => setPreview({ ...preview, src, edit: true })
-              : undefined
-          }
-        />
-      )}
+      {preview &&
+        !preview.edit &&
+        createPortal(
+          <DocumentImagePreview
+            key={preview.src}
+            image={preview}
+            zoom={imageZoom}
+            onZoom={() => setImageZoom((value) => !value)}
+            onClose={() => setPreview(null)}
+            onEdit={
+              !props.readOnly && preview.apply
+                ? (src) => setPreview({ ...preview, src, edit: true })
+                : undefined
+            }
+          />,
+          shell.current?.closest(".workspace") ?? document.body,
+        )}
     </div>
   );
 }

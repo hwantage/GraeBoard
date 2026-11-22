@@ -22,23 +22,35 @@ export function newTaskUntil(task: NewTaskSource | null | undefined) {
 // Uses the server clock, so a wrong device clock neither keeps nor hides the
 // mark. Only new tasks hold a timer, which drops the mark when it expires.
 export function useNewTask(task: NewTaskSource | null | undefined) {
-  const until = newTaskUntil(task);
-  const [, expire] = useReducer((count: number) => count + 1, 0);
-  const active = until !== null && until > Date.parse(serverNow());
+  return useNewUntil(newTaskUntil(task));
+}
+
+// Team files share the task marker's server clock and expiry, with no task ID rules.
+export function useRecentCreation(createdAt: string) {
+  const created = Date.parse(createdAt);
+  return useNewUntil(
+    Number.isFinite(created) ? created + NEW_TASK_PERIOD_MS : null,
+  );
+}
+
+function useNewUntil(until: number | null) {
+  const [, update] = useReducer((count: number) => count + 1, 0);
+  const now = Date.parse(serverNow());
+  const starts = until === null ? null : until - NEW_TASK_PERIOD_MS;
+  const active =
+    starts !== null && until !== null && starts <= now && now < until;
+  const next = active ? until : starts !== null && starts > now ? starts : null;
   useEffect(() => {
-    if (!active) return;
+    if (next === null) return;
     let timer: ReturnType<typeof setTimeout>;
-    // Each API response re-anchors the server clock, which can move it either
-    // way (and a device asleep may stop the page clock), so the remaining
-    // time is checked again at least once a minute.
     const check = () => {
-      const left = until! - Date.parse(serverNow());
+      const left = next - Date.parse(serverNow());
       if (left > 0) timer = setTimeout(check, Math.min(left, 60_000) + 50);
-      else expire();
+      else update();
     };
     check();
     return () => clearTimeout(timer);
-  }, [active, until]);
+  }, [next]);
   return active;
 }
 

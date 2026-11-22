@@ -195,7 +195,7 @@ export class GitCliTransport {
   async readHead(branch = "sync-v1") {
     await this.init();
     if (
-      !/^(sync-v1|sync-(?:status|directory|setup|setup-status)\/[a-zA-Z0-9-]+)$/.test(
+      !/^(sync-v1|sync-slides-v1|sync-(?:status|directory|setup|setup-status)\/[a-zA-Z0-9-]+)$/.test(
         branch,
       )
     )
@@ -238,7 +238,7 @@ export class GitCliTransport {
   }
   async readFile(oid, path) {
     if (
-      !/^(manifest\.json|events\/[a-zA-Z0-9-]+\.json|snapshots\/[a-zA-Z0-9-]+\.json(?:\.gz)?|objects\/[a-f0-9]{64}|images\/[a-zA-Z0-9-]+\/[a-f0-9]{64}\.webp|status\.json|directory\.json|keys\.json)$/.test(
+      !/^(manifest\.json|events\/[a-zA-Z0-9-]+\.json|snapshots\/[a-zA-Z0-9-]+\.json(?:\.gz)?|objects\/[a-f0-9]{64}|images\/[a-zA-Z0-9-]+\/[a-f0-9]{64}\.webp|status\.json|directory\.json|keys\.json|slides\.json|files\/[a-f0-9-]{36}\.json|chunks\/[a-f0-9]{64})$/.test(
         path,
       )
     )

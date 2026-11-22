@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
-type WorkspaceRoute = "annual" | "documents" | "calendar" | "insights";
+type WorkspaceRoute =
+  "annual" | "documents" | "calendar" | "insights" | "slides";
 type Entry = { index: number; route: WorkspaceRoute };
 const historyKey = "workspaceIndex";
 const paths: Record<WorkspaceRoute, string> = {
@@ -8,15 +9,18 @@ const paths: Record<WorkspaceRoute, string> = {
   documents: "/documents",
   calendar: "/calendar",
   insights: "/insights",
+  slides: "/slides",
 };
-function currentRoute(): WorkspaceRoute {
+export function currentRoute(): WorkspaceRoute {
   return location.pathname === "/documents"
     ? "documents"
     : location.pathname === "/calendar"
       ? "calendar"
       : location.pathname === "/insights"
         ? "insights"
-        : "annual";
+        : location.pathname === "/slides"
+          ? "slides"
+          : "annual";
 }
 
 export default function useWorkspaceRoute(

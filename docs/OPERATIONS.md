@@ -50,6 +50,7 @@ npm run build
 | `DB_PATH`             | `data/weekly-plan.sqlite` | 데이터베이스 위치. 절대 경로 또는 실행 디렉터리 기준 상대 경로     |
 | `GRAEBOARD_LINK_TITLE_PRIVATE_HOSTS` | 없음(사설망 차단) | 링크 제목 조회에서 사설 IP를 허용할 호스트·접미사(쉼표 구분), 예: `somansa.com` |
 | `DOCUMENT_IMAGES_DIR` | `data/document-images`    | 문서 이미지 저장 경로. 절대 경로 또는 실행 디렉터리 기준 상대 경로 |
+| `SLIDE_FILES_DIR`     | `data/slide-files`        | 슬라이드 팀 자료 저장 경로(`slide-files.sqlite`와 `blobs/`). `DB_PATH`의 DB와 별개이며 릴리스 디렉터리 밖의 절대 경로 권장 |
 | `NODE_ENV`            | 미지정                    | 운영에서는 `production`                                            |
 | `GRAEBOARD_SITE` | Node: `internal`, Edge: `external` | 내부·외부 배포 역할. 실제 호스트와 다른 값이면 실행 거절 |
 | `SETUP_TOKEN`         | 없음                      | 내부 빈 DB의 최초 관리자 생성용 설정 키                                 |
@@ -176,11 +177,72 @@ SQLite의 삭제 공간은 이후 쓰기에 재사용되지만 파일 크기는 
 
 동일 파일은 팀 안에서 재사용합니다. 문서 수정 취소나 이미지 제거 후 사용하지 않는 파일의 자동 정리는 아직 제공하지 않으므로 디스크 용량도 별도로 확인합니다. 백업은 문서에서 참조한 파일만 보관합니다. 팀을 영구 삭제하면 해당 팀의 이미지 폴더도 삭제하며 별도 백업은 유지합니다.
 
+## 슬라이드 편집기와 팀 자료
+
+**슬라이드** 화면은 고정한 CanvaSlide 웹 편집기를 그래보드의 같은 출처 프레임에서 실행합니다. 편집기 소스는 이 저장소에 없습니다. `scripts/canvaslide/canvaslide-upstream.json`이 원본 커밋(전체 SHA)과, 그 커밋을 그래보드 어댑터와 조립해 검사한 **보관 배포본**(빌드 ID·주소·크기·SHA-256)을 고정합니다.
+
+### 평소 빌드
+
+```sh
+npm run build
+```
+
+`npm run build`의 마지막 단계(`scripts/canvaslide/prepare-canvaslide-dist.mjs`)가 편집기를 `dist/tools/canvaslide/<빌드 ID>/`와 `current.json`으로 설치합니다. 사내 서버와 외부 gateway는 이 경로를 그대로 제공하므로 별도 명령이나 환경 변수는 없습니다. 이 단계는 원본 편집기를 빌드하지 않으며 pnpm·CanvaSlide 저장소가 필요 없습니다.
+
+1. `dist-canvaslide/<빌드 ID>/`가 이미 있으면(직접 조립한 경우) 그것을 씁니다.
+2. 없으면 고정 파일의 주소(그래보드 저장소 `canvaslide-editor` 브랜치의 `bundles/<빌드 ID>.tar.gz`)에서 보관 배포본을 받아 크기와 SHA-256을 확인하고 풉니다.
+3. 어느 쪽이든 명세(`graeboard-build.json`)의 파일 목록·크기·해시, 편집기 화면이 이 빌드 경로를 가리키는지, 편집기 스크립트에 그래보드 연결 모듈이 들어 있는지를 확인한 뒤 설치하고, 설치한 폴더를 한 번 더 확인합니다.
+
+배포본이 없거나 받지 못했거나 하나라도 다르면 **빌드가 실패**합니다. 편집기 없는 앱만 배포되는 일을 막기 위한 것이므로 실패를 건너뛰지 않습니다. 기존 팀 사이트 배포 workflow는 이미 `npm run build`를 실행하므로 workflow 정의를 바꾸지 않아도 새 소스에서 같은 검증을 거칩니다.
+
+- 네트워크가 제한된 서버: 접속 가능한 장비에서 받은 `<빌드 ID>.tar.gz`를 옮긴 뒤 `CANVASLIDE_BUNDLE_FILE=/경로/<빌드 ID>.tar.gz npm run build`로 실행합니다. 크기·SHA-256 검증은 같습니다. 사내 미러를 쓰면 `CANVASLIDE_BUNDLE_URL`로 주소만 바꿉니다.
+- 되돌리기: 이전 릴리스를 다시 빌드하면 그 릴리스가 고정한 배포본을 같은 방식으로 받습니다. 보관 브랜치의 배포본은 지우지 않습니다. 팀 자료는 배포 폴더 밖(`SLIDE_FILES_DIR`, 외부는 DB·R2)에 있어 영향받지 않습니다.
+
+### 편집기 버전 갱신
+
+원본 그래보드 저장소의 workflow **CanvaSlide 편집기 갱신**(`.github/workflows/canvaslide-editor-update.yml`, 매일 1회·수동 실행)이 다음을 수행합니다. Fork에서는 실행되지 않고(`github.repository` 검사), CanvaSlide 쪽에는 아무것도 쓰지 않습니다.
+
+1. CanvaSlide `main`의 최신 커밋이 고정 커밋의 후손이고 원본 자체 검사를 모두 통과했을 때만 진행합니다. 늦게 끝난 실행이 고정 커밋을 뒤로 돌리지 않으며, 같은 커밋의 PR이 이미 있으면(닫힌 PR 포함) 다시 만들지 않습니다. PR을 여는 단계에서 중단돼 브랜치만 남으면 다시 검사하고 같은 배포본과 명세를 재사용해 PR을 엽니다.
+2. `npm run build:canvaslide`로 원본의 lockfile·pnpm 버전으로 조립합니다. 원본 형 검사와 그래보드 연결 지점 검사가 포함되어, 원본이 연결 지점을 바꾸면 여기서 실패합니다. 이어 `npm run build:canvaslide:pack`으로 배포본을 묶어 고정 파일에 기록하고 `tests/slides`와 슬라이드 브라우저 검사를 실행합니다.
+3. 통과하면 배포본을 `canvaslide-editor` 브랜치에 추가하고(임시 Actions 보관물에 의존하지 않음) 주소에서 같은 SHA-256이 나오는지 확인한 뒤 버전 갱신 PR을 엽니다. 실패한 실행은 main의 고정 버전을 바꾸지 않습니다. 배포본이나 갱신 브랜치가 먼저 올라갔으면 다음 실행에서 내용을 대조합니다.
+
+자동 PR에는 원본 GraeBoard 저장소의 **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests** 권한이 필요합니다. 이 권한을 끈 저장소에서는 관리자가 검사를 통과한 `canvaslide/update-…` 브랜치로 PR을 직접 열 수 있습니다. 권한을 켠 뒤 워크플로를 다시 실행해도 됩니다. 편집기 갱신은 해당 PR이 병합되고 그래보드를 빌드할 때 반영됩니다.
+
+어댑터(`scripts/canvaslide/canvaslide-adapter-plugin.mjs`, `frame/`, `shared/slides/slide-frame-protocol.js`)를 고치면 빌드 ID가 바뀝니다. 같은 두 명령으로 다시 조립·묶은 뒤 배포본을 보관 브랜치에 올려야 하며, 고정 파일이 현재 소스의 빌드를 가리키지 않으면 `tests/slides/canvaslide-dist-pipeline.test.mjs`와 `npm run build`가 실패합니다. 수동 조립에는 Git, 고정 파일의 pnpm 버전, CanvaSlide 저장소와 npm 레지스트리 접속이 필요하고, 원본 저장소가 로컬에 있으면 `CANVASLIDE_SOURCE=/경로/CanvaSlide`로 지정합니다(읽기만 합니다).
+
+### 팀 자료 저장소
+
+사내 팀 자료는 `SLIDE_FILES_DIR` 아래 독립 저장소에 둡니다([데이터 형식](DATA_FORMAT.md#슬라이드-팀-자료)). 기존 `DB_PATH` DB의 형식(v34)과 migration은 바뀌지 않으며, 처음 자료를 저장할 때 `slide-files.sqlite`를 자동으로 만듭니다. 이전 릴리스로 되돌리면 이 폴더는 읽히지 않을 뿐 그대로 남습니다. 팀을 영구 삭제하면 그 팀의 슬라이드 자료와 파일도 함께 삭제합니다. 저장소 형식이 올라간 릴리스는 서버 시작에서 자동 변환하지 않고 안내와 함께 중단하므로, 서버를 멈추고 백업한 뒤 명시적으로 실행합니다.
+
+```sh
+npm run migrate -- --engine sqlite-slides --database /절대경로/slide-files/slide-files.sqlite --dry-run
+npm run migrate -- --engine sqlite-slides --database /절대경로/slide-files/slide-files.sqlite
+```
+
+외부 사이트는 같은 PostgreSQL의 **별도 스키마 `graeboard_slides`**와 팀 R2 버킷의 `slides/<팀 ID>/` 접두를 씁니다. 기존 `graeboard` 스키마와 그 이력(team v4)은 바뀌지 않으므로 배포 순서에 제약이 없고, 슬라이드 도입 전 릴리스를 다시 배포해도 같은 DB에서 그대로 동작합니다(슬라이드 자료는 스키마와 버킷에 남습니다). 새 릴리스를 배포한 뒤 스키마를 만들 때까지는 슬라이드 요청만 503으로 답하고 업무 기능은 정상입니다. 외부 관리 화면에서 연결 해제된 팀을 삭제하면 제어 DB의 팀 등록을 지웁니다. 팀 DB의 슬라이드 자료와 R2 객체는 보존되므로 팀 데이터를 영구 폐기할 때는 백업과 함께 별도로 처리합니다.
+
+```sh
+PG_SITE_URL=… npm run migrate -- --engine postgres --scope slides --url-env PG_SITE_URL --dry-run
+PG_SITE_URL=… npm run migrate -- --engine postgres --scope slides --url-env PG_SITE_URL
+```
+
+운영·개발 외부 DB에 실행하는 것은 대상 환경을 명시한 별도 승인이 필요합니다([DB 변경 지침](DATABASE_CHANGES.md)).
+
+### 사내·외부 슬라이드 동기화
+
+동기화 연결이 활성인 팀은 슬라이드 자료도 양쪽에 전달합니다. 팀 데이터 저장소의 전용 브랜치 `sync-slides-v1`을 쓰며 업무 브랜치 `sync-v1`과 그 프로토콜·커서·lease는 관여하지 않습니다. 저장한 사이트에는 즉시 반영됩니다. 사내 서버와 외부 gateway Cron은 각각 1분 주기로 실행하며, 한 주기 동안 같은 자료를 여러 번 저장해도 마지막 상태만 게시합니다. 각 사이트의 다음 수신 주기에 상대편에 보이며, 미완료 전송과 경합은 다음 주기에 이어집니다. 외부 배포 설정에서 Cron을 끄면 다시 켤 때까지 외부의 슬라이드 송수신도 대기합니다. 일시정지·복구 점검·미연결 상태와, 업무 동기화의 실행·정리·전환이 lease를 잡고 있는 동안에는 실행하지 않습니다. 외부는 업무 동기화와 같은 GitHub 토큰을 쓰므로 한도 대기 시각을 공유합니다(업무 동기화가 대기 중이면 슬라이드도 요청하지 않고, 슬라이드가 한도에 걸리면 같은 대기 시각을 기록). 바뀐 것이 없는 실행은 브랜치 head를 읽는 요청 1건으로 끝납니다.
+
+- 자료는 4MiB 조각으로 나뉘어 올라가고 받는 쪽은 조각과 전체의 SHA-256을 확인한 뒤에만 목록에 보입니다. 외부는 한 번에 조각 4개까지만 옮기므로 25MiB 자료는 여러 번의 실행(수 분)에 걸쳐 전달됩니다.
+- 한쪽만 새 릴리스이면 그쪽만 브랜치에 게시하고 상대는 브랜치를 읽지 않습니다. 상대가 올라오면 브랜치 전체를 따라잡습니다.
+- 슬라이드 동기화 실패는 업무 동기화에 영향을 주지 않고 `GraeBoard slide synchronization failed` / `GraeBoard slide file not received`로 기록되며 다음 실행에서 다시 시도합니다.
+- `sync-slides-v1` 브랜치가 삭제되거나 다른 이력으로 바뀌면 양쪽 모두 `Slide sync branch was removed or rewritten` 오류를 기록하고 슬라이드 동기화만 멈춥니다(업무 동기화와 각 사이트의 자료는 그대로). 브랜치를 원래 head로 되돌리면 다음 실행부터 이어집니다. 되돌릴 수 없으면 어느 쪽 자료를 기준으로 삼을지 정한 뒤 처리해야 하므로 브랜치를 임의로 새로 만들지 않습니다.
+- Git 이력은 줄지 않습니다. 자료를 저장할 때마다 바뀐 조각만큼 저장소가 커지므로(같은 내용의 조각은 다시 올리지 않음) 데이터 저장소 크기를 함께 관찰합니다. 이력을 줄이는 브랜치 세대 교체는 아직 제공하지 않습니다.
+
 ## 백업과 복구
 
 기본 백업은 `backups/graeboard-시각.sqlite`에 생성합니다. 서버와 같은 `DB_PATH`·`DOCUMENT_IMAGES_DIR`을 사용하고, 백업 대상 DB와 호환되는 릴리스의 도구로 실행합니다. `.env`가 자동으로 읽히는지뿐 아니라 서비스에 직접 지정한 환경 변수와 일치하는지도 확인합니다.
 
-**백업 범위:** `npm run backup`은 내부 Node 서버의 `DB_PATH` SQLite와 그 DB가 참조하는 이미지를 보관합니다. 외부 Edge의 PostgreSQL·R2 자료는 `backup:external`·`restore:external` 절차로 별도 보존·복구합니다. 내부 SQLite 백업 성공을 외부 사이트까지 백업한 것으로 기록하지 않습니다. 내부 Node의 저장소는 SQLite로 고정하며 Node의 SQLite control과 PG 업무 저장소를 혼합하는 모드는 지원하지 않습니다.
+**백업 범위:** `npm run backup`은 내부 Node 서버의 `DB_PATH` SQLite와 그 DB가 참조하는 이미지, 그리고 `SLIDE_FILES_DIR`의 슬라이드 저장소를 보관합니다. 외부 Edge의 PostgreSQL·R2 자료는 `backup:external`·`restore:external` 절차로 별도 보존·복구합니다. 외부 백업은 `graeboard_slides` 스키마가 있으면 팀 폴더에 `slides.json`(자료·revision·동기화 기록 행)과 `slides/<SHA-256>.canvaslide`(참조하는 R2 원본)를 함께 담고, 이때 manifest 버전은 기존 배치 버전에 3을 더한 값(4·5·6)입니다. 슬라이드 도입 전 도구는 이 백업을 거절합니다. 외부 복구는 대상 DB에 슬라이드 스키마를 먼저 만들어야 하고, 대상 저장소에 이 팀의 다른 슬라이드 자료가 있으면 업무 자료를 넣기 전에 거절합니다. 같은 백업을 다시 실행하면 행은 다시 넣지 않고 R2 원본만 비교해 빠진 것을 채우며, 내용이 다른 객체가 있으면 덮어쓰지 않고 거절합니다. 내부 SQLite 백업 성공을 외부 사이트까지 백업한 것으로 기록하지 않습니다. 내부 Node의 저장소는 SQLite로 고정하며 Node의 SQLite control과 PG 업무 저장소를 혼합하는 모드는 지원하지 않습니다.
 
 ```sh
 npm run backup
@@ -189,6 +251,8 @@ npm run backup -- backups/manual.sqlite
 
 이름을 지정한 백업은 기존 파일이나 이미지 묶음을 덮어쓰지 않습니다. 반복 백업에는 매번 새로운 이름을 사용합니다. 백업에서 이미지가 사용되면 `manual.sqlite.images/`가 함께 생깁니다. **SQLite 파일과 이 폴더를 같은 위치에 함께 보관·이동**해야 합니다. 참조한 이미지가 없거나 해시가 다르면 백업·복구를 실패 처리합니다.
 
+슬라이드 저장소가 있으면 `manual.sqlite.slides/`도 함께 생깁니다. 같은 실행에서 `slide-files.sqlite`의 일관된 사본을 만들고, 그 사본이 참조하는 파일(각 자료의 현재 revision과 보관 중인 직전 10개)만 해시를 확인해 모읍니다. 현재 revision의 파일이 없거나 해시가 다르면 백업을 만들지 않습니다. 임시 공유는 백업에 남더라도 복구할 때 삭제합니다. 복구한 저장소는 동기화 게시 세대를 새로 시작하고 슬라이드 브랜치를 처음부터 다시 읽습니다. 슬라이드 저장소가 없는 사이트의 백업은 이전과 같습니다.
+
 백업은 `VACUUM INTO`로 실행 중인 SQLite의 일관된 사본을 생성하고 `integrity_check`를 수행한 뒤 그 사본에서 참조한 이미지도 모읍니다. 실행 중인 DB 본체 파일만 복사하면 WAL에 남은 변경이 누락될 수 있습니다. 업데이트 직전의 최종 백업은 서버와 다른 쓰기 작업을 중지한 뒤 생성합니다.
 
 동기화 팀의 백업·논리 이관에는 같은 `GRAEBOARD_SYNC_DIR`과 Git CLI도 필요합니다. clone은 `<GRAEBOARD_SYNC_DIR>/<profileId>`이며 `team-a-internal` 프로필의 예는 `/srv/graeboard/data/sync/team-a-internal`입니다. L로 회수한 이미지 바이트는 백업 DB의 고정 Git head를 이 clone에서 읽어 검증합니다. 야간 작업에도 같은 절대 경로·실행 권한·`git` PATH를 설정하고, 캐시라는 이유로 디렉터리를 삭제하지 않습니다. clone·객체·Git 실행 파일 누락은 백업 실패이며 불완전 묶음을 완전 백업으로 취급하지 않습니다.
@@ -196,14 +260,16 @@ npm run backup -- backups/manual.sqlite
 복구 훈련은 운영 데이터와 분리된 새 경로에서 수행합니다. 다음은 현재 버전의 백업을 임시 DB와 **별도 이미지 폴더**로 복구하는 예시입니다. 실제 운영 복구 경로는 승인된 복구 계획에 맞게 지정합니다.
 
 ```sh
-DOCUMENT_IMAGES_DIR=data/restore-check/document-images npm run restore -- backups/manual.sqlite data/restore-check/weekly-plan.sqlite
+DOCUMENT_IMAGES_DIR=data/restore-check/document-images npm run restore -- backups/manual.sqlite data/restore-check/weekly-plan.sqlite data/restore-check/slide-files
 ```
+
+세 번째 인자는 복구할 **새 슬라이드 폴더**이며 생략하면 `SLIDE_FILES_DIR`을 사용합니다. 이 폴더는 없거나 비어 있어야 합니다. 다른 시점의 슬라이드 자료가 남아 있으면 `.slides` 묶음이 있는 백업이든 슬라이드 도입 전의 백업이든 복구를 거절하고 DB·이미지·슬라이드 어느 것도 쓰지 않습니다. 슬라이드 도입 전 백업은 슬라이드 자료 없이 복구되며 빈 폴더에 저장소를 만들지 않습니다. 재시작할 때 `DB_PATH`와 함께 `SLIDE_FILES_DIR`도 복구한 폴더로 지정합니다.
 
 복구 명령은 **새 DB 파일**에만 쓰며 기존 대상 파일을 덮어쓰지 않습니다. 이미지 경로를 생략하면 `.env`의 폴더를 사용하므로 훈련에서는 반드시 분리합니다. 복구된 세션과 접속 토큰은 삭제되어 사용자가 다시 로그인하고 필요한 토큰을 재발급해야 합니다. 복구한 DB로 서버를 확인할 때도 별도 작업 경로·DB·이미지 설정과 로컬 바인딩·별도 포트를 사용합니다.
 
 복구 도구는 v29·v30·v31·v32·v33·v34 백업을 원래 버전 그대로 새 경로에 복원합니다. v29~v33 복구본은 사본 명칭 전환 전 백업이므로 [사본 명칭 일괄 전환](#사본-명칭sheetclone-일괄-전환)의 전제(전환 전 Git head 그대로)에서만 그 도구로 v34를 만듭니다. v30 이상 연결은 `recovery`로 시작합니다. `npm run sync:recover -- --database /절대경로/복구본.sqlite --team-id 팀UUID --dry-run`으로 대조하고, 원래/복구 서버의 쓰기 중단과 백업을 확인한 후 `--confirm-drained`로 읽기 전용 원격 대조를 완료합니다. 결과는 일시정지 상태이며 관리자가 재개합니다. `--dry-run`의 `uncapturedChanges`는 **다시 연결**과 같은 기준으로 센 미캡처 변경 수입니다. 이 사이트의 보관 정리로 지운 자료, 이미 지운 기록, 쓰이지 않는 사람 표시, 살아 있는 사본의 서식·규칙 레코드는 삭제로 세지 않습니다.
 
-운영 복구는 서버와 쓰기 작업을 중지하고 검증된 DB·이미지 묶음을 준비한 뒤 `DB_PATH`와 `DOCUMENT_IMAGES_DIR`을 함께 전환합니다. 해당 DB와 호환되는 릴리스로 재시작하며 이전 DB와 백업은 자동 삭제하지 않습니다. 백업 시점 이후의 변경은 복구본에 없으므로 재개 이후 데이터의 보존 방법을 먼저 판단합니다.
+운영 복구는 서버와 쓰기 작업을 중지하고 검증된 DB·이미지·슬라이드 묶음을 준비한 뒤 `DB_PATH`, `DOCUMENT_IMAGES_DIR`, `SLIDE_FILES_DIR`을 함께 전환합니다. 해당 DB와 호환되는 릴리스로 재시작하며 이전 DB와 백업은 자동 삭제하지 않습니다. 백업 시점 이후의 변경은 복구본에 없으므로 재개 이후 데이터의 보존 방법을 먼저 판단합니다.
 
 백업을 정기 실행하고 접근이 제한된 별도 저장소에도 보관합니다. 예약 실행은 운영자가 구성하며 앱이 자동으로 수행하지 않습니다. 보관 주기·기간·성공 여부·남은 용량을 관리하고 실제 복구 훈련에서 계정·권한·업무·필터·서식·캘린더·사본·문서·이미지를 확인합니다. JSON/XLSX 내보내기는 전체 운영 DB 백업을 대체하지 않습니다. 팀 영구 삭제는 이미 생성한 별도 백업 파일까지 삭제하지 않습니다.
 

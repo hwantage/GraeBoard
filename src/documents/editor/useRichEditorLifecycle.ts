@@ -104,16 +104,8 @@ export default function useRichEditorLifecycle(
     setImageZoom: React.Dispatch<React.SetStateAction<boolean>>;
   },
 ) {
-  const {
-    linkTitlesRef,
-    linkOpener,
-    linkTipBox,
-    linkTipRef,
-    setLinkTip,
-    setLink,
-    setLinkOpenError,
-    syncLinkTip,
-  } = links;
+  const { linkTitlesRef, linkOpener, hideLinkTip, setLink, setLinkOpenError } =
+    links;
   const { closeSlash, syncSlash } = slashMenu;
   const applyingRemote = useRef(false);
   const appliedRemote = useRef(props.remoteMarkdown);
@@ -159,18 +151,8 @@ export default function useRichEditorLifecycle(
           handleDOMEvents: {
             keydown: (_view, event) =>
               latest.current.readOnly && event.key === "Tab",
-            focus: (view) => {
-              syncLinkTip(view, true);
-              return false;
-            },
-            blur: (view, event) => {
+            blur: () => {
               closeSlash();
-              if (
-                !linkTipBox.current?.contains(
-                  (event as FocusEvent).relatedTarget as globalThis.Node,
-                )
-              )
-                syncLinkTip(view, false);
               return false;
             },
             click: (_view, event) => {
@@ -193,7 +175,7 @@ export default function useRichEditorLifecycle(
                   (message) => active && setLinkOpenError(message),
                 );
               // A click opens a web link; selecting its text by dragging
-              // does not. The caret stays there for the link's actions.
+              // does not.
               else if (
                 safeDocumentLink(href) &&
                 (latest.current.readOnly ||
@@ -317,7 +299,7 @@ export default function useRichEditorLifecycle(
                     setInTable(isInTable(view.state));
                     setCanDeleteRow(deleteTableRow(view.state));
                     syncSlash(view);
-                    syncLinkTip(view);
+                    if (view.state.doc !== previous.doc) hideLinkTip();
                     blockHandle.current?.update(view, previous);
                     toc.current?.update(view, previous);
                   }
@@ -407,8 +389,7 @@ export default function useRichEditorLifecycle(
     if (props.readOnly) {
       closeSlash();
       setLink(null);
-      linkTipRef.current = null;
-      setLinkTip(null);
+      hideLinkTip();
     }
     editorRef.current?.action((ctx) =>
       ctx.get(editorViewCtx).setProps({ editable: () => !props.readOnly }),

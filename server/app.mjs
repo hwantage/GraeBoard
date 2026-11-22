@@ -31,6 +31,10 @@ import {
 } from "./documents/document-images.mjs";
 
 import { installCalendarRoutes } from "./calendar/calendar.mjs";
+import { installSlideFileRoutes } from "./slides/slide-file-routes.mjs";
+import { installSlideEditorStatic } from "./slides/slide-editor-static.mjs";
+import { createSlideFileSync } from "./slides/slide-file-sync.mjs";
+import { SqliteSlideFileRepository } from "./storage/slides/sqlite-slide-files.mjs";
 import { installDocumentBrowserRoutes } from "./documents/document-browser.mjs";
 
 import { installFilterRoutes } from "./sheet/filters.mjs";
@@ -59,11 +63,16 @@ export function createApp({
   cellEventOptions,
   syncOptions = {},
   documentImagesDir = documentImagesDirectory(),
+  slideFilesDir,
+  slideEditorDir,
 } = {}) {
   const site = deploymentSite(process.env, "internal");
   db ??= openDatabase();
   const app = express();
   installRetentionContext(app);
+  const slideFileRepository = new SqliteSlideFileRepository({
+    directory: slideFilesDir,
+  });
   const cachedTasks = createTaskCache(db);
   const cellEvents = createCellEvents(db, cellEventOptions);
   app.locals.db = db;
@@ -116,6 +125,7 @@ export function createApp({
     cachedTasks,
     syncProfiles: () => sync.profiles,
     removeTeamSyncLog: (teamId) => sync.log.removeTeam(teamId),
+    removeTeamSlideFiles: (teamId) => slideFileRepository.removeTeam(teamId),
   });
   app.locals.controlRepository = controlsRepository;
   const sync = createNodeSync({
@@ -129,8 +139,20 @@ export function createApp({
   app.locals.sync = sync;
   const documentPreparation = createDocumentImagePreparation();
   app.locals.documentPreparation = documentPreparation;
+  const slideFileSync = createSlideFileSync({
+    db,
+    sync,
+    repository: slideFileRepository,
+  });
+  app.locals.slideFileSync = slideFileSync;
+  slideFileSync.start();
   const closeSync = sync.close.bind(sync);
-  sync.close = () => Promise.all([closeSync(), documentPreparation.close()]);
+  sync.close = () =>
+    Promise.all([
+      closeSync(),
+      documentPreparation.close(),
+      slideFileSync.close(),
+    ]);
   app.use("/api", (req, res, next) =>
     sync.capture.withActor(req.user?.id, next),
   );
@@ -229,6 +251,11 @@ export function createApp({
     teamAccess,
     documentEvents,
   });
+  installSlideFileRoutes(app, {
+    repository: slideFileRepository,
+    teamAccess,
+  });
+  installSlideEditorStatic(app, { staticDir, directory: slideEditorDir });
   installEventStreams(app);
   app.locals.presenceEvents = installPresenceRoutes(app, {
     refreshUser,
