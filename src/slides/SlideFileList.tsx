@@ -69,6 +69,24 @@ export default function SlideFileList({
 }) {
   const [busy, setBusy] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
+  const [now, setNow] = useState(() => Date.parse(serverNow()));
+  const creators = useMemo(
+    () => new Map(users.map((user) => [user.id, user])),
+    [users],
+  );
+  const hasFiles = files.length > 0;
+  useEffect(() => {
+    if (!hasFiles) return;
+    setNow(Date.parse(serverNow()));
+    const timer = window.setInterval(
+      () => setNow(Date.parse(serverNow())),
+      60_000,
+    );
+    return () => window.clearInterval(timer);
+  }, [hasFiles]);
+  const creatorFor = (file: SlideFile) =>
+    file.creationFromSync ? undefined : creators.get(file.createdBy);
+
   async function importFile(file: File) {
     if (file.size > MAX_SLIDE_FILE_BYTES)
       return onError(
@@ -180,8 +198,15 @@ export default function SlideFileList({
             <thead>
               <tr>
                 <th scope="col">제목</th>
-                <th scope="col">생성일</th>
-                <th scope="col">수정일</th>
+                <th scope="col" className="slide-table-creator">
+                  생성자
+                </th>
+                <th scope="col" className="slide-table-date">
+                  생성일
+                </th>
+                <th scope="col" className="slide-table-date">
+                  수정일
+                </th>
                 <th scope="col">크기</th>
               </tr>
             </thead>
@@ -200,11 +225,15 @@ export default function SlideFileList({
                       <SlideNewMark createdAt={file.createdAt} />
                     </div>
                   </td>
-                  <td>
-                    <SlideDate value={file.createdAt} />
+                  <td className="slide-table-creator">
+                    {creatorFor(file)?.name ??
+                      (file.creationFromSync ? "첫 동기화본" : "정보 없음")}
                   </td>
                   <td>
-                    <SlideDate value={file.updatedAt} />
+                    <SlideDate value={file.createdAt} now={now} />
+                  </td>
+                  <td>
+                    <SlideDate value={file.updatedAt} now={now} />
                   </td>
                   <td>{size(file.byteLength)}</td>
                 </tr>
@@ -214,7 +243,8 @@ export default function SlideFileList({
         ) : (
           <SlideFileCards
             files={files}
-            users={users}
+            creatorFor={creatorFor}
+            now={now}
             thumbnails={thumbnails}
             canWrite={canWrite}
             onOpen={onOpen}
@@ -227,35 +257,23 @@ export default function SlideFileList({
 
 function SlideFileCards({
   files,
-  users,
+  creatorFor,
+  now,
   thumbnails,
   canWrite,
   onOpen,
 }: {
   files: SlideFile[];
-  users: User[];
+  creatorFor: (file: SlideFile) => User | undefined;
+  now: number;
   thumbnails: SlideThumbnails | null;
   canWrite: boolean;
   onOpen: (file: SlideFile) => void;
 }) {
-  const [now, setNow] = useState(() => Date.parse(serverNow()));
-  const creators = useMemo(
-    () => new Map(users.map((user) => [user.id, user])),
-    [users],
-  );
-  useEffect(() => {
-    const timer = window.setInterval(
-      () => setNow(Date.parse(serverNow())),
-      60_000,
-    );
-    return () => window.clearInterval(timer);
-  }, []);
   return (
     <ul className="slide-card-grid" aria-label="팀 자료">
       {files.map((file) => {
-        const creator = file.creationFromSync
-          ? undefined
-          : creators.get(file.createdBy);
+        const creator = creatorFor(file);
         const createdLabel = file.creationFromSync ? "첫 동기화본" : "생성";
         const info = `${file.title}\n${createdLabel}  ${dateTime.format(new Date(file.createdAt))}\n수정  ${dateTime.format(new Date(file.updatedAt))}\n크기  ${size(file.byteLength)}`;
         return (
@@ -310,13 +328,16 @@ function SlideFileCards({
   );
 }
 
-function SlideDate({ value }: { value: string }) {
+function SlideDate({ value, now }: { value: string; now: number }) {
   const stamp = new Date(value);
   const full = dateTime.format(stamp);
   return (
     <time dateTime={value} title={full}>
       <span className="slide-date-time">{full}</span>
-      <span className="slide-date-short">{date.format(stamp)}</span>
+      <span className="slide-date-short">{date.format(stamp)}</span>{" "}
+      <span className="slide-date-relative">
+        ({relativeTime(value, now, "minute")})
+      </span>
     </time>
   );
 }
