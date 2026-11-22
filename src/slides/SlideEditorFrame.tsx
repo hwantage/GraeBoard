@@ -12,7 +12,7 @@ import SlideTitleDialog from "./SlideTitleDialog";
 import { ApiError } from "../platform/api";
 import { Button } from "../ui/Button";
 import { ErrorNote } from "../ui/ErrorNote";
-import LoadingState from "../ui/LoadingState";
+import SlideLoadingState from "./SlideLoadingState";
 import { Modal } from "../ui/Modal";
 import {
   SLIDE_FRAME_SCOPE_PARAM,
@@ -603,7 +603,7 @@ export default function SlideEditorFrame({
       </header>
       <ErrorNote error={error} />
       <div className="slide-editor-stage">
-        {!ready && <LoadingState label="편집기를 불러오는 중입니다." />}
+        {!ready && <SlideLoadingState label="편집기를 불러오는 중입니다." />}
         <iframe
           ref={frame}
           className="slide-editor-frame"

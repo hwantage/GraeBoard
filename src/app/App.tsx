@@ -21,6 +21,8 @@ import DocumentBrowser from "../documents/DocumentBrowser";
 import useWorkspaceNavigation from "./useWorkspaceNavigation";
 import Insights from "../insights/Insights";
 import canvaSlideIcon from "../../assets/icon/canvaslide-wing-smile-64.png";
+import { currentRoute } from "./useWorkspaceRoute";
+import SlideLoadingState from "../slides/SlideLoadingState";
 import SlidesWorkspace from "../slides/SlidesWorkspace";
 import type { TaskMetrics } from "../insights/insights-types";
 import DocumentLinkPanel, {
@@ -235,10 +237,16 @@ export default function App() {
       })
       .finally(() => setAuthReady(true));
   }, []);
-  if (!authReady)
+  if (!authReady) {
+    const StartupLoading =
+      currentRoute() === "slides" ? SlideLoadingState : LoadingState;
     return (
-      <LoadingState className="app-loading" label="기록을 불러오고 있습니다" />
+      <StartupLoading
+        className="app-loading"
+        label="기록을 불러오고 있습니다"
+      />
     );
+  }
   if (startupError)
     return (
       <Empty

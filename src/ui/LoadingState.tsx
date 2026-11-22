@@ -1,11 +1,14 @@
+import type { ReactNode } from "react";
 import { GraeLoading } from "./Brand";
 
 export default function LoadingState({
   label,
+  children,
   showLabel = true,
   className = "",
 }: {
   label: string;
+  children?: ReactNode;
   showLabel?: boolean;
   className?: string;
 }) {
@@ -15,7 +18,7 @@ export default function LoadingState({
       role="status"
       aria-label={label}
     >
-      <GraeLoading />
+      {children ?? <GraeLoading />}
       {showLabel && <span aria-hidden="true">{label}</span>}
     </span>
   );
