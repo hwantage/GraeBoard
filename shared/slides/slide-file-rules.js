@@ -16,7 +16,10 @@ export function slideTitleProblem(value) {
   if (typeof value !== "string") return "자료 이름을 입력하세요.";
   const title = value.trim();
   if (!title) return "자료 이름을 입력하세요.";
-  if (title.length > MAX_SLIDE_TITLE_LENGTH)
+  if (
+    title.length > MAX_SLIDE_TITLE_LENGTH ||
+    normalizeSlideTitle(title).length > MAX_SLIDE_TITLE_LENGTH
+  )
     return `자료 이름은 ${MAX_SLIDE_TITLE_LENGTH}자까지 쓸 수 있습니다.`;
   if (CONTROL_CHARACTERS.test(title))
     return "자료 이름에 쓸 수 없는 문자가 있습니다.";

@@ -679,8 +679,8 @@ export function slideSyncContract(name, makeStores) {
     await outside.save(file.id, slide("버전 2"));
 
     // The push of version 2 succeeds, but its call returns late. Meanwhile
-    // the same site saves again and another pass (Cron next to a pass started
-    // by a request) receives version 2 and publishes version 3.
+    // the same site saves again and the next scheduled pass
+    // receives version 2 and publishes version 3.
     const publish = outside.transport.publish.bind(outside.transport);
     let delayed = false;
     let between;

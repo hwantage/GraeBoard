@@ -13,6 +13,10 @@ import {
   slideSchemaMigrations,
 } from "../../server/migrations/postgres-slides.mjs";
 import { SLIDE_KEPT_REVISIONS } from "../../worker/storage/slides/postgres-slide-files.mjs";
+import { SLIDE_BRANCH } from "../../server/sync/core/slide-file-branch.mjs";
+import { GitHubApiTransport } from "../../server/sync/core/github-api.mjs";
+import { githubEmulator } from "../support/worker-github-fixture.mjs";
+import { syncTeamSlides } from "../../worker/sync/sync-slides.mjs";
 import { slideRoutes } from "../../worker/slides/slide-files.mjs";
 import { slideObjectKey } from "../../worker/storage/slides/r2-slide-blobs.mjs";
 import { postgresHistoryVersion } from "../../shared/storage/postgres-schema-version.js";
@@ -204,54 +208,99 @@ test("편집기 제목과 파일을 함께 저장하고 목록에서 바뀐 제�
   assert.deepEqual((await lead.bytes(teamId, file.id)).bytes, slide("새 이름"));
   assert.equal((await lead.data(path)).body.revision, 2);
   assert.equal((await save("동료의 이름", " ", 2)).status, 400);
+  // Some characters expand in NFC. Validate the title that the peer will read.
+  const boundary = "\u0958".repeat(60);
+  assert.equal(
+    (await lead.upload(teamId, "가".repeat(121), slide("자료"))).status,
+    400,
+  );
+  assert.equal((await save("동료의 이름", boundary + "a", 2)).status, 400);
+  const renamed = await lead.data(path, {
+    method: "PATCH",
+    json: { title: boundary },
+  });
+  assert.equal(renamed.body.title, boundary.normalize("NFC"));
+  assert.equal(renamed.body.title.length, 120);
 });
 
-test("외부 요청은 자료가 저장된 뒤에만 동기화를 예약한다", async (t) => {
+test("외부 연속 저장은 즉시 조회되고 예약 실행에서 최신본 하나만 Git에 게시된다", async (t) => {
   const site = await externalSite(t);
   if (!site) return;
-  const { pg, bucket } = site;
+  const { pg, lead } = site;
   await migrateSlideSchema(pg.pool);
-  await pg.pool.query(
-    "UPDATE graeboard.team_sync_links SET mode='paused' WHERE team_id=$1",
-    [pg.teamId],
-  );
+  const remote = mkdtempSync(join(tmpdir(), "slide-batch-"));
+  t.after(() => rmSync(remote, { recursive: true, force: true }));
+  execFileSync("git", ["init", "--bare", "-q", remote]);
+  const github = githubEmulator(remote);
+  const profile = JSON.parse(pg.env.SYNC_PROFILES)[0];
+  profile.repository = "fixture/team";
+  pg.env.SYNC_PROFILES = JSON.stringify([profile]);
+  pg.env[profile.githubSecret] = "fixture-secret";
   const path = `/teams/${pg.teamId}/slides`;
   const scheduled = [];
-  const request = async (contentType) => {
+  await pg.pool.query(
+    "UPDATE graeboard.team_sync_links SET mode='active' WHERE team_id=$1",
+    [pg.teamId],
+  );
+  const gitFetch = t.mock.method(globalThis, "fetch", github.fetch);
+  const write = (
+    method,
+    target,
+    revision,
+    bytes,
+    type = "application/octet-stream",
+  ) => {
     const ctx = pg.makeContext(
       pg.user,
-      new Request("https://example.test/api" + path, {
-        method: "POST",
+      new Request("https://example.test/api" + target, {
+        method,
         headers: {
-          "content-type": contentType,
+          "content-type": type,
           "x-slide-request-id": randomUUID(),
+          "x-slide-base-revision": String(revision),
           "x-slide-title": "sample",
+          "x-slide-base-title": "sample",
         },
-        body: slide("sample"),
+        body: bytes,
       }),
     );
-    ctx.execution = {
-      waitUntil(promise) {
-        scheduled.push({
-          promise,
-          blobs: bucket.objects.size,
-          visible: pg.pool.query(
-            "SELECT revision FROM graeboard_slides.slide_files WHERE team_id=$1",
-            [pg.teamId],
-          ),
-        });
-      },
-    };
-    return slideRoutes(ctx, path, "POST", {});
+    ctx.execution = { waitUntil: (promise) => scheduled.push(promise) };
+    return slideRoutes(ctx, target, method, {});
   };
-  const created = await request("application/octet-stream");
+  await assert.rejects(
+    write("POST", path, 0, slide("자료"), "text/plain"),
+    (error) => error.status === 415,
+  );
+  const created = await write("POST", path, 0, slide("처음"));
   assert.equal(created.status, 201);
-  await Promise.all(scheduled.map(({ promise }) => promise));
-  assert.equal(scheduled.length, 1);
-  assert.equal(scheduled[0].blobs, 1);
-  assert.deepEqual((await scheduled[0].visible).rows, [{ revision: 1 }]);
-  await assert.rejects(request("text/plain"), (error) => error.status === 415);
-  assert.equal(scheduled.length, 1);
+  const { id } = await created.json();
+  for (let revision = 1; revision <= 5; revision++) {
+    const saved = await write(
+      "PUT",
+      path + "/" + id + "/content",
+      revision,
+      slide(String(revision)),
+    );
+    assert.equal(saved.revision, revision + 1);
+  }
+  await Promise.all(scheduled);
+  gitFetch.mock.restore();
+  assert.deepEqual((await lead.bytes(pg.teamId, id)).bytes, slide("5"));
+  assert.equal(github.calls.length, 0);
+  assert.equal(scheduled.length, 0);
+  const transport = new GitHubApiTransport({
+    repository: profile.repository,
+    token: pg.env[profile.githubSecret],
+    fetch: github.fetch,
+  });
+  const tick = () => syncTeamSlides(pg.env, profile, { transport });
+  assert.equal((await tick()).published, 1);
+  assert.equal((await tick()).published, 0);
+  const meta = JSON.parse(
+    github.text(["show", SLIDE_BRANCH + ":files/" + id + ".json"]),
+  );
+  assert.equal(meta.contentHash, sha(slide("5")));
+  assert.equal(github.text(["rev-list", "--count", SLIDE_BRANCH]), "1");
 });
 
 test("슬라이드 스키마가 없으면 업무는 그대로 동작하고 슬라이드 요청만 거절한다", async (t) => {

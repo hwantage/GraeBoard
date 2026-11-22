@@ -127,11 +127,20 @@ test("사내 서버는 연결이 활성인 팀만, 한 번에 한 번씩 동기�
   assert.equal(await runner.run(teamId), null, "closed");
   const manual = createSlideFileSync({
     db: { prepare: () => ({ get: () => ({ 1: 1 }), all: () => [] }) },
-    sync: { get: () => ({ transport: inside.transport }) },
+    sync: {
+      get: () => {
+        if (mode === "misconfigured") throw new Error("missing profile");
+        return { transport: inside.transport };
+      },
+    },
     repository: inside.store,
     log: (...args) => logged.push(args.join(" ")),
   });
   t.after(() => manual.close());
+  mode = "misconfigured";
+  assert.equal(await manual.run(teamId), null);
+  assert.match(logged.at(-1), /missing profile/);
+  mode = "active";
   const readHead = inside.transport.readHead.bind(inside.transport);
   inside.transport.readHead = async () => {
     throw new Error("repository unreachable");
