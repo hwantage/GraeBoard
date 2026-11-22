@@ -46,7 +46,7 @@ export function documentEditorInput(
   "handleKeyDown" | "handlePaste" | "handleDrop" | "clipboardTextSerializer"
 > {
   const { slashKeydown } = slashMenu;
-  const { linkTipRef, setLinkTip } = links;
+  const { hideLinkTip } = links;
   return {
     clipboardTextSerializer: (slice) => clipboardMarkdown(ctx, slice),
     handleKeyDown: (view, event) => {
@@ -60,10 +60,7 @@ export function documentEditorInput(
       if (listFormatKeydown(view, event)) return true;
       if (blockMoveKeydown(view, event)) return true;
       if (event.key === "Escape") {
-        if (linkTipRef.current) {
-          linkTipRef.current = null;
-          setLinkTip(null);
-        } else {
+        if (!hideLinkTip()) {
           const focused = document.activeElement;
           if (focused instanceof HTMLElement && view.dom.contains(focused))
             focused.blur();
