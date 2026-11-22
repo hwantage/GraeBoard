@@ -165,6 +165,7 @@ test("카드형과 목록형을 전환하고 상세에서 돌아오거나 다시
     `최신 발표 ${randomUUID().slice(0, 8)}`,
     bytes,
   );
+  await page.clock.install({ time: new Date() });
   await page.goto("/slides");
   const toggle = page.getByRole("group", { name: "자료 보기 방식" });
   const cards = toggle.getByRole("button", { name: "카드형 보기" });
@@ -177,6 +178,7 @@ test("카드형과 목록형을 전환하고 상세에서 돌아오거나 다시
   await expect(cards).toHaveAttribute("aria-pressed", "false");
   await expect(table.getByRole("columnheader")).toHaveText([
     "제목",
+    "생성자",
     "생성일",
     "수정일",
     "크기",
@@ -203,9 +205,15 @@ test("카드형과 목록형을 전환하고 상세에서 돌아오거나 다시
     const b = (await toggle.boundingBox())!;
     expect(b.x).toBeGreaterThanOrEqual(a.x + a.width);
     expect(Math.abs(b.y + b.height / 2 - (a.y + a.height / 2))).toBeLessThan(2);
-    await expect(
-      table.locator("time").first().locator("span:visible"),
-    ).toHaveCount(1);
+    const cellTime = row.locator("time").first();
+    await expect(cellTime.locator("span:visible")).toHaveCount(2);
+    await expect(cellTime.getByText("(방금)", { exact: true })).toBeVisible();
+    const columnsFit = await row
+      .getByRole("cell")
+      .evaluateAll((cells) =>
+        cells.every((cell) => cell.scrollWidth <= cell.clientWidth + 1),
+      );
+    expect(columnsFit).toBe(true);
     expect(
       await table.evaluate(
         (el) =>
@@ -214,6 +222,9 @@ test("카드형과 목록형을 전환하고 상세에서 돌아오거나 다시
       ),
     ).toBe(true);
   }
+  await page.clock.fastForward(61_000);
+  await expect(row.locator("time").first()).toContainText("(1분 전)");
+  await expect(row.locator("time").last()).toContainText("(1분 전)");
   await row.getByRole("button").focus();
   await page.keyboard.press("Enter");
   await expect(titleInput(page)).toHaveValue(first.title);
@@ -666,33 +677,36 @@ test("카드의 new 표시는 생성 시각을 기준으로 12시간이 지나�
   const now = Date.now();
   const stamp = (offset: number) => new Date(now + offset).toISOString();
   const period = 12 * 60 * 60 * 1000;
+  // Keep the samples inside their display units even with browser clock rounding.
+  const age = (ms: number) => stamp(-ms - 10_000);
   const creator = (await json(await page.request.get("/api/bootstrap")))
     .users[0];
   await page.clock.install({ time: new Date(now) });
   await page.route("**/api/teams/*/slides", async (route) => {
     const files = [
-      { title: "만료 직전", createdAt: stamp(-period + 60_000) },
-      { title: "생성 12시간 경과", createdAt: stamp(-period) },
+      { title: "만료 직전", createdAt: age(period - 60_000) },
+      { title: "생성 12시간 경과", createdAt: age(period) },
       {
         title: "최근 자료",
-        createdAt: stamp(-4 * 60_000),
+        createdAt: age(4 * 60_000),
         createdBy: creator.id,
       },
       {
         title: "예전 자료",
-        createdAt: stamp(-2 * 86_400_000),
+        createdAt: age(2 * 86_400_000),
         createdBy: "former-member",
+        updatedAt: age(86_400_000),
       },
       {
         title: "원격 자료",
-        createdAt: stamp(-86_400_000),
+        createdAt: age(86_400_000),
         creationFromSync: true,
         createdBy: creator.id,
       },
     ].map((file) => ({
-      ...file,
       id: randomUUID(),
-      updatedAt: stamp(0),
+      updatedAt: age(0),
+      ...file,
       updatedBy: "another-editor",
       byteLength: 123,
     }));
@@ -734,6 +748,26 @@ test("카드의 new 표시는 생성 시각을 기준으로 12시간이 지나�
   await page.clock.fastForward(61_000);
   await expect(recent.locator("time")).toHaveText("5분 전");
   await expect(badge("만료 직전")).toHaveCount(0);
+  await page.getByRole("button", { name: "목록형 보기" }).click();
+  const rowFor = (title: string) =>
+    page
+      .getByRole("row")
+      .filter({ has: page.getByRole("button", { name: title, exact: true }) });
+  const recentRow = rowFor("최근 자료");
+  await expect(
+    recentRow.getByRole("cell", { name: creator.name, exact: true }),
+  ).toBeVisible();
+  await expect(recentRow.locator("time").first()).toContainText("(5분 전)");
+  await expect(recentRow.locator("time").last()).toContainText("(1분 전)");
+  const oldRow = rowFor("예전 자료");
+  await expect(
+    oldRow.getByRole("cell", { name: "정보 없음", exact: true }),
+  ).toBeVisible();
+  await expect(oldRow.locator("time").first()).toContainText("(2일 전)");
+  await expect(oldRow.locator("time").last()).toContainText("(1일 전)");
+  await expect(
+    rowFor("원격 자료").getByRole("cell", { name: "첫 동기화본", exact: true }),
+  ).toBeVisible();
 });
 
 test("상세 제목을 고쳐 본문과 함께 저장하고 목록과 다시 연 파일에서 확인한다", async ({
