@@ -1,7 +1,6 @@
 import { SlideFileService } from "../../server/storage/slides/slide-file-service.mjs";
 import { PostgresSlideFileRepository } from "../storage/slides/postgres-slide-files.mjs";
 import { databaseFor } from "../storage/data.mjs";
-import { syncTeamSlides } from "../sync/sync-slides.mjs";
 import { slideDownloadName } from "../../shared/slides/slide-file-rules.js";
 import { assert } from "../control/access.mjs";
 
@@ -24,14 +23,6 @@ export async function slideRoutes(ctx, path, method, body) {
   // Team membership and the active team are checked before the store opens.
   const team = await ctx.team(teamId);
   const profile = await ctx.profile(team.id);
-  const afterChange = async (write) => {
-    const result = await write;
-    if (profile.repository)
-      ctx.execution?.waitUntil(
-        syncTeamSlides(ctx.env, profile).catch(() => {}),
-      );
-    return result;
-  };
   const pool = databaseFor(ctx.env, profile).pool;
   const service = new SlideFileService(
     new PostgresSlideFileRepository({
@@ -85,13 +76,11 @@ export async function slideRoutes(ctx, path, method, body) {
     if (method === "GET") return service.list(teamId);
     if (method === "POST")
       return created(
-        await afterChange(
-          service.create(teamId, {
-            title: title(),
-            bytes: await bytes(),
-            requestId: header("x-slide-request-id"),
-          }),
-        ),
+        await service.create(teamId, {
+          title: title(),
+          bytes: await bytes(),
+          requestId: header("x-slide-request-id"),
+        }),
       );
     return undefined;
   }
@@ -115,32 +104,27 @@ export async function slideRoutes(ctx, path, method, body) {
       });
     }
     if (method === "PUT")
-      return afterChange(
-        service.save(teamId, id, {
-          title: title(),
-          baseTitle: title("x-slide-base-title"),
-          baseRevision: Number(header("x-slide-base-revision")),
-          bytes: await bytes(),
-          requestId: header("x-slide-request-id"),
-        }),
-      );
+      return service.save(teamId, id, {
+        title: title(),
+        baseTitle: title("x-slide-base-title"),
+        baseRevision: Number(header("x-slide-base-revision")),
+        bytes: await bytes(),
+        requestId: header("x-slide-request-id"),
+      });
     return undefined;
   }
   if (action === "copy" && method === "POST")
     return created(
-      await afterChange(
-        service.copy(teamId, id, {
-          title: body.title,
-          requestId: body.requestId,
-        }),
-      ),
+      await service.copy(teamId, id, {
+        title: body.title,
+        requestId: body.requestId,
+      }),
     );
   if (action) return undefined;
   if (method === "GET") return service.get(teamId, id);
-  if (method === "PATCH")
-    return afterChange(service.rename(teamId, id, body.title));
+  if (method === "PATCH") return service.rename(teamId, id, body.title);
   if (method === "DELETE") {
-    await afterChange(service.remove(teamId, id));
+    await service.remove(teamId, id);
     return {};
   }
   return undefined;

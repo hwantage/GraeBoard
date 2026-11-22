@@ -10,6 +10,9 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { GitCliTransport } from "../../server/sync/node/git-cli.mjs";
+import { SLIDE_BRANCH } from "../../server/sync/core/slide-file-branch.mjs";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -162,6 +165,58 @@ async function team(t, directory) {
   return { ...host, lead, teamId, add };
 }
 
+test("사내 연속 저장은 즉시 조회되고 다음 1분 주기에 최신본 하나만 Git에 게시된다", async (t) => {
+  t.mock.timers.enable({ apis: ["setInterval", "setTimeout"] });
+  const { app, db, directory, lead, teamId } = await team(t);
+  const remote = join(directory, "slides.git");
+  execFileSync("git", ["init", "--bare", "-q", remote]);
+  const transport = new GitCliTransport({
+    directory: join(directory, "clone"),
+    repository: remote,
+    allowLocal: true,
+  });
+  const runs = t.mock.method(app.locals.sync, "get", () => ({ transport }));
+  db.prepare(
+    "INSERT INTO team_sync_links(team_id,repo_id,bootstrap_id,installation_id,writer_epoch,profile_id,mode,updated_at) VALUES(?,?,?,?,?,?,'active',?)",
+  ).run(
+    teamId,
+    randomUUID(),
+    randomUUID(),
+    randomUUID(),
+    randomUUID(),
+    "fixture",
+    new Date().toISOString(),
+  );
+  const file = (await lead.upload(teamId, "자료", slide("처음"))).body;
+  for (let revision = 1; revision <= 5; revision++) {
+    t.mock.timers.tick(10000);
+    const saved = await lead.save(
+      teamId,
+      file.id,
+      revision,
+      slide(String(revision)),
+    );
+    assert.equal(saved.body.revision, revision + 1);
+  }
+  assert.deepEqual((await lead.bytes(teamId, file.id)).bytes, slide("5"));
+  t.mock.timers.tick(9999);
+  assert.equal(runs.mock.callCount(), 0);
+  t.mock.timers.tick(1);
+  assert.equal(runs.mock.callCount(), 1);
+  // Join the pass that the clock already started.
+  assert.equal((await app.locals.slideFileSync.run(teamId)).published, 1);
+  const git = (...args) =>
+    execFileSync("git", ["-C", remote, ...args], { encoding: "utf8" });
+  assert.equal(
+    JSON.parse(git("show", SLIDE_BRANCH + ":files/" + file.id + ".json"))
+      .contentHash,
+    sha(slide("5")),
+  );
+  t.mock.timers.tick(60000);
+  assert.equal((await app.locals.slideFileSync.run(teamId)).published, 0);
+  assert.equal(git("rev-list", "--count", SLIDE_BRANCH).trim(), "1");
+});
+
 test("편집기 제목과 파일을 함께 저장하고 목록에서 바뀐 제목과 경합하면 둘 다 보존한다", async (t) => {
   const { lead, teamId } = await team(t);
   t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
@@ -200,6 +255,19 @@ test("편집기 제목과 파일을 함께 저장하고 목록에서 바뀐 제�
   assert.deepEqual((await lead.bytes(teamId, file.id)).bytes, slide("새 이름"));
   assert.equal((await lead.data(path)).body.revision, 2);
   assert.equal((await save("동료의 이름", " ", 2)).status, 400);
+  // Some characters expand in NFC. Validate the title that the peer will read.
+  const boundary = "\u0958".repeat(60);
+  assert.equal(
+    (await lead.upload(teamId, "가".repeat(121), slide("자료"))).status,
+    400,
+  );
+  assert.equal((await save("동료의 이름", boundary + "a", 2)).status, 400);
+  const renamed = await lead.data(path, {
+    method: "PATCH",
+    json: { title: boundary },
+  });
+  assert.equal(renamed.body.title, boundary.normalize("NFC"));
+  assert.equal(renamed.body.title.length, 120);
 });
 
 test("팀 자료는 받은 바이트 그대로 저장되고 서버를 다시 열어도 남는다", async (t) => {

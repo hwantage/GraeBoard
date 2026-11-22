@@ -6,7 +6,7 @@ import { databaseFor } from "../storage/data.mjs";
 
 // One pass of slide file synchronization for the external site. A pass moves
 // at most a few chunks, so a large file is carried by several passes (the
-// gateway's Cron and the passes started after slide changes). It reads the
+// gateway's one-minute Cron). It reads the
 // task link only to see that synchronization is active. The one thing it
 // shares with task synchronization is the GitHub rate-limit deadline.
 export const EXTERNAL_SLIDE_SYNC_LIMITS = Object.freeze({

@@ -1,10 +1,8 @@
 import { syncSlideFiles } from "../sync/core/slide-file-branch.mjs";
 
-// Runs slide file synchronization for the internal site: a pass shortly after
-// a local change and a periodic pass for every team with an active
-// synchronization link. It shares the team's Git clone and credentials with
-// task synchronization but none of its state: a failure here never touches
-// the task cursor, lease or outbox.
+// Runs slide file synchronization for the internal site: one periodic pass
+// per active team. Saves update the store immediately; each tick publishes
+// the latest available revisions and retries any unfinished work.
 export function createSlideFileSync({
   db,
   sync,
@@ -13,7 +11,6 @@ export function createSlideFileSync({
   log = (...args) => console.error(...args),
 }) {
   const running = new Map();
-  const timers = new Map();
   let ticker = null;
   let stopped = false;
 
@@ -30,34 +27,20 @@ export function createSlideFileSync({
     if (running.has(teamId)) return running.get(teamId);
     const pass = (async () => {
       try {
-        const result = await syncSlideFiles({
+        return await syncSlideFiles({
           transport: sync.get(teamId).transport,
           store: repository,
           teamId,
           site: "internal",
           warn: log,
         });
-        // More chunks or a lost race: continue without waiting for the timer.
-        if (result.pending || result.raced) schedule(teamId, 1000);
-        return result;
       } catch (error) {
         log("GraeBoard slide synchronization failed", teamId, error.message);
         return null;
-      } finally {
-        running.delete(teamId);
       }
-    })();
+    })().finally(() => running.delete(teamId));
     running.set(teamId, pass);
     return pass;
-  }
-  function schedule(teamId, delayMs = 2000) {
-    if (stopped || timers.has(teamId)) return;
-    const timer = setTimeout(() => {
-      timers.delete(teamId);
-      void run(teamId);
-    }, delayMs);
-    timer.unref?.();
-    timers.set(teamId, timer);
   }
   function start() {
     if (ticker || stopped) return;
@@ -72,9 +55,7 @@ export function createSlideFileSync({
   async function close() {
     stopped = true;
     clearInterval(ticker);
-    for (const timer of timers.values()) clearTimeout(timer);
-    timers.clear();
     await Promise.all(running.values());
   }
-  return { run, schedule, start, close };
+  return { run, start, close };
 }

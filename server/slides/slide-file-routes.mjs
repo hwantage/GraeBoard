@@ -9,10 +9,7 @@ import { requireThat } from "../../shared/validation.js";
 
 // Node routes for team slide files. Bytes travel as `application/octet-stream`
 // in both directions; metadata is JSON.
-export function installSlideFileRoutes(
-  app,
-  { repository, teamAccess, onChange = () => {} },
-) {
+export function installSlideFileRoutes(app, { repository, teamAccess }) {
   app.locals.slideFileRepository = repository;
   const service = (req) =>
     new SlideFileService(repository, req.user, { teamAccess });
@@ -46,14 +43,8 @@ export function installSlideFileRoutes(
     }
   };
   const base = "/api/teams/:teamId/slides";
-  // A stored change is offered to the other site shortly afterwards.
   const route = (handler) => (req, res, next) =>
-    Promise.resolve(handler(req, res))
-      .then(() => {
-        if (req.method !== "GET" && req.path.includes("/slides"))
-          onChange(req.params.teamId);
-      })
-      .catch(next);
+    Promise.resolve(handler(req, res)).catch(next);
 
   app.get(
     base,

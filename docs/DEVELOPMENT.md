@@ -267,7 +267,7 @@ CanvaSlide 주소에서 기록을 불러올 때와 자료 목록·편집기를 �
 | 공유 | 편집기의 공유 대화상자는 그대로 쓰고 생성·조회만 그래보드의 임시 스냅샷 API로 보냅니다. 링크는 `/slides?team=…&share=…`이며 팀 자료가 다른 출처로 전송되지 않습니다. |
 | 화면 정책 | 편집기 문서는 편집기 자체 정책에 `frame-ancestors 'self'`만 바꿔 제공하고(`shared/slides/slide-editor-policy.js`), 앱 화면은 `frame-src 'self' blob:`을 허용합니다. `blob:`은 Firefox·WebKit이 프레임 안의 파일 내려받기를 프레임 이동으로 다루기 때문에 필요합니다. |
 
-서버는 `SlideFileService`(권한·검증·조건부 저장·임시 공유)와 저장소로 나눕니다. 사내는 `SqliteSlideFileRepository`(독립 SQLite와 파일), 외부는 `PostgresSlideFileRepository`(`graeboard_slides` 스키마와 R2)이며 두 저장소는 같은 계약과 같은 동기화 메서드(`sync*`)를 구현합니다. 동기화 규칙은 `syncSlideFiles`(`server/sync/core/slide-file-branch.mjs`)에만 있고 전송 수단(Git CLI·GitHub API)과 저장소를 인자로 받습니다. 저장 형식·API·브랜치 형식은 [데이터 형식](DATA_FORMAT.md#슬라이드-팀-자료), 빌드·버전 갱신·migration·백업은 [운영 안내](OPERATIONS.md#슬라이드-편집기와-팀-자료)에 있습니다.
+서버는 `SlideFileService`(권한·검증·조건부 저장·임시 공유)와 저장소로 나눕니다. 사내는 `SqliteSlideFileRepository`(독립 SQLite와 파일), 외부는 `PostgresSlideFileRepository`(`graeboard_slides` 스키마와 R2)이며 두 저장소는 같은 계약과 같은 동기화 메서드(`sync*`)를 구현합니다. 동기화 규칙은 `syncSlideFiles`(`server/sync/core/slide-file-branch.mjs`)에만 있고 전송 수단(Git CLI·GitHub API)과 저장소를 인자로 받습니다. 저장 요청은 사이트 저장소에 즉시 기록합니다. 사내 타이머와 외부 gateway Cron은 각각 1분마다 활성 팀의 변경을 확인하며, 자료별 현재 상태를 읽으므로 한 주기 안의 연속 저장은 최신본 한 건으로 게시됩니다. 이름 길이는 입력값과 NFC로 정규화한 저장값 모두 120자까지 허용합니다. 저장 형식·API·브랜치 형식은 [데이터 형식](DATA_FORMAT.md#슬라이드-팀-자료), 빌드·버전 갱신·migration·백업은 [운영 안내](OPERATIONS.md#슬라이드-편집기와-팀-자료)에 있습니다.
 
 `npm run build`는 편집기 배포본을 준비·검증해 `dist/tools/canvaslide/`에 설치하며 실패하면 빌드가 실패합니다. 어댑터를 고쳤으면 `npm run build:canvaslide && npm run build:canvaslide:pack`으로 다시 조립·묶어 고정 파일을 갱신합니다(`tests/slides/canvaslide-dist-pipeline.test.mjs`가 불일치를 잡습니다). `scripts/canvaslide/frame/`의 파일은 내용이 빌드 ID에 들어가므로 포맷만 바꿔도 새 빌드가 됩니다.
 

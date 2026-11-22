@@ -254,7 +254,6 @@ export function createApp({
   installSlideFileRoutes(app, {
     repository: slideFileRepository,
     teamAccess,
-    onChange: (teamId) => slideFileSync.schedule(teamId),
   });
   installSlideEditorStatic(app, { staticDir, directory: slideEditorDir });
   installEventStreams(app);
