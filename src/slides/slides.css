@@ -126,6 +126,7 @@
   width: 100%;
   aspect-ratio: 16 / 9;
   overflow: hidden;
+  border: 1px solid var(--accent-surface);
   border-radius: 9px;
   background: var(--accent-surface);
   color: var(--accent-muted);

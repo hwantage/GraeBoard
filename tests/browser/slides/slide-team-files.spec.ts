@@ -293,7 +293,9 @@ test("CanvaSlide 제목 옆에서 새 자료를 만들고 썸네일 아래의 �
     await expect(newBadge).toBeVisible();
     const badge = (await newBadge.boundingBox())!;
     const strip = (await band.boundingBox())!;
-    const previewBox = (await image.boundingBox())!;
+    const previewBox = (await card
+      .locator(".slide-card-thumbnail")
+      .boundingBox())!;
     const topGap = badge.y - idle.y;
     const rightGap = idle.x + idle.width - badge.x - badge.width;
     expect(topGap).toBeGreaterThanOrEqual(0);
@@ -511,10 +513,20 @@ test("첫 프레임 사진을 썸네일에 그리고 다음 열람자는 원본�
   const img = card(page).locator(".slide-card-thumbnail img");
   await expect(img).toBeVisible();
   const picture = (await img.boundingBox())!;
-  const slot = (await card(page)
-    .locator(".slide-card-thumbnail")
-    .boundingBox())!;
-  expect(picture).toEqual(slot);
+  const thumbnail = card(page).locator(".slide-card-thumbnail");
+  const slot = (await thumbnail.boundingBox())!;
+  await expect(thumbnail).toHaveCSS("border-top-style", "solid");
+  await expect(thumbnail).toHaveCSS("border-top-width", "1px");
+  await expect(thumbnail).toHaveCSS(
+    "border-top-color",
+    await thumbnail.evaluate((el) => getComputedStyle(el).backgroundColor),
+  );
+  expect(picture).toEqual({
+    x: slot.x + 1,
+    y: slot.y + 1,
+    width: slot.width - 2,
+    height: slot.height - 2,
+  });
   await expect(img).toHaveCSS("object-fit", "cover");
   await expect(img).toHaveCSS("object-position", "50% 50%");
   const pixels = await img.evaluate(async (el: HTMLImageElement) => {
