@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { FileImage } from "lucide-react";
 import type { SlideFile } from "./slide-file-api";
 import type { SlideThumbnails } from "./slide-thumbnails";
 
@@ -35,11 +34,7 @@ export default function SlideCardThumbnail({
   }, [file, thumbnails, canWrite]);
   return (
     <span ref={host} className="slide-card-thumbnail" aria-hidden="true">
-      {image ? (
-        <img src={image} alt="" />
-      ) : (
-        <FileImage size={27} strokeWidth={1.4} />
-      )}
+      {image && <img src={image} alt="" onError={() => setImage("")} />}
     </span>
   );
 }

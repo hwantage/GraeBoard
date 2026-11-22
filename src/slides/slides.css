@@ -131,7 +131,17 @@
   background: var(--accent-surface);
   color: var(--accent-muted);
 }
+.slide-card-thumbnail::before {
+  content: "";
+  grid-area: 1 / 1;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: white url("../../assets/icon/canvaslide-wing-smile-64.png")
+    center / cover no-repeat;
+}
 .slide-card-thumbnail img {
+  grid-area: 1 / 1;
   display: block;
   width: 100%;
   height: 100%;
@@ -287,6 +297,50 @@ input.slide-editor-title:focus {
   .slide-editor-bar > .button > span,
   .slide-editor-bar > .heading-actions > .button > span {
     display: none;
+  }
+}
+/* The center of the original artwork stays still while each wing bends at its root. */
+.slide-loading-ray {
+  display: grid;
+  grid-template-columns: 44px 32px 20px;
+  width: 96px;
+  height: 64px;
+  justify-self: center;
+}
+.slide-loading-ray::before,
+.slide-loading-ray > span,
+.slide-loading-ray::after {
+  background: url("../../assets/character/canvaslide-ray-384.png") left center /
+    96px 64px no-repeat;
+}
+.slide-loading-ray > span {
+  background-position-x: -44px;
+}
+.slide-loading-ray::before,
+.slide-loading-ray::after {
+  content: "";
+  transform-origin: right center;
+  --wing-up: 12deg;
+  --wing-down: -6deg;
+}
+.slide-loading-ray::after {
+  background-position-x: right;
+  transform-origin: left center;
+  --wing-up: -18deg;
+  --wing-down: 9deg;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .slide-loading-ray::before,
+  .slide-loading-ray::after {
+    animation: slide-ray-wingbeat 700ms ease-in-out infinite alternate;
+  }
+}
+@keyframes slide-ray-wingbeat {
+  from {
+    transform: skewY(var(--wing-down));
+  }
+  to {
+    transform: skewY(var(--wing-up));
   }
 }
 .slide-editor-stage {

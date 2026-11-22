@@ -12,7 +12,7 @@ import type { User } from "../types";
 import { Button } from "../ui/Button";
 import { Empty } from "../ui/Empty";
 import { ErrorNote } from "../ui/ErrorNote";
-import LoadingState from "../ui/LoadingState";
+import SlideLoadingState from "./SlideLoadingState";
 import { isSlideShareId } from "../../shared/slides/slide-file-rules.js";
 import {
   listSlideFiles,
@@ -193,7 +193,9 @@ export default function SlidesWorkspace({
     return (
       <section className="board slides-board">
         <ErrorNote error={error} />
-        {!error && <LoadingState label="CanvaSlide를 불러오는 중입니다." />}
+        {!error && (
+          <SlideLoadingState label="CanvaSlide를 불러오는 중입니다." />
+        )}
       </section>
     );
   const initialFile =

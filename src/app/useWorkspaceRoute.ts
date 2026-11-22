@@ -11,7 +11,7 @@ const paths: Record<WorkspaceRoute, string> = {
   insights: "/insights",
   slides: "/slides",
 };
-function currentRoute(): WorkspaceRoute {
+export function currentRoute(): WorkspaceRoute {
   return location.pathname === "/documents"
     ? "documents"
     : location.pathname === "/calendar"

@@ -459,14 +459,78 @@ test("터치로 정보 아이콘을 누르면 툴팁이 보이고 제목을 누�
   }
 });
 
+test("CanvaSlide 진입과 편집기 로딩은 가오리 날갯짓을 표시하고 동작 줄이기를 따른다", async ({
+  page,
+}) => {
+  const bootstrap = Promise.withResolvers<void>();
+  const manifest = Promise.withResolvers<void>();
+  const editorPage = Promise.withResolvers<void>();
+  await page.route("**/api/bootstrap", async (route) => {
+    await bootstrap.promise;
+    await route.continue();
+  });
+  await page.route("**/tools/canvaslide/current.json", async (route) => {
+    await manifest.promise;
+    await route.continue();
+  });
+  await page.route(
+    (url) => url.pathname === `/tools/canvaslide/${current!.buildId}/`,
+    async (route) => {
+      await editorPage.promise;
+      await route.continue();
+    },
+  );
+  try {
+    await page.goto("/slides", { waitUntil: "domcontentloaded" });
+    const boot = page.getByRole("status", { name: "기록을 불러오고 있습니다" });
+    const ray = boot.locator(".slide-loading-ray");
+    await expect(ray).toBeVisible();
+    const wingMotion = () =>
+      ray.evaluate((el) =>
+        ["::before", "::after"].map(
+          (side) => getComputedStyle(el, side).animationName,
+        ),
+      );
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    expect(await wingMotion()).toEqual([
+      "slide-ray-wingbeat",
+      "slide-ray-wingbeat",
+    ]);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    expect(await wingMotion()).toEqual(["none", "none"]);
+    await expect(ray).toBeVisible();
+    bootstrap.resolve();
+    const list = page.getByRole("status", {
+      name: "CanvaSlide를 불러오는 중입니다.",
+    });
+    await expect(list.locator(".slide-loading-ray")).toBeVisible();
+    manifest.resolve();
+    await page.getByRole("button", { name: "새 팀 자료" }).click();
+    const frame = page.getByRole("status", {
+      name: "편집기를 불러오는 중입니다.",
+    });
+    await expect(frame.locator(".slide-loading-ray")).toBeVisible();
+    editorPage.resolve();
+    await expect(frame).toHaveCount(0);
+  } finally {
+    bootstrap.resolve();
+    manifest.resolve();
+    editorPage.resolve();
+  }
+});
+
 test("카드를 누르는 동안 썸네일이 표시돼도 원래 누른 자료를 연다", async ({
   page,
 }) => {
+  // Thumbnail caching is content-addressed across all visible cards.
+  const title = `미리보기 전환 ${randomUUID()}`;
+  const deck = JSON.parse(example("flowchart.canvaslide").toString());
+  deck.name = title;
   const file = await upload(
     page.request,
     teamId,
-    `미리보기 전환 ${randomUUID().slice(0, 8)}`,
-    example("flowchart.canvaslide"),
+    title,
+    Buffer.from(JSON.stringify(deck)),
   );
   const thumbnail = `**/api/teams/${teamId}/slides/${file.id}/thumbnail`;
   let release!: () => void;
@@ -479,10 +543,25 @@ test("카드를 누르는 동안 썸네일이 표시돼도 원래 누른 자료�
   });
   await page.goto("/slides");
   const card = fileCard(page, file.title);
-  const placeholder = card.locator(".slide-card-thumbnail svg");
-  await expect(placeholder).toBeVisible();
-  const svg = (await placeholder.boundingBox())!;
-  await page.mouse.move(svg.x + svg.width / 2, svg.y + svg.height / 2);
+  const slot = card.locator(".slide-card-thumbnail");
+  await expect(slot).toBeVisible();
+  await expect(slot.locator("img")).toHaveCount(0);
+  const menuIcon = await page
+    .getByRole("button", { name: "CanvaSlide", exact: true })
+    .locator("img")
+    .evaluate((img: HTMLImageElement) => img.src);
+  const fallback = await slot.evaluate((el) => {
+    const style = getComputedStyle(el, "::before");
+    return [
+      style.backgroundImage,
+      style.borderRadius,
+      style.width,
+      style.height,
+    ];
+  });
+  expect(fallback).toEqual([`url("${menuIcon}")`, "50%", "48px", "48px"]);
+  const box = (await slot.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   release();
   await expect(card.locator(".slide-card-thumbnail img")).toBeVisible();
