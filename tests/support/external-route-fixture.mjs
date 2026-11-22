@@ -18,6 +18,7 @@ import {
   browserRoutes,
 } from "../../worker/sheet-clones/sheet-clones.mjs";
 import { calendarRoutes } from "../../worker/calendar/calendar.mjs";
+import { slideRoutes } from "../../worker/slides/slide-files.mjs";
 import { transferRoutes } from "../../worker/transfer/transfer.mjs";
 import {
   auditRoutes,
@@ -110,6 +111,7 @@ export function createExternalRouteApp({ env, defaultUserId, contextFor }) {
         filterRoutes,
         browserRoutes,
         calendarRoutes,
+        slideRoutes,
         transferRoutes,
         auditRoutes,
         historyCleanupRoutes,

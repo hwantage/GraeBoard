@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/hwantage/CanvaSlide.git",
+  "commit": "0de6fc3b40a86ac80d445e2937bf8710b5c5673b",
+  "version": "0.8.1",
+  "pnpm": "11.24.0",
+  "bundle": {
+    "buildId": "0de6fc3b40a8-60971cea6f49",
+    "url": "https://raw.githubusercontent.com/hwantage/GraeBoard/canvaslide-editor/bundles/0de6fc3b40a8-60971cea6f49.tar.gz",
+    "bytes": 9444530,
+    "sha256": "60350f51dfcebe93cd543359ef7746de0e8b78558ab527f400c3a9717704937f"
+  }
+}

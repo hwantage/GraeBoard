@@ -5,14 +5,16 @@ export function Empty({
   title,
   description,
   action,
+  illustration = <Grae />,
 }: {
   title: string;
   description?: string;
   action?: ReactNode;
+  illustration?: ReactNode;
 }) {
   return (
     <div className="empty">
-      <Grae className="empty-grae" />
+      {illustration}
       <h3>{title}</h3>
       {description && <p>{description}</p>}
       {action}

@@ -1,13 +1,17 @@
 import { secretMatches, failure, privateHeaders } from "../edge/security.mjs";
 import { assertOrigin, verifyAccess } from "./control/access.mjs";
+import {
+  APP_POLICY,
+  slideEditorAssetResponse,
+} from "../shared/slides/slide-editor-policy.js";
+import { MAX_SLIDE_FILE_BYTES } from "../shared/slides/slide-file-rules.js";
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 // Vite names every build file by its content hash, so a changed file gets a new
 // URL. Browsers may then keep these without revalidating, which also keeps
 // repeat visits from spending Pages Functions requests on unchanged files.
 const hashedAsset = /^\/assets\/[^/]+-[\w-]{8}\.[a-z0-9]+$/i;
-const csp =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'";
+const csp = APP_POLICY;
 
 async function resource(request, env) {
   if (
@@ -21,11 +25,14 @@ async function resource(request, env) {
     path = url.pathname,
     method = request.method;
   const prefix = `images/${env.SITE_TEAM_ID}/`;
+  // Team slide files: a separate prefix from images and deployed assets.
+  const slidePrefix = `slides/${env.SITE_TEAM_ID}/`;
   if (path === "/_resources/list" && method === "GET") {
-    if (url.searchParams.get("prefix") !== prefix)
+    const listed = url.searchParams.get("prefix");
+    if (listed !== prefix && listed !== slidePrefix)
       return failure(403, "다른 팀의 이미지입니다.");
     const page = await env.R2_TEAM.list({
-      prefix,
+      prefix: listed,
       limit: 1000,
       ...(url.searchParams.get("cursor")
         ? { cursor: url.searchParams.get("cursor") }
@@ -66,7 +73,11 @@ async function resource(request, env) {
   const validProbe =
     key.startsWith(probePrefix) &&
     /^[a-f0-9-]{36}$/.test(key.slice(probePrefix.length));
-  if (!validImage && !validProbe)
+  const validSlide =
+    key.startsWith(slidePrefix) &&
+    // `.chunk`: pieces of a file still being received from the other site.
+    /^[a-f0-9]{64}\.(?:canvaslide|chunk)$/.test(key.slice(slidePrefix.length));
+  if (!validImage && !validProbe && !validSlide)
     return failure(403, "다른 팀의 이미지입니다.");
   if (method === "GET" || method === "HEAD") {
     const object = await env.R2_TEAM[method === "HEAD" ? "head" : "get"](key);
@@ -86,7 +97,7 @@ async function resource(request, env) {
     if (
       !Number.isSafeInteger(length) ||
       length <= 0 ||
-      length > MAX_IMAGE_BYTES
+      length > (validSlide ? MAX_SLIDE_FILE_BYTES : MAX_IMAGE_BYTES)
     )
       return failure(413, "이미지 용량을 확인하세요.");
     const rawMetadata = request.headers.get("x-object-metadata") || "{}";
@@ -226,6 +237,11 @@ export function createGateway({
           if (auth.status !== 204) return auth;
         }
         const response = await env.ASSETS.fetch(request);
+        // Access-protected files stay in the signed-in browser only.
+        const editor = slideEditorAssetResponse(url.pathname, response, {
+          shared: false,
+        });
+        if (editor) return editor;
         const headers = new Headers(response.headers);
         headers.set("X-Content-Type-Options", "nosniff");
         headers.set("X-Frame-Options", "DENY");

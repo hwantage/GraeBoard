@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { openTransferDatabase } from "./transfer.mjs";
 import { S3ImageStore } from "../../server/storage/transfer/external-backup.mjs";
+import { S3SlideBlobStore } from "../../server/storage/slides/slide-file-external-backup.mjs";
 import { GitCliTransport } from "../../server/sync/node/git-cli.mjs";
 
 export async function externalResources(file, { restore = false } = {}) {
@@ -74,7 +75,13 @@ export async function externalResources(file, { restore = false } = {}) {
         });
         await git.readHead();
       }
-      teams.push({ ...entry, adapter: resource.adapter, images, git });
+      // Slide files live in the same bucket under their own prefix.
+      const slides = new S3SlideBlobStore({
+        client: images.client,
+        bucket: entry.bucket,
+        teamId: entry.teamId,
+      });
+      teams.push({ ...entry, adapter: resource.adapter, images, git, slides });
     }
     if (!control && !teams.length)
       throw new Error("Backup configuration has no control or team database");

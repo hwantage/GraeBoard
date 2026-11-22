@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import type { DocumentPanelHandle } from "../documents/DocumentPanel";
 import type { DocumentBrowserHandle } from "../documents/DocumentBrowser";
+import type { SlidesWorkspaceHandle } from "../slides/SlidesWorkspace";
 import useWorkspaceRoute from "./useWorkspaceRoute";
 
 type Route = ReturnType<typeof useWorkspaceRoute>["route"];
@@ -17,20 +18,28 @@ export default function useWorkspaceNavigation(options: {
 }) {
   const annualMemoRef = useRef<DocumentPanelHandle>(null);
   const documentBrowserRef = useRef<DocumentBrowserHandle>(null);
+  const slidesRef = useRef<SlidesWorkspaceHandle>(null);
   const [calendarBusy, setCalendarBusy] = useState(false);
   const [insightsBusy, setInsightsBusy] = useState(false);
   const [workspaceNavigating, setWorkspaceNavigating] = useState(false);
   const workspaceRoute = useWorkspaceRoute(prepareWorkspaceRoute);
   const documentBrowser = workspaceRoute.route === "documents";
-  const screen: "annual" | "calendar" | "insights" =
+  const screen: "annual" | "calendar" | "insights" | "slides" =
     workspaceRoute.route === "calendar"
       ? "calendar"
       : workspaceRoute.route === "insights"
         ? "insights"
-        : "annual";
+        : workspaceRoute.route === "slides"
+          ? "slides"
+          : "annual";
+  // The slide editor keeps its own unsaved state; it decides whether the
+  // screen, team or year may change.
+  const leaveSlides = async () =>
+    !slidesRef.current || (await slidesRef.current.leave());
 
   async function navigateWorkspace(action: () => void | Promise<void>) {
     if (annualMemoRef.current && !(await annualMemoRef.current.flush())) return;
+    if (!(await leaveSlides())) return;
     if (documentBrowser) await documentBrowserRef.current?.navigate(action);
     else await action();
   }
@@ -44,6 +53,7 @@ export default function useWorkspaceNavigation(options: {
       return false;
     if (annualMemoRef.current && !(await annualMemoRef.current.flush()))
       return false;
+    if (!(await leaveSlides())) return false;
     const prepare = async () => {
       options.flushLayout();
       if (next === "annual" || next === "insights")
@@ -74,6 +84,7 @@ export default function useWorkspaceNavigation(options: {
     documentBrowser,
     annualMemoRef,
     documentBrowserRef,
+    slidesRef,
     calendarBusy,
     setCalendarBusy,
     insightsBusy,

@@ -26,6 +26,9 @@ const portableSync = new Set(
     "setup-keys",
     "branch-publication",
     "maintenance",
+    // Slide file branch: transports and store are passed in; no file, SQLite
+    // or process dependency of its own.
+    "slide-file-branch",
   ].map((name) => `server/sync/core/${name}.mjs`),
 );
 function files(directory) {
@@ -61,6 +64,7 @@ const businessServices = new Set([
   "server/storage/tasks/task-service.mjs",
   "server/storage/sheet-clones/sheet-clone-command-rules.mjs",
   "server/storage/sheet-clones/sheet-clone-service.mjs",
+  "server/storage/slides/slide-file-service.mjs",
   "server/storage/transfer/transfer-service.mjs",
 ]);
 const isService = (path) => businessServices.has(path);

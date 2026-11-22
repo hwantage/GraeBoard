@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { listNodeTestFiles } from "./node-test-files.mjs";
 import { frozenCutoverSource } from "../../tests/support/frozen-cutover-source.mjs";
@@ -13,7 +14,18 @@ export async function runNodeTests({ root, env = process.env }) {
     ["--test", "--test-concurrency=1", ...files],
     {
       cwd: root,
-      env: { ...env, GRAEBOARD_FROZEN_DEPENDENCIES: frozen.dependenciesRoot },
+      env: {
+        ...env,
+        GRAEBOARD_FROZEN_DEPENDENCIES: frozen.dependenciesRoot,
+        // Suites that do not name a slide store must never see a developer's
+        // own files under data/.
+        SLIDE_FILES_DIR: join(
+          tmpdir(),
+          "graeboard-node-tests",
+          String(process.pid),
+          "slide-files",
+        ),
+      },
       stdio: "inherit",
     },
   );

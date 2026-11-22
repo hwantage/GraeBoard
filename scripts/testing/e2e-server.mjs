@@ -12,6 +12,7 @@ const app = createApp({
     db,
     rateLimits: false,
     documentImagesDir: join(dir, "images"),
+    slideFilesDir: join(dir, "slides"),
     syncOptions: { setupConfigPath: join(dir, ".env") },
   }),
   activeStreams = new Set(),

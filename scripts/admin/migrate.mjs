@@ -4,11 +4,15 @@ import { parseArgs } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { migrateSqlite } from "../../server/migrations/sqlite.mjs";
 import { migratePostgres } from "../../server/migrations/postgres.mjs";
+import { migrateSlideSchema } from "../../server/migrations/postgres-slides.mjs";
+import { migrateSlideStore } from "../../server/storage/slides/sqlite-slide-files.mjs";
 
 const help = `Usage: npm run migrate -- --engine sqlite --database /absolute/path.sqlite [--dry-run] [--initialize]
        npm run migrate -- --engine postgres --scope control --url-env PG_CONTROL_URL [--initialize] [--dry-run]
        npm run migrate -- --engine postgres --scope team --url-env PG_TEAM_URL --team-id <existing-uuid> [--initialize] [--dry-run]
        npm run migrate -- --engine postgres --scope site --url-env PG_SITE_URL --team-id <existing-uuid> [--initialize] [--dry-run]
+       npm run migrate -- --engine postgres --scope slides --url-env PG_SITE_URL [--dry-run]
+       npm run migrate -- --engine sqlite-slides --database /absolute/slide-files/slide-files.sqlite [--dry-run]
 
 SQLite initializes a new empty v34 database with --initialize. An existing v29-v33 database holds sheet clones
 under their earlier names; only the one-time SheetClone cutover tool converts it (npm run cutover:sheet-clone).
@@ -76,6 +80,24 @@ async function main() {
     } finally {
       db.close();
     }
+  } else if (values.engine === "sqlite-slides") {
+    // The internal slide store is its own database file with its own version.
+    const supplied = values.database || values.db;
+    if (!supplied || values.scope || values["url-env"])
+      throw new Error("The slide store requires --database only");
+    console.log(
+      JSON.stringify(
+        {
+          engine: "sqlite-slides",
+          database: resolve(supplied),
+          ...migrateSlideStore(resolve(supplied), {
+            dryRun: values["dry-run"],
+          }),
+        },
+        null,
+        2,
+      ),
+    );
   } else if (values.engine === "postgres") {
     const name = values["url-env"];
     if (!name || !/^[A-Z_][A-Z0-9_]*$/.test(name) || !process.env[name])
@@ -91,13 +113,18 @@ async function main() {
       connectionTimeoutMillis: 10000,
     });
     try {
-      const result = await migratePostgres(pool, {
-        scope: values.scope,
-        initialize: values.initialize,
-        dryRun: values["dry-run"],
-        teamId: values["team-id"],
-        teamName: values["team-name"],
-      });
+      // The slide store is a schema of its own in the team database; the
+      // graeboard schema and its history are not part of this migration.
+      const result =
+        values.scope === "slides"
+          ? await migrateSlideSchema(pool, { dryRun: values["dry-run"] })
+          : await migratePostgres(pool, {
+              scope: values.scope,
+              initialize: values.initialize,
+              dryRun: values["dry-run"],
+              teamId: values["team-id"],
+              teamName: values["team-name"],
+            });
       console.log(JSON.stringify(result, null, 2));
     } finally {
       await pool.end();
