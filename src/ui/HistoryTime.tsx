@@ -22,9 +22,13 @@ export function HistoryTimeline({ children }: { children: ReactNode }) {
   );
 }
 
-function relativeTime(iso: string, now: number) {
+export function relativeTime(
+  iso: string,
+  now: number,
+  precision: "second" | "minute" = "second",
+) {
   const seconds = Math.max(0, Math.floor((now - Date.parse(iso)) / 1000));
-  if (seconds < 1) return "방금";
+  if (seconds < (precision === "minute" ? 60 : 1)) return "방금";
   if (seconds < 60) return `${seconds}초 전`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)}시간 전`;

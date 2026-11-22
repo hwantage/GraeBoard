@@ -83,6 +83,8 @@ SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋
 | `.github/`                               | 저장소 자동화와 배포 workflow. 소스 경로를 바꾸면 참조와 실행 조건을 확인합니다.                                                                   |
 | `docs/`                                  | 개발·운영·데이터·구조 문서. 배치·명명 규칙의 기준 문서는 이 파일입니다.                                                                            |
 
+`scripts/canvaslide/`는 고정한 CanvaSlide 웹 편집기를 조립하는 빌드 어댑터입니다. `build-canvaslide.mjs`(임시 작업 폴더에서 조립), `canvaslide-adapter-plugin.mjs`(원본 빌드에 더하는 Vite 플러그인), `canvaslide-upstream.json`(고정 커밋과 보관 배포본), `canvaslide-build-identity.mjs`(빌드 ID와 배포본 검증), `canvaslide-bundle.mjs`·`pack-canvaslide-bundle.mjs`(배포본 묶음), `prepare-canvaslide-dist.mjs`(`npm run build`의 설치·검증 단계), `update-canvaslide-pin.mjs`(버전 갱신 판단)을 두고, `frame/`에는 편집기 번들에 함께 들어가 프레임 안에서 실행되는 그래보드 모듈(`slide-frame-*.ts`)을 둡니다. `frame/`의 파일은 원본의 TypeScript 설정과 별칭(`@/…`)으로 조립 때 검사하므로 그래보드의 `tsc` 대상인 `src/`에 두지 않습니다. 원본 소스는 저장소에 복사하지 않습니다. 부모 화면과 프레임이 함께 쓰는 메시지 규칙과 사내·외부 서버가 함께 쓰는 파일·제공 규칙은 `shared/slides/`, 사내 라우트와 동기화 실행은 `server/slides/`, 공통 서비스와 SQLite 저장소·백업은 `server/storage/slides/`, 외부 라우트는 `worker/slides/`, PostgreSQL 저장소와 R2 객체는 `worker/storage/slides/`가 소유합니다. 슬라이드 동기화의 규칙은 양쪽이 함께 쓰는 `server/sync/core/slide-file-branch.mjs` 한 곳에 있고(외부 import 허용 목록에 정확한 경로로 등록), 사내 실행은 `server/slides/slide-file-sync.mjs`, 외부 실행은 `worker/sync/sync-slides.mjs`입니다.
+
 `node_modules/`, `dist/` 등의 의존성·산출물과 실제 DB·이미지·백업·환경 파일은 소스 재배치 대상에서 제외합니다. 기존 Git 제외 및 운영 데이터 보존 규칙을 따릅니다.
 
 `shared/http/link-title.mjs`는 Node 네트워크 모듈을, `shared/transfer/workbook.mjs`는 `node:crypto`를 사용합니다. `shared/` 안에 있다는 사실만으로 브라우저에서 import하면 안 됩니다. 신규 공유 모듈도 직접·간접 의존성과 실제 소비 환경을 확인합니다.
@@ -97,6 +99,7 @@ SheetClone 일회성 전환 도구(#99)와 원본 fixture는 **전체 Git 커밋
 | `src/sheet/`     | 업무 표, 셀 편집·선택·서식, 시트 탐색                            | `Grid.tsx`, `InlineCellEditor.tsx`, `SheetTabs.tsx`, `clipboard.ts`                                                 |
 | `src/documents/` | 공용 문서 편집·목록·탐색, 링크·이미지·내보내기, 문서 종류별 래퍼 | `DocumentPanel.tsx`, `DocumentEditor.tsx`, `RichMarkdownEditor.tsx`, `TaskDocumentPanel.tsx`, `AnnualMemoPanel.tsx` |
 | `src/insights/` | 연간 업무 인사이트, 팀 차트·설정·미리보기와 파생 캐시 | `Insights.tsx`, `InsightsChart.tsx`, `InsightsChartEditor.tsx`, `insights-types.ts`, `insights.css` |
+| `src/slides/`    | 슬라이드 화면: 팀 자료 목록, 편집기 프레임과 저장·충돌·이동 확인 | `SlidesWorkspace.tsx`, `SlideFileList.tsx`, `SlideEditorFrame.tsx`, `slide-frame-bridge.ts`, `slide-file-api.ts`, `slides.css`         |
 | `src/calendar/`  | 일정·태그·배치·주간 할 일·개인 일정                              | `Calendar.tsx`, `CalendarEntryPanel.tsx`, `useCalendarData.ts`, `calendar-types.ts`, `calendar.css`                 |
 | `src/auth/`      | 로그인, 세션 진입 UI, 계정 연결·개인 계정                        | `ExternalLogin.tsx`, `ExternalAccountLogin.tsx`, `AccountMenu.tsx`, `ProfilePanel.tsx`                              |
 | `src/settings/`  | 설정 화면 조합, 팀·사용자·속성·업무 색상·관리 설정                         | `SettingsPanel.tsx`, `TeamSettings.tsx`, `WorkColorsEditor.tsx`, `UserAccounts.tsx`, `PropertiesManager.tsx`                                |

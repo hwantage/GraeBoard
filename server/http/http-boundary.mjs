@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { pack, unpack } from "../../shared/formatting/compact.js";
 import { now } from "../db.mjs";
+import { APP_FRAME_SOURCES } from "../../shared/slides/slide-editor-policy.js";
 import { HttpError } from "../../shared/validation.js";
 import {
   isSyncRequest,
@@ -28,6 +29,7 @@ export function installHttpBoundary(app) {
           fontSrc: ["'self'"],
           imgSrc: ["'self'", "data:"],
           connectSrc: ["'self'"],
+          frameSrc: APP_FRAME_SOURCES,
           frameAncestors: ["'none'"],
           upgradeInsecureRequests: null,
         },

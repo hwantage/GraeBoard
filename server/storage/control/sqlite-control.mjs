@@ -75,6 +75,7 @@ function execute(
     cachedTasks,
     syncProfiles = () => [],
     removeTeamSyncLog = () => {},
+    removeTeamSlideFiles = () => {},
   },
   user,
   command,
@@ -449,6 +450,7 @@ function execute(
     const result = deleteTeam(db, teamId, user.id);
     removeTeamDocumentImages(documentImagesDir, teamId);
     removeTeamSyncLog(teamId);
+    removeTeamSlideFiles(teamId);
     cachedTasks.clearTeam(teamId);
     return result;
   }

@@ -264,8 +264,9 @@ small {
   color: var(--muted);
   text-align: center;
 }
-.empty-grae {
-  width: 96px;
+.empty > img {
+  width: auto;
+  max-width: 100%;
   height: 96px;
   margin-bottom: -4px;
   user-select: none;
@@ -451,7 +452,7 @@ small {
   flex-shrink: 0;
   gap: 4px;
 }
-.topbar .calendar-launch {
+.topbar .workspace-launch {
   width: 30px;
   height: 30px;
   min-height: 30px;
@@ -459,8 +460,19 @@ small {
   padding: 0;
   border: 1.5px solid #26201a;
   border-radius: 50%;
-  background: #ffd84d;
+  background: white;
   box-shadow: 1.5px 1.5px 0 #26201a;
+}
+.topbar .canvaslide-launch img {
+  border-radius: 50%;
+}
+.topbar .canvaslide-launch.active,
+.topbar .canvaslide-launch:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.topbar .calendar-launch {
+  background: #ffd84d;
 }
 .topbar .calendar-launch:hover:not(:disabled) {
   border-color: #26201a;
@@ -614,7 +626,8 @@ small {
   margin-left: auto;
   flex-shrink: 0;
 }
-.heading-actions .button,
+.heading-actions > .button,
+.slide-editor-bar > .button,
 .page-heading > .insights-toggle,
 .toolbar-add-task.button {
   font-size: 11px;
@@ -2413,7 +2426,8 @@ body.document-block-moving * {
   .topbar:has(.team-sync-indicator) .button {
     padding-inline: 5px;
   }
-  .topbar:has(.team-sync-indicator) .calendar-launch {
+  .topbar:has(.team-sync-indicator) .workspace-launch {
+    padding: 0;
     margin-inline: 2px 0;
   }
   .topbar:has(.team-sync-indicator) .top-account > svg:last-child {
@@ -5803,7 +5817,9 @@ body.document-block-moving * {
   .workspace .format-toolbar:not(.expanded) > .toolbar-group:not(.toolbar-core),
   .workspace .format-toolbar:not(.expanded) .toolbar-extra,
   .workspace .format-toolbar > .selection-label,
-  .workspace .page-heading:not(.calendar-heading) .heading-actions,
+  .workspace
+    .page-heading:not(.calendar-heading, .slide-list-heading)
+    .heading-actions,
   .workspace .row-drag-handle,
   .workspace .row-resizer,
   .workspace .column-resizer {

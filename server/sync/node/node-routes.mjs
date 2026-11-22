@@ -628,7 +628,7 @@ function installTeamSyncRoutes(
       pending = open.length
         ? db
             .prepare(
-                "SELECT payload FROM sync_outbox WHERE team_id=? AND status<>'acknowledged' AND EXISTS (SELECT 1 FROM json_each(payload, '$.resolves') WHERE value IN (SELECT value FROM json_each(?))) ORDER BY local_seq",
+              "SELECT payload FROM sync_outbox WHERE team_id=? AND status<>'acknowledged' AND EXISTS (SELECT 1 FROM json_each(payload, '$.resolves') WHERE value IN (SELECT value FROM json_each(?))) ORDER BY local_seq",
             )
             .all(id(req), JSON.stringify(open.map((c) => c.conflictId)))
             .map((row) => JSON.parse(row.payload))
