@@ -2,7 +2,7 @@
 
 [처음으로](../README.md) · [설치 안내](CLOUD_SETUP.md) · [운영 안내](OPERATIONS.md) · [동기화 규약](SYNC_PROTOCOL.md)
 
-현재 기본 구성은 내부 Node/SQLite 서버와 팀별 외부 Supabase Edge Functions 사이트입니다. 내부 서버는 GitHub에만 접속하며, 외부 업무 API는 Supabase에서 실행합니다. Cloudflare는 Pages 주소, Google Access, HTTP 전달, 정적 파일과 이미지 자원을 담당합니다. Hyperdrive는 사용하지 않습니다.
+현재 기본 구성은 내부 Node/SQLite 서버와 팀별 외부 Supabase Edge Functions 사이트입니다. 내부 서버는 사내망 밖으로는 GitHub에만 접속하며(사내망의 다바다허브에는 캘린더 알림을 보냄), 외부 업무 API는 Supabase에서 실행합니다. Cloudflare는 Pages 주소, Google Access, HTTP 전달, 정적 파일과 이미지 자원을 담당합니다. Hyperdrive는 사용하지 않습니다.
 
 이 문서는 저장소 구현 기준의 구성도입니다. 실제 배포 커밋·프로젝트·설치 UUID·Secret 등록 상태는 별도 운영 기록으로 관리합니다.
 
@@ -162,7 +162,7 @@ sequenceDiagram
 - Pages Functions·Service binding 변경은 Pages 재배포가 필요합니다. 운영 주소는 선택한 Production branch를 사용합니다.
 - 이전 전체 Worker 이름의 Service binding은 `worker/forwarder.mjs`로 gateway에 전달할 수 있습니다. 이전 Worker의 DB·Git·Hyperdrive binding과 Cron은 제거합니다. 전체 Worker 업무 실행용 설정·빌드·호환성 테스트는 제거했습니다.
 - 동기화 명령의 형식·검증·병합 규칙이 바뀌는 릴리스는 사내 서버(Node)와 외부 서버(Supabase `graeboard` 함수)를 같은 버전으로 연이어 배포합니다. 2026-10-30의 사본 공유 사전 형식은 **외부 서버 → 사내 서버** 순서였지만, 이번 SheetClone 전환은 **양쪽 중지 → 일회성 전환 → 사내 시작 → 외부 시작** 순서입니다. [운영 안내](OPERATIONS.md#내부외부-git-동기화-운영)
-- Edge 전환은 DB 스키마 변경과 별개입니다. 사본 명칭 전환까지 포함한 현재 버전은 SQLite v34, PostgreSQL team v3/site v3(분리형 control v2), 외부 백업 v3, 논리 이관 v2입니다. 백업·복구·논리 이관은 각각 [운영 안내](OPERATIONS.md#백업과-복구)와 [외부 복구 절차](CLOUD_SETUP.md#11-정리중단복구)를 따릅니다.
+- Edge 전환은 DB 스키마 변경과 별개입니다. 사본 명칭 전환까지 포함한 현재 버전은 SQLite v35(캘린더 시각·알림 추가), PostgreSQL team v3/site v3(분리형 control v2), 외부 백업 v3, 논리 이관 v2입니다. 백업·복구·논리 이관은 각각 [운영 안내](OPERATIONS.md#백업과-복구)와 [외부 복구 절차](CLOUD_SETUP.md#11-정리중단복구)를 따릅니다.
 
 Edge 전환 후에도 애플리케이션의 PG 용량 제한과 각 서비스의 실행·요청 한도는 남습니다. 과거 workerd 성능 측정과 현재 Edge 실행 검증을 구분합니다. [실행 한도와 검증 범위](CLOUD_SETUP.md#14-실행-한도와-검증-범위)
 

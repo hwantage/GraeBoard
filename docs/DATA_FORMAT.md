@@ -16,15 +16,16 @@ SheetClone 일회성 변환 명령은 최신 앱이 아닌 **고정 전체 커�
 
 | 구분               | 현재 저장소 기준                             | 확인 위치와 의미                                                                                                 |
 | ------------------ | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| SQLite DB 형식     | v34                                          | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version`                                                 |
+| SQLite DB 형식     | v35                                          | `server/db.mjs`의 `SCHEMA_VERSION` 및 DB의 `PRAGMA user_version`                                                 |
 | JSON 상세 보관 형식 | v7                                           | 반출 JSON의 `schemaVersion`; DB 버전과 별개. v6 파일은 `npm run cutover:sheet-clone -- export`로 변환            |
-| DB 백업 복구       | v29·v30·v31·v32·v33·v34 백업, 기존 버전 유지 | `scripts/transfer/restore.mjs`의 버전·무결성·참조 이미지 검사                                                             |
+| DB 백업 복구       | v29~v35 백업, 기존 버전 유지                 | `scripts/transfer/restore.mjs`의 버전·무결성·참조 이미지 검사                                                             |
 | 기존 DB 업그레이드 | 명시적 v29 → … → v33 → v34 일회성 전환       | 모든 서버를 멈추고 `npm run cutover:sheet-clone`([운영 안내](OPERATIONS.md#사본-명칭sheetclone-일괄-전환))       |
+| v34 → v35          | 추가만 하는 명시적 migration                 | 서버를 멈추고 `npm run migrate -- --engine sqlite --database …`([운영 안내](OPERATIONS.md#캘린더-시각알림-도입sqlite-v35)) |
 | 외부 PostgreSQL    | 팀별 site v3 + team v4, 한 프로젝트          | `graeboard_site`/`graeboard`, 팀 UUID·checksum 검사. 기존 분리형 control v2/team v4 지원, team v1·v2는 전환 도구 |
 | 동기화 프로토콜    | 3(사본 한 레코드)·4(사본 행·셀 분할)         | C의 `protocol`/`[]` 표식. 1·2는 사본 명칭 전환 전 형식이며 이 런타임은 읽지 않음                                 |
 | 논리 이관 묶음     | `graeboard-team-transfer` v2                 | `shared/transfer/logical-format.mjs`. v1 묶음은 기록한 릴리스로 격리 DB에 복원한 뒤 전환 도구로 변환                      |
 
-실제 운영 DB 버전과 배포 커밋은 배포 전에 읽기 전용으로 확인합니다. 저장소 버전과 같다고 추정하지 않습니다. 서버 시작은 v34 checksum 이력을 확인하고, 사용자 테이블이 없는 빈 DB만 신규 초기화합니다. v29·v30·v31·v32·v33은 명시적 migration을 안내하고 중단하며 다른 이전/미래 버전은 거부합니다. 버전 0에 기존 테이블이 있으면 신규 설치로 간주하지 않습니다.
+실제 운영 DB 버전과 배포 커밋은 배포 전에 읽기 전용으로 확인합니다. 저장소 버전과 같다고 추정하지 않습니다. 서버 시작은 v35 checksum 이력을 확인하고, 사용자 테이블이 없는 빈 DB만 신규 초기화합니다. v29~v34는 명시적 migration(v29~v33은 전환 도구, v34는 `npm run migrate`)을 안내하고 중단하며 다른 이전/미래 버전은 거부합니다. 버전 0에 기존 테이블이 있으면 신규 설치로 간주하지 않습니다.
 
 백업 복구는 없는 대상 DB 경로에 같은 버전의 자료를 복원하며 DB를 자동 업그레이드하지 않습니다. 복구 시 세션과 접속 토큰을 지우고, v30 이상 동기화 연결은 새 writer epoch와 `recovery` 상태로 시작하여 자동 발신을 막습니다. v29·v30·v31·v32·v33 복구본은 원본을 보존한 뒤 명시적 v34 migration을 수행합니다.
 
@@ -556,6 +557,19 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 `GET /api/audit?teamId=…&sheetId=original`은 원본, `sheetId=<사본 ID>`는 그 사본의 기록을 반환합니다. 각 항목은 `sheet: {id,name}`과 `restorableTaskIds`를 포함합니다. 삭제 복구는 `POST /api/audit/:id/restore`를 사용하며 사본에는 현재 `revision`이 필요합니다. 이미 존재하는 행을 덮어쓰지 않고, 이후 다시 삭제한 행은 최신 삭제 이력에서만 복구합니다. 사본 삭제 이력의 `before.deletedTasks`는 복구용 문서 본문을 포함하며 `deletedUsers`는 담당자의 저장 당시 이름을 보존합니다. 이력 정리 시 해당 복구 자료도 정리됩니다.
 
 ## 캘린더 일정
+
+### 시작 시각과 알림
+
+일정은 선택 항목인 시작 시각 `time`(`"HH:MM"`, 24시간제)과 알림 `remindMinutes`(시작 몇 분 전인지, 0~1440의 정수)를 가질 수 있습니다. 둘 다 없으면 `null`입니다. 시각은 시작일(`date`)의 **한국 표준시** 시각으로 해석하며 두 사이트가 같습니다. `PATCH /api/calendar/entries/:id`의 `{time, remindMinutes, expectedTime, expectedRemindMinutes}`로 두 값을 함께 저장합니다. 알림은 시각이 있어야 하며(`400`), 시각을 지우는 요청은 알림도 함께 지웁니다. 현재 값이 예상값과 다르면 `409`이고 같은 요청의 재시도는 변경 없이 성공합니다. 생성 요청에도 두 필드를 줄 수 있고 복제는 둘 다 복사합니다.
+
+사내 SQLite는 `calendar_entries.start_time`·`remind_minutes`(v35에서 추가)에, 외부 PostgreSQL은 기존 `calendar` 엔티티 payload에 저장합니다. 동기화 `calendar` payload의 `time`·`remindMinutes`는 서로 독립된 선택 필드로, 값이 있을 때만 담습니다. 그래서 시각이 없는 일정과 이전에 공유된 일정의 payload는 바뀌지 않고 프로토콜 번호도 그대로입니다. 두 사이트가 동시에 고쳐 시각 없이 알림만 남은 일정은 알림을 보내지 않습니다.
+
+알림 발송은 **사내 Node만** 합니다. `DABADA_PUSH_URL`이 설정되어 있으면 30초마다 알림 시각(시작 시각 − `remindMinutes`)이 지난 일정을 찾아 다바다허브의 `POST /api/push/send`(`msg_type: "noti"`, `target_ip`)로 보냅니다. 개인 일정은 소유자, 팀 공용 일정은 그 팀의 활성 구성원 전원이 대상입니다. 외부에서 설정한 알림은 동기화로 사내에 도착한 뒤 발송되므로 도착이 알림 시각보다 늦으면 그만큼 늦고, 10분 넘게 늦은 알림은 보내지 않습니다. 시크릿 일정은 서버에 없으므로 대상이 아닙니다.
+
+다음 두 테이블은 사내 전용이며 동기화·외부 저장·JSON 반출에 포함하지 않습니다.
+
+- `push_addresses(user_id, ip, manual, updated_at)`: 사람별 알림 수신 PC의 IP. 로그인한 사용자가 사내 사이트를 사용하는 주소(`req.ip`, 루프백 제외)를 바뀔 때마다 기록하며, 본인이 직접 지정한 주소(`manual=1`)는 덮어쓰지 않습니다. `GET /api/push-address`는 `{enabled, ip, manual, detectedIp}`, `PUT /api/push-address`의 `{ip}`는 직접 지정(`null`이면 자동으로 복귀), `POST /api/push-address/test`는 본인 주소로 시험 알림을 보냅니다. 세 경로는 사내 Node에만 있습니다.
+- `calendar_reminder_sends(entry_id, fire_at, sent_at, recipients)`: 보낸 알림. `(일정, 알림 시각)`마다 한 번만 보내며 시각·알림을 바꾸면 새 알림입니다. 허브가 한 건도 받지 못하면 기록하지 않고 다음 주기에 다시 시도합니다. 7일이 지난 기록은 지웁니다.
 
 `calendar_entries`는 개인 일정과 팀 공용 일정을 연간 업무와 별도로 저장합니다. `user_id`(API의 `userId`)는 개인 일정의 소유자이며 `NULL`이면 해당 팀의 공용 일정입니다. 공용 일정은 작성자의 탈퇴와 무관하게 팀에 남습니다. `GET /api/calendar`의 `scope=team`은 공용 일정만 반환하며 `userId`와 함께 지정할 수 없습니다. 기본값인 `scope=personal`은 활성 팀원의 개인 일정만 반환하고 `userId`로 한 사람을 선택할 수 있습니다. 팀 주간처럼 여러 사람의 같은 기간을 볼 때는 `GET /api/calendar/members?teamId=…&userIds=ID,ID&from=…&to=…`로 최대 50명을 한 번에 조회합니다. 응답 `{members: {사용자ID: {entries,weekly,layout}}}`의 각 값은 그 사람을 `userId`로 지정한 `GET /api/calendar` 응답과 같습니다. 공용 조회의 `weekly`는 빈 배열입니다. 생성 요청의 `userId: null`은 팀 공용 일정, 사용자 ID는 개인 일정을 뜻합니다. `date`는 시작일, `end_date`(API의 `endDate`)는 종료일이며 양 끝을 포함하는 `YYYY-MM-DD` 날짜입니다. 하루 일정은 두 날짜가 같습니다. 기간과 겹치는 일정만 조회하고, 월간·팀 주간 목록에는 본문 대신 제목과 짧은 미리보기, 본문 존재 여부 `hasDocument`를 반환합니다. `hasDocument`는 기존 문서 내용 판별 규칙을 따르며 서식 문자만 있는 빈 문서는 제외합니다. 두 사이트 모두 공유 문서가 있는지가 아니라 본문 내용으로 판단하므로 빈 문서는 문서 표시를 하지 않습니다. 동기화하는 팀에서 일정 본문 문서(`["calendar", 일정 ID, "main"]`)는 본문을 처음 저장할 때 생기며, 일정 생성·복사·삭제·복원은 문서를 만들거나 지우지 않습니다([동기화 규약](SYNC_PROTOCOL.md#결정적-병합과-충돌)). 본문은 공통 `document_versions`에서 참조하며 이미지 검증과 SQLite 백업·복구에 포함됩니다. 연간 업무 JSON/XLSX 반출 형식은 바꾸지 않습니다.
 
