@@ -18,6 +18,10 @@ import {
   calendarWeek,
   CALENDAR_MAX_RANGE_DAYS,
   CALENDAR_MEMBER_BATCH,
+  CALENDAR_TIME_PATTERN,
+  CALENDAR_REMINDER_MAX_MINUTES,
+  CALENDAR_REMINDER_OPTIONS,
+  calendarReminders,
   addDays,
   daysBetween,
 } from "../../../shared/calendar/calendar.js";
@@ -80,6 +84,21 @@ export function matchesCalendarTaskFilters(values, filters) {
   );
 }
 export const rangeSchema = z.object({ date: dateSchema, endDate: dateSchema });
+// An entry's start time (null is unset) and how many minutes before it to
+// remind, any number of times.
+const timeSchema = z.string().regex(CALENDAR_TIME_PATTERN).nullable();
+const remindersSchema = z
+  .array(z.number().int().min(0).max(CALENDAR_REMINDER_MAX_MINUTES))
+  .max(CALENDAR_REMINDER_OPTIONS.length)
+  .refine(
+    (list) => new Set(list).size === list.length,
+    "같은 알림을 중복으로 지정할 수 없습니다.",
+  )
+  .transform(calendarReminders);
+const needsTime = [
+  (data) => !data.reminders.length || data.time !== null,
+  { message: "알림은 시작 시각을 정한 일정에만 설정할 수 있습니다." },
+];
 const bodySchemas = {
   savePreferences: z
     .object({
@@ -143,9 +162,15 @@ const bodySchemas = {
       title: titleSchema,
       tagIds: tagIdsSchema.default([]),
       checkedTagIds: tagIdsSchema.default([]),
+      time: timeSchema.default(null),
+      reminders: remindersSchema.default([]),
     })
+    .strict()
+    .refine(...needsTime),
+  // includeDocument also copies the entry's document body.
+  copyEntry: z
+    .object({ id: uuid, includeDocument: z.boolean().default(false) })
     .strict(),
-  copyEntry: z.object({ id: uuid }).strict(),
   updateEntry: z.union([
     z
       .object({ title: titleSchema, expectedTitle: z.string().max(120) })
@@ -162,6 +187,15 @@ const bodySchemas = {
       })
       .strict(),
     z.object({ tagIds: tagIdsSchema, expectedTagIds: tagIdsSchema }).strict(),
+    z
+      .object({
+        time: timeSchema,
+        reminders: remindersSchema,
+        expectedTime: timeSchema,
+        expectedReminders: remindersSchema,
+      })
+      .strict()
+      .refine(...needsTime),
   ]),
   checkTag: z
     .object({ checked: z.boolean(), expectedChecked: z.boolean() })

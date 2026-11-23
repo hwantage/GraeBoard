@@ -20,14 +20,19 @@ import {
   calendarWeek,
   calendarRuleProblem,
   nextCalendarCopyTitle,
+  calendarReminders,
+  calendarReminderStatus,
   weeklyOrderStamps,
   CALENDAR_DAYS,
   CALENDAR_MAX_RANGE_DAYS,
 } from "../../../shared/calendar/calendar.js";
-import { readDocumentVersion } from "../../documents/document-storage.mjs";
+import {
+  readDocumentVersion,
+  storeDocumentVersion,
+} from "../../documents/document-storage.mjs";
 import { resolveSqliteDocumentLinks } from "../documents/sqlite-document-links.mjs";
 
-const entryColumns = `id,team_id AS teamId,user_id AS userId,date,end_date AS endDate,lane,title,preview,revision,updated_at AS updatedAt,
+const entryColumns = `id,team_id AS teamId,user_id AS userId,date,end_date AS endDate,lane,title,start_time AS time,reminders,preview,revision,updated_at AS updatedAt,
   COALESCE((SELECT has_content FROM document_versions WHERE id=calendar_entries.version_id),0) AS hasDocument,
   (SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM calendar_entry_tags WHERE entry_id=calendar_entries.id ORDER BY position)) AS tagIds,
   (SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM calendar_entry_tags WHERE entry_id=calendar_entries.id AND checked=1 ORDER BY position)) AS checkedTagIds`;
@@ -36,9 +41,16 @@ const tagColumns = `id,team_id AS teamId,user_id AS userId,name,color,kind,revis
 const entryJson = (row) => ({
   ...row,
   hasDocument: !!row.hasDocument,
+  reminders: readReminders(row.reminders),
   tagIds: parse(row.tagIds, []),
   checkedTagIds: parse(row.checkedTagIds, []),
 });
+// The column holds the list as JSON, or NULL without reminders.
+const readReminders = (text) => parse(text, null) ?? [];
+const storedReminders = (list) => {
+  const reminders = calendarReminders(list);
+  return reminders.length ? json(reminders) : null;
+};
 const nextStamp = (row) =>
   new Date(Math.max(Date.now(), Date.parse(row.updated_at) + 1)).toISOString();
 function validRange(data) {
@@ -61,6 +73,7 @@ import {
   parseCalendarTaskFilters,
   matchesCalendarTaskFilters,
   CALENDAR_ROUTES,
+  calendarPreview,
 } from "./calendar-service.mjs";
 
 function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
@@ -113,8 +126,24 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
         }
       : { propertyId: "", values: [], mode: "include", revision: 0 };
   }
+  // This site sends the reminders, so it also knows how each one went.
+  const sentReminders = db.prepare(
+    "SELECT fire_at,recipients FROM calendar_reminder_sends WHERE entry_id=?",
+  );
   function visibleEntry(row, visibility = retentionView(db, row.teamId)) {
     const entry = entryJson(row);
+    entry.reminderStatus =
+      entry.time && entry.reminders.length
+        ? calendarReminderStatus(
+            entry,
+            new Map(
+              sentReminders
+                .all(entry.id)
+                .map((sent) => [sent.fire_at, sent.recipients]),
+            ),
+            Date.now(),
+          )
+        : null;
     if (visibility.hidden("document", ["calendar", row.id, "main"])) {
       entry.preview = "";
       entry.hasDocument = false;
@@ -918,6 +947,9 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
           previous.date === data.date &&
           previous.end_date === endDate &&
           previous.title === data.title &&
+          previous.start_time === (data.time ?? null) &&
+          json(readReminders(previous.reminders)) ===
+            json(calendarReminders(data.reminders)) &&
           json(tagIdsFor(previous.id)) === json(data.tagIds) &&
           json([...checkedTagIdsFor(previous.id)].sort()) ===
             json([...data.checkedTagIds].sort()),
@@ -926,7 +958,7 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
       );
     } else {
       db.prepare(
-        "INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,lane,title,updated_at,actor_id) VALUES(?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,lane,title,updated_at,actor_id,start_time,reminders) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
       ).run(
         data.id,
         data.teamId,
@@ -943,6 +975,8 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
         data.title,
         now(),
         actorId,
+        data.time ?? null,
+        storedReminders(data.reminders),
       );
       setTags(data.id, data.tagIds, data.checkedTagIds);
     }
@@ -981,7 +1015,7 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
         )
         .all(source.team_id, source.user_id)
         .map((row) => row.title);
-      return createEntry(
+      const copied = createEntry(
         {
           id: data.id,
           teamId: source.team_id,
@@ -989,11 +1023,37 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
           date: source.date,
           endDate: source.end_date,
           title: nextCalendarCopyTitle(source.title, titles),
+          time: source.start_time,
+          reminders: readReminders(source.reminders),
           tagIds: tagIdsFor(source.id),
           checkedTagIds: checkedTagIdsFor(source.id),
         },
         request.user.id,
       );
+      // The body is copied as the copy's first saved document, in the same
+      // transaction. A body this site may not show is not copied.
+      const markdown =
+        data.includeDocument &&
+        !retentionView(db, source.team_id).hidden("document", [
+          "calendar",
+          source.id,
+          "main",
+        ]) &&
+        readDocumentVersion(db, source.version_id)?.markdown;
+      if (!markdown) return copied;
+      db.prepare(
+        "UPDATE calendar_entries SET version_id=?,preview=?,revision=revision+1 WHERE id=?",
+      ).run(
+        storeDocumentVersion(db, {
+          teamId: source.team_id,
+          documentId: `calendar:${data.id}`,
+          markdown,
+          actorId: request.user.id,
+        }),
+        calendarPreview(markdown),
+        data.id,
+      );
+      return summary(data.id);
     });
     return entry;
   };
@@ -1099,6 +1159,36 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
         return { ...summary(row.id), ...positions };
       });
       return saved;
+    }
+    if ("time" in data) {
+      const current = json(readReminders(row.reminders)),
+        unchanged =
+          row.start_time === data.time && current === json(data.reminders);
+      requireThat(
+        (row.start_time === data.expectedTime &&
+          current === json(data.expectedReminders)) ||
+          unchanged,
+        409,
+        "다른 사용자가 일정 시각이나 알림을 변경했습니다. 최신 값을 확인하세요.",
+        {
+          currentSchedule: {
+            time: row.start_time,
+            reminders: readReminders(row.reminders),
+          },
+        },
+      );
+      if (!unchanged)
+        transaction(db, () => {
+          db.prepare(
+            "UPDATE calendar_entries SET start_time=?,reminders=?,updated_at=? WHERE id=?",
+          ).run(
+            data.time,
+            storedReminders(data.reminders),
+            nextStamp(row),
+            row.id,
+          );
+        });
+      return summary(row.id);
     }
     requireThat(
       row.title === data.expectedTitle || row.title === data.title,

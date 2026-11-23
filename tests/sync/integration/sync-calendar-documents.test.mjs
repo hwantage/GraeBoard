@@ -799,6 +799,31 @@ test(
         await converged(copy.result.id, "Copy body");
       }
 
+      // A copy made with its body has the body as its own document from the
+      // start, and the other site receives it with the entry.
+      for (const [where, source] of [
+        ["inside", outsideId],
+        ["outside", internal.result.id],
+      ]) {
+        await step(where, () => write(where, source, `Body to copy ${where}`));
+        const copy = await step(where, async () =>
+          ok(
+            await site[where](`/calendar/entries/${source}/copy`, {
+              id: randomUUID(),
+              includeDocument: true,
+            }),
+          ),
+        );
+        assert.deepEqual(
+          documentChanges(copy.ops, copy.result.id).map((c) => c.action),
+          ["create"],
+        );
+        assert.equal(copy.result.hasDocument, true);
+        await converged(copy.result.id, `Body to copy ${where}`);
+        // The source keeps its own document.
+        await converged(source, `Body to copy ${where}`);
+      }
+
       // The calendar marks a document by its content on both sites.
       for (const where of ["inside", "outside"]) {
         assert.equal((await entry(where, savedEmpty.id)).hasDocument, true);

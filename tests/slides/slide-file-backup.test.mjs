@@ -149,7 +149,7 @@ test("백업은 슬라이드 저장소와 참조하는 파일만 함께 묶고 �
     3,
   );
   const db = new DatabaseSync(restoredPath, { readOnly: true });
-  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 34);
+  assert.equal(db.prepare("PRAGMA user_version").get().user_version, 35);
   db.close();
 });
 

@@ -271,6 +271,7 @@ async function contract({
   };
   let entry = await service.createEntry({ body });
   assert.equal(entry.title, "Entry");
+  assert.deepEqual([entry.time, entry.reminders], [null, []]);
   const created = await counts();
   assert.deepEqual(await service.createEntry({ body }), entry);
   assert.deepEqual(await counts(), created);
@@ -348,12 +349,104 @@ async function contract({
     range.date,
     "lost range response is idempotent",
   );
+  // A start time and its reminders are saved together, on both engines.
+  // The reminders come back without repeats in ascending order.
+  const schedule = {
+    time: "09:30",
+    reminders: [30, 10],
+    expectedTime: null,
+    expectedReminders: [],
+  };
+  entry = await service.updateEntry({
+    params: { id: entry.id },
+    body: schedule,
+  });
+  assert.deepEqual([entry.time, entry.reminders], ["09:30", [10, 30]]);
+  assert.deepEqual(
+    (({ time, reminders }) => [time, reminders])(
+      await service.updateEntry({ params: { id: entry.id }, body: schedule }),
+    ),
+    ["09:30", [10, 30]],
+    "lost schedule response is idempotent",
+  );
+  await rejects(
+    () =>
+      service.updateEntry({
+        params: { id: entry.id },
+        body: { ...schedule, time: "10:00" },
+      }),
+    409,
+  );
+  for (const body of [
+    { ...schedule, time: null },
+    { ...schedule, time: "9:30" },
+    { ...schedule, time: "24:00" },
+    { ...schedule, reminders: [1441] },
+    { ...schedule, reminders: [1.5] },
+    { ...schedule, reminders: [10, 10] },
+    { ...schedule, reminders: 10 },
+  ])
+    await assert.rejects(
+      Promise.resolve().then(() =>
+        service.updateEntry({ params: { id: entry.id }, body }),
+      ),
+      (error) => error.name === "ZodError",
+      JSON.stringify(body),
+    );
+  const listed = (
+    await service.listEntries({
+      query: { teamId, userId: user.id, from: "2026-11-01", to: "2026-11-30" },
+    })
+  ).entries.find((item) => item.id === entry.id);
+  assert.deepEqual([listed.time, listed.reminders], ["09:30", [10, 30]]);
+  const timedBody = {
+    id: randomUUID(),
+    teamId,
+    userId: user.id,
+    date: "2027-03-02",
+    title: "Timed",
+    time: "08:00",
+    reminders: [0],
+  };
+  const timed = await service.createEntry({ body: timedBody });
+  assert.deepEqual([timed.time, timed.reminders], ["08:00", [0]]);
+  await rejects(
+    () => service.createEntry({ body: { ...timedBody, reminders: [0, 5] } }),
+    409,
+  );
+  assert.deepEqual(await service.createEntry({ body: timedBody }), timed);
+  await rejects(
+    () => service.createEntry({ body: { ...timedBody, time: "08:30" } }),
+    409,
+  );
   const copy = await service.copyEntry({
     params: { id: entry.id },
     body: { id: randomUUID() },
   });
   assert.match(copy.title, /Edited \(1\)/);
   assert.equal(copy.preview, "");
+  assert.deepEqual([copy.time, copy.reminders], ["09:30", [10, 30]]);
+  // A time alone needs no reminder; clearing the time clears both.
+  entry = await service.updateEntry({
+    params: { id: entry.id },
+    body: {
+      time: "14:00",
+      reminders: [],
+      expectedTime: "09:30",
+      expectedReminders: [10, 30],
+    },
+  });
+  assert.deepEqual([entry.time, entry.reminders], ["14:00", []]);
+  entry = await service.updateEntry({
+    params: { id: entry.id },
+    body: {
+      time: null,
+      reminders: [],
+      expectedTime: "14:00",
+      expectedReminders: [],
+    },
+  });
+  assert.deepEqual([entry.time, entry.reminders], [null, []]);
   await rejects(
     () =>
       service.copyEntry({ params: { id: entry.id }, body: { id: shared.id } }),

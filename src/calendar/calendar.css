@@ -417,6 +417,15 @@
 .modal-body .calendar-create-form > label:not(.checkbox) {
   margin: 0;
 }
+.calendar-create-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.calendar-create-head > p {
+  margin: 0;
+}
 .modal-body .calendar-create-form > .button {
   align-self: flex-start;
 }
@@ -1262,6 +1271,162 @@
   font-size: 11px;
   color: var(--accent);
   padding-bottom: 7px;
+}
+/* In the entry detail the start-reminder switch sits right of the dates;
+   what it opens takes the next lines. */
+.calendar-entry-schedule {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 14px;
+}
+.calendar-entry-schedule > .calendar-range-editor {
+  /* Keep both dates on one line; the row wraps the switch below if narrow. */
+  flex: 0 1 auto;
+  min-width: min(100%, 312px);
+  margin-top: 0;
+}
+.calendar-entry-schedule .calendar-reminder-editor,
+.calendar-entry-schedule .calendar-schedule {
+  display: contents;
+}
+.calendar-entry-schedule .calendar-schedule-switch {
+  min-height: 33px;
+}
+.calendar-entry-schedule .calendar-schedule-fields,
+.calendar-entry-schedule .calendar-reminder-note,
+.calendar-entry-schedule .calendar-reminder-editor > .error-note {
+  flex-basis: 100%;
+}
+.calendar-reminder-note [role="status"] {
+  color: var(--accent);
+}
+.calendar-reminder-current {
+  color: var(--ink);
+  white-space: nowrap;
+}
+/* The card's bell with its dot, inline in the note. */
+.calendar-reminder-bell {
+  position: relative;
+  display: inline-flex;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+.calendar-reminder-bell::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  background: #8a949a;
+}
+.calendar-reminder-bell[data-status="pending"]::after {
+  background: #e8a317;
+}
+.calendar-reminder-bell[data-status="sent"]::after {
+  background: #1f9d55;
+}
+.calendar-reminder-bell[data-status="failed"]::after {
+  background: #d93025;
+}
+.calendar-schedule-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.calendar-schedule {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+/* The start time and the reminder check boxes share one line. */
+.calendar-schedule-fields {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+/* Wide enough for the start time and its reminders on one line. */
+.modal.calendar-create-modal {
+  width: min(580px, calc(100vw - 32px));
+}
+/* Above the modal's full-width inputs. */
+.modal-body
+  .calendar-schedule
+  .calendar-schedule-fields
+  input.calendar-schedule-time[type="time"] {
+  width: 130px;
+  min-height: 33px;
+  padding: 5px 7px;
+  font-size: 12px;
+  font-weight: 400;
+}
+.calendar-reminder-options {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+.calendar-reminder-options .checkbox {
+  gap: 5px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.calendar-reminder-options .checkbox input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+}
+/* The bell in a card's top right corner; its dot tells how the reminders went. */
+.calendar-entry-bell {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  display: inline-flex;
+  color: var(--ink);
+  opacity: 0.75;
+  pointer-events: none;
+}
+.calendar-entry-bell::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  background: #8a949a;
+}
+.calendar-entry-bell[data-status="set"]::after {
+  display: none;
+}
+.calendar-entry-bell[data-status="pending"]::after {
+  background: #e8a317;
+}
+.calendar-entry-bell[data-status="sent"]::after {
+  background: #1f9d55;
+}
+.calendar-entry-bell[data-status="failed"]::after {
+  background: #d93025;
+}
+.calendar-entry-segment:has(> .calendar-entry-bell) .calendar-entry-card {
+  padding-right: 24px;
+}
+.calendar-reminder-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.calendar-entry-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  opacity: 0.8;
 }
 .calendar-entry-tools {
   display: flex;

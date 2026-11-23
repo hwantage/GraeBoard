@@ -88,7 +88,9 @@ export function openDatabase(
     throw new Error(
       [29, 30, 31, 32, 33].includes(version)
         ? `DB 형식 v${version}의 자동 변환은 지원하지 않습니다. 모든 서버를 멈춘 뒤 사본 명칭 전환 도구(npm run cutover:sheet-clone, docs/OPERATIONS.md)로 변환하세요.`
-        : `DB 형식 v${version}은 지원하지 않습니다. 지원하는 변환 경로가 없으므로 원본과 호환 릴리스를 보존하세요.`,
+        : version === 34
+          ? `DB 형식 v34를 v${SCHEMA_VERSION}로 올려야 합니다. 서버를 멈추고 백업한 뒤 npm run migrate -- --engine sqlite --database <DB 절대경로>를 실행하세요(docs/OPERATIONS.md).`
+          : `DB 형식 v${version}은 지원하지 않습니다. 지원하는 변환 경로가 없으므로 원본과 호환 릴리스를 보존하세요.`,
     );
   }
   db.exec(

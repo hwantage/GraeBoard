@@ -172,6 +172,49 @@ test("일정 복제는 월 밖의 이름·동시 요청·재시도를 고려해 
   );
   assert.equal(sharedCopy.status, 201);
   assert.equal(sharedCopy.data.title, "팀 회의 (1)");
+  // With its body: the copy starts with the same document, the source keeps
+  // its own, and a retry of the request changes nothing.
+  const withBody = randomUUID();
+  const copied = await f.req(path, "POST", {
+    id: withBody,
+    includeDocument: true,
+  });
+  assert.equal(copied.status, 201);
+  assert.equal(copied.data.hasDocument, true);
+  assert.equal(copied.data.preview, "복제하지 않을 본문");
+  const copiedDocument = (await f.req(`/calendar/entries/${withBody}/document`))
+    .data;
+  assert.equal(copiedDocument.markdown, "복제하지 않을 본문");
+  assert.deepEqual(
+    (await f.req(path, "POST", { id: withBody, includeDocument: true })).data,
+    copied.data,
+  );
+  assert.equal(
+    (
+      await f.req(`/calendar/entries/${withBody}/document`, "PUT", {
+        markdown: "복제본에서 고친 본문",
+        expectedRevision: copiedDocument.revision,
+        operationId: randomUUID(),
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await f.req(`/calendar/entries/${source.id}/document`)).data.markdown,
+    "복제하지 않을 본문",
+  );
+  // An entry without a body copies as before, and the option must be a boolean.
+  const empty = await f.req(`/calendar/entries/${id}/copy`, "POST", {
+    id: randomUUID(),
+    includeDocument: true,
+  });
+  assert.equal(empty.status, 201);
+  assert.equal(empty.data.hasDocument, false);
+  assert.equal(
+    (await f.req(path, "POST", { id: randomUUID(), includeDocument: "yes" }))
+      .status,
+    400,
+  );
 });
 
 test("일정 즉시 삭제·실행취소는 본문·태그·체크·상대 순서를 보존하고 권한과 재시도를 검사한다", async (t) => {
@@ -2626,19 +2669,25 @@ test("캘린더 이미지의 공통 업로드·권한·백업 복구와 문서 �
 test("이전 스키마는 자동 이관하지 않고 기존 DB를 보존한 채 거부한다", () => {
   const dir = mkdtempSync(join(tmpdir(), "calendar-schema-")),
     path = join(dir, "old.sqlite");
-  const previous = new DatabaseSync(path);
-  previous.exec(`PRAGMA user_version=${SCHEMA_VERSION - 1}`);
-  previous.close();
   try {
-    assert.throws(() => openDatabase(path), /지원하지 않습니다/);
-    const verify = new DatabaseSync(path, { readOnly: true });
-    try {
-      assert.equal(
-        verify.prepare("PRAGMA user_version").get().user_version,
-        SCHEMA_VERSION - 1,
-      );
-    } finally {
-      verify.close();
+    // The previous version is upgraded only by the explicit migrate command.
+    for (const [version, message] of [
+      [SCHEMA_VERSION - 1, /npm run migrate -- --engine sqlite/],
+      [28, /지원하지 않습니다/],
+    ]) {
+      const previous = new DatabaseSync(path);
+      previous.exec(`PRAGMA user_version=${version}`);
+      previous.close();
+      assert.throws(() => openDatabase(path), message);
+      const verify = new DatabaseSync(path, { readOnly: true });
+      try {
+        assert.equal(
+          verify.prepare("PRAGMA user_version").get().user_version,
+          version,
+        );
+      } finally {
+        verify.close();
+      }
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -3610,3 +3659,99 @@ for (const transport of ["direct", "shared"])
       "권한 회수 후 비공개 입력",
     );
   });
+
+test("일정 시작 시각·알림은 함께 저장하고 충돌 시 최신 값을 돌려주며, 알림 받을 PC 주소는 본인 것만 다룬다", async (t) => {
+  const f = await fixture(t);
+  const created = await f.create("2026-10-20");
+  assert.equal(created.status, 201);
+  const path = `/calendar/entries/${created.data.id}`;
+  assert.deepEqual(
+    [created.data.time, created.data.reminders, created.data.reminderStatus],
+    [null, [], null],
+  );
+  const schedule = {
+    time: "09:30",
+    reminders: [10, 0],
+    expectedTime: null,
+    expectedReminders: [],
+  };
+  const saved = await f.req(path, "PATCH", schedule);
+  assert.equal(saved.status, 200);
+  assert.deepEqual([saved.data.time, saved.data.reminders], ["09:30", [0, 10]]);
+  // The entry is in the future of the test clock: its reminders wait.
+  assert.equal(saved.data.reminderStatus, "pending");
+  assert.ok(saved.data.updatedAt > created.data.updatedAt);
+  // A retry of the same request changes nothing more.
+  const retried = await f.req(path, "PATCH", schedule);
+  assert.equal(retried.data.updatedAt, saved.data.updatedAt);
+  const conflict = await f.req(path, "PATCH", { ...schedule, time: "11:00" });
+  assert.equal(conflict.status, 409);
+  assert.deepEqual(conflict.data.details.currentSchedule, {
+    time: "09:30",
+    reminders: [0, 10],
+  });
+  for (const body of [
+    { ...schedule, time: null },
+    { ...schedule, time: "25:00" },
+    { ...schedule, reminders: [2000] },
+    { ...schedule, reminders: [5, 5] },
+    { time: "10:00", reminders: [] },
+  ])
+    assert.equal((await f.req(path, "PATCH", body)).status, 400);
+  // Another member cannot change a personal entry's time.
+  assert.equal(
+    (
+      await f.req(
+        path,
+        "PATCH",
+        {
+          time: null,
+          reminders: [],
+          expectedTime: "09:30",
+          expectedReminders: [0, 10],
+        },
+        "second",
+      )
+    ).status,
+    403,
+  );
+  assert.deepEqual(
+    (({ time, reminders }) => [time, reminders])((await f.req(path)).data),
+    ["09:30", [0, 10]],
+  );
+  // Once sent, the reminders show as sent; one that reached nobody as failed.
+  const record = (minutes, recipients) =>
+    f.db
+      .prepare("INSERT INTO calendar_reminder_sends VALUES(?,?,?,?)")
+      .run(
+        created.data.id,
+        new Date(
+          Date.parse("2026-10-20T00:30:00.000Z") - minutes * 60000,
+        ).toISOString(),
+        now(),
+        recipients,
+      );
+  record(10, 1);
+  assert.equal((await f.req(path)).data.reminderStatus, "pending");
+  record(0, 1);
+  assert.equal((await f.req(path)).data.reminderStatus, "sent");
+  assert.equal(
+    (await f.list()).data.entries.find((item) => item.id === created.data.id)
+      .reminderStatus,
+    "sent",
+  );
+  f.db.prepare("UPDATE calendar_reminder_sends SET recipients=0").run();
+  assert.equal((await f.req(path)).data.reminderStatus, "failed");
+
+  // Requests of this test come from the loopback address, which no push
+  // reaches, and nobody sets an address by hand.
+  assert.deepEqual((await f.req("/push-address")).data, {
+    enabled: false,
+    ip: null,
+  });
+  assert.equal(
+    (await f.req("/push-address", "PUT", { ip: "10.1.2.3" })).status,
+    404,
+  );
+  assert.equal((await f.req("/push-address/test", "POST", {})).status, 409);
+});

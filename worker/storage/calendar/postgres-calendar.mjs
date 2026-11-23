@@ -23,6 +23,7 @@ import {
   calendarWeek,
   calendarRuleProblem,
   nextCalendarCopyTitle,
+  calendarSchedule,
   weeklyOrderStamps,
   CALENDAR_DAYS,
 } from "../../../shared/calendar/calendar.js";
@@ -96,6 +97,10 @@ export async function entryView(s, row) {
     endDate: p.endDate,
     lane: p.lane,
     title: p.title,
+    time: p.time ?? null,
+    reminders: p.reminders ?? [],
+    // Reminders are sent by the internal site; this one cannot tell how.
+    reminderStatus: null,
     preview: calendarPreview((!doc?.deleted && doc?.payload.markdown) || ""),
     hasDocument:
       !doc?.deleted && hasDocumentContent(doc?.payload.markdown || ""),
@@ -765,7 +770,8 @@ async function calendarOperation(ctx, operation, params, body, query) {
     const id = idSchema.parse(body.id),
       date = dateSchema.parse(body.date),
       endDate = body.endDate || date,
-      title = titleSchema.parse(body.title);
+      title = titleSchema.parse(body.title),
+      schedule = calendarSchedule(body.time, body.reminders);
     validRange(date, endDate);
     return ctx.data(
       teamId,
@@ -790,6 +796,7 @@ async function calendarOperation(ctx, operation, params, body, query) {
                   title,
                   tags,
                   deletedAt: null,
+                  ...schedule,
                 },
               ),
             409,
@@ -809,6 +816,7 @@ async function calendarOperation(ctx, operation, params, body, query) {
             title,
             tags,
             deletedAt: null,
+            ...schedule,
           });
         return entryView(s, row);
       },
@@ -875,6 +883,14 @@ async function calendarOperation(ctx, operation, params, body, query) {
             title,
             lane: firstCalendarLane(await layout(s, p.userId), p),
           });
+          // The body is copied as the copy's own document.
+          const document =
+            body.includeDocument &&
+            (await s.get("document", ["calendar", row.key[0], "main"]));
+          if (document && !document.deleted && document.payload.markdown)
+            await s.put("document", ["calendar", id, "main"], {
+              ...document.payload,
+            });
           return entryView(s, saved);
         }
         if (params.tagId) {
@@ -1004,6 +1020,18 @@ async function calendarOperation(ctx, operation, params, body, query) {
             "일정 제목이 변경되었습니다.",
           );
           next.title = titleSchema.parse(body.title);
+        } else if ("time" in body) {
+          // The start time and its reminders are saved together.
+          const current = [p.time ?? null, p.reminders ?? []];
+          assert(
+            equal(current, [body.expectedTime, body.expectedReminders]) ||
+              equal(current, [body.time, body.reminders]),
+            409,
+            "다른 사용자가 일정 시각이나 알림을 변경했습니다. 최신 값을 확인하세요.",
+          );
+          delete next.time;
+          delete next.reminders;
+          Object.assign(next, calendarSchedule(body.time, body.reminders));
         } else if (body.tagIds) {
           assert(
             equal(
