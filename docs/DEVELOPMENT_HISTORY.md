@@ -25,6 +25,11 @@
 카드 메뉴에 **일정 복제 (본문 포함)**을 더했습니다. 기존 복제 요청의 선택 값 `includeDocument`로 두 저장소가 본문을 복제본의 문서로 함께 저장하며 저장 형식 변경은 없습니다. 복제는 두 방식 모두 시각·알림을 복사합니다.
 
 검증: 발송 시각·유예·대상·재시도·여러 알림·상태 판정·주소 자동 등록은 시계와 허브를 대역으로(`tests/calendar/calendar-reminder-push.test.mjs`), 시각·알림 저장·충돌·복제는 SQLite·PostgreSQL 공통 계약과 사내 HTTP로, v34 → v35와 전환 도구 결과의 v35 승격·중단 롤백·신규 설치와의 스키마 일치는 `tests/sync/recovery/sync-migrations.test.mjs`로, 본문 포함 복제의 양방향 동기화는 `tests/sync/integration/sync-calendar-documents.test.mjs`로 검사합니다. 개발 PC(Windows)에서는 공식 실행기가 고정 소스의 심볼릭 링크·`npm` 실행·PostgreSQL 실행 파일 이름 때문에 돌지 않아, Node 22·PostgreSQL 18.7 Linux 컨테이너에서 `TEST_PG_BIN=… npm test`와 `npm run build:edge`를 실행했습니다. 실제 건수는 PR에 기록합니다. `npm run build`는 `tsc`·Vite 빌드까지 통과했고 CanvaSlide 편집기 배포본 단계는 컨테이너의 외부 접속 차단(내려받기 실패)과 Windows 줄바꿈으로 달라진 빌드 ID 때문에 확인하지 못했습니다. 브라우저 검사는 설치된 Chrome으로 `calendar-reminders.spec.ts`·`calendar-improvements.spec.ts` 10건을 실행했고 Firefox·WebKit은 실행하지 못했습니다. 실제 다바다허브로의 발송은 읽기 전용 응답 확인만 했으며 운영 DB migration과 배포는 수행하지 않았습니다.
+## 2026-11-23 — 업무 링크가 보던 문서를 가리킴
+
+문서가 여러 개인 업무 상세에서 **링크 복사**를 누르면 항상 첫 문서가 열리던 것을, 보고 있던 문서가 열리도록 했습니다. 사용자 승인에 따라 저장되는 링크 경로에 선택 항목인 문서 ID를 더했습니다(`/links/task/<업무>/<문서>`, 사본 업무도 같음). 문서가 하나인 업무와 기존 링크는 그대로입니다. 링크 제목은 업무 제목을 유지합니다. 같은 업무의 다른 문서를 가리키는 링크들은 한 상세 창을 공유해, 이미 열린 업무면 그 창에서 문서만 바꿉니다. 경로 해석은 `shared/documents/document-links.js` 한 곳이며 두 서버의 제목 조회는 업무 ID만 사용하므로 서버 저장 코드는 바뀌지 않았습니다.
+
+검증: 경로 왕복·거절 형식(`tests/documents/document-link-paths.test.mjs`), 문서 ID가 붙은 경로의 제목 조회와 권한(`tests/calendar/calendar.test.mjs`), 복사 주소·새 탭 열기·붙여넣은 링크 열기·열린 창에서 문서 전환(`tests/browser/documents/document-links.spec.ts`). 실행 환경과 건수는 PR에 기록합니다.
 
 ## 2026-11-22 — CanvaSlide 게시 주기와 제목 검증
 

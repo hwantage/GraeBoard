@@ -49,6 +49,8 @@ import CopyEmojiButton from "./documents/CopyEmojiButton";
 import DocumentFullPageButton from "./documents/DocumentFullPageButton";
 import { useDocumentFullPage } from "./documents/useDocumentFullPage";
 import {
+  documentLinkDocumentId,
+  documentLinkWindowKey,
   updateDocumentLinkTitle,
   useOpenDocumentLink,
   type DocumentLinkTarget,
@@ -135,7 +137,7 @@ export const TaskDetailContent = forwardRef<
     propertiesReadOnly?: boolean;
     documentSheetClone?: { id: string; isNew: boolean };
     initialDocumentId?: string;
-    onDocumentSelected?: (id: string) => void;
+    onDocumentSelected?: (id: string, count: number) => void;
     onDocumentSaved: (result: DocumentSaveResult) => void;
     onSaveProperty: (request: PropertySaveRequest) => Promise<SavedCell[]>;
     onCloseWithDraft: () => void;
@@ -276,6 +278,7 @@ export function RowPanel({
   const [preferredFullPage, setDocumentFullPage] = useState(initialFullPage);
   // The full-page button's new tab opens the document shown here.
   const [shownDocument, setShownDocument] = useState(initialDocumentId);
+  const [documentCount, setDocumentCount] = useState(0);
   const { fullPage: documentFullPage, fullWidth } =
     useDocumentFullPage(preferredFullPage);
   // A copy's task keeps the original's ID, so its link also names the copy.
@@ -305,7 +308,21 @@ export function RowPanel({
       leaving.current = false;
     }
   }
-  useOpenDocumentLink(linkTarget, () => leave(onClose));
+  // A task with several documents is linked at the one shown, so the link
+  // opens that document. One document needs no name in the link.
+  const copyTarget: DocumentLinkTarget =
+    shownDocument && documentCount > 1
+      ? { ...linkTarget, documentId: shownDocument }
+      : linkTarget;
+  // A link naming another document of this open task shows it here.
+  useOpenDocumentLink(linkTarget, () => leave(onClose), {
+    accepts: (next) =>
+      !!documentLinkDocumentId(next) &&
+      documentLinkWindowKey(next) === documentLinkWindowKey(linkTarget),
+    select: (next) =>
+      detailRef.current?.selectDocument(documentLinkDocumentId(next)!) ??
+      Promise.resolve(false),
+  });
   function act(action: string) {
     void leave(() => onAction?.(action));
   }
@@ -316,7 +333,7 @@ export function RowPanel({
         <>
           {newTask && <NewTaskMark labelled />}
           <CopyDocumentLinkButton
-            target={linkTarget}
+            target={copyTarget}
             title={String(value(task, "title"))}
           />
           <DocumentFullPageButton
@@ -379,7 +396,10 @@ export function RowPanel({
         propertiesReadOnly={propertiesReadOnly}
         documentSheetClone={documentSheetClone}
         initialDocumentId={initialDocumentId}
-        onDocumentSelected={setShownDocument}
+        onDocumentSelected={(id, count) => {
+          setShownDocument(id);
+          setDocumentCount(count);
+        }}
         onDocumentSaved={onDocumentSaved}
         onSaveProperty={async (request) => {
           const cells = await onSaveProperty(request);

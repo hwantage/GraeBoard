@@ -1591,3 +1591,97 @@ test("메모 목록 로딩 오류의 제목은 한 번만 보고하고 재시도
   await expect(page).toHaveTitle("둘째 메모 · 그래보드");
   expect(pageErrors).toEqual([]);
 });
+
+test("문서가 여러 개인 업무의 링크 복사는 보던 문서를 가리키고 주소·붙인 링크 모두 그 문서를 연다", async ({
+  page,
+}) => {
+  // One document needs no name in the link.
+  const single = await open(page);
+  const address = (id: string, documentId?: string) =>
+    new URL(
+      `/links/task/${id}${documentId ? `/${documentId}` : ""}`,
+      page.url(),
+    ).href;
+  // Several copies in a row: what the page writes is observed instead of
+  // read back from the system clipboard, which other programs also change.
+  // The notice of the copy before may still be shown, so wait for the write.
+  const copy = async (dialog: Locator) => {
+    await copied(
+      page,
+      "observed",
+      dialog.getByRole("button", { name: "링크 복사", exact: true }),
+    );
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__copied))
+      .not.toBeNull();
+    return page.evaluate(
+      () => (window as any).__copied as { text: string; html: string },
+    );
+  };
+  expect((await copy(single)).text).toBe(address(taskIds[0]));
+  await single.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(details(page)).toHaveCount(0);
+
+  await saveTask(page, taskIds[1], "# 첫 문서\n\n첫 문서 본문");
+  const second = randomUUID();
+  await request(page, `/tasks/${taskIds[1]}/documents`, "POST", {
+    id: second,
+  });
+  await request(page, `/tasks/${taskIds[1]}/documents/${second}`, "PUT", {
+    markdown: "# 둘째 문서\n\n둘째 문서 본문",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  await page.reload();
+  const dialog = await open(page, taskIds[1]);
+  const tabs = dialog.getByRole("tab");
+  await expect(tabs).toHaveCount(2);
+  expect((await copy(dialog)).text).toBe(address(taskIds[1], "main"));
+  await tabs.nth(1).click();
+  await expect(rich(dialog)).toContainText("둘째 문서 본문");
+  const clip = await copy(dialog);
+  expect(clip.text).toBe(address(taskIds[1], second));
+  // The link still shows the task's title.
+  expect(clip.html).toContain(">링크 대상 업무</a>");
+  await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(details(page)).toHaveCount(0);
+
+  // The copied address opens the task at that document.
+  const tab = await page.context().newPage();
+  await tab.goto(clip.text);
+  const opened = details(tab);
+  await expect(opened.getByRole("tab").nth(1)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(rich(opened)).toContainText("둘째 문서 본문");
+  expect(new URL(tab.url()).pathname).toBe("/");
+  await tab.close();
+
+  // Pasted into another document it keeps the document and the task's title.
+  const source = await open(page);
+  await paste(rich(source), clip.text, clip.html);
+  await expect(links(source)).toHaveText("링크 대상 업무");
+  await expect
+    .poll(() => taskMarkdown(page, taskIds[0]))
+    .toContain(`[링크 대상 업무](/links/task/${taskIds[1]}/${second})`);
+  await links(source).click();
+  await expect(details(page)).toHaveCount(2);
+  const linked = details(page).nth(1);
+  await expect(linked.getByRole("tab").nth(1)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(rich(linked)).toContainText("둘째 문서 본문");
+  // A link to another document of the task already open shows it there.
+  const first = address(taskIds[1], "main");
+  await paste(rich(linked), first, `<a href="${first}">첫 문서로</a>`);
+  await expect(links(linked)).toHaveCount(1);
+  await links(linked).click();
+  await expect(details(page)).toHaveCount(2);
+  await expect(linked.getByRole("tab").nth(0)).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(rich(linked)).toContainText("첫 문서 본문");
+});
