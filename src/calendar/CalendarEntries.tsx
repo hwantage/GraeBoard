@@ -334,7 +334,6 @@ export default function CalendarEntries({
                   {...busyProps(disabled && !drag)}
                   aria-disabled={disabled || undefined}
                   aria-label={`${mode === "start" ? "시작일" : "종료일"} 조정`}
-                  title={`${mode === "start" ? "시작일" : "종료일"} 드래그 · 좌우 방향키 1일, 위아래 방향키 1주`}
                   onClick={(e) => open(e.detail)}
                   onPointerDown={
                     disabled ? undefined : (e) => onDragStart(e, item, mode)
