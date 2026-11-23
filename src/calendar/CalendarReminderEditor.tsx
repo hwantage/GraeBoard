@@ -7,6 +7,7 @@ import {
 } from "react";
 import { api, ApiError, send } from "../platform/api";
 import { useSite } from "../platform/site-context";
+import { Bell } from "lucide-react";
 import { Button } from "../ui/Button";
 import { ErrorNote } from "../ui/ErrorNote";
 import CalendarScheduleFields, {
@@ -22,6 +23,13 @@ const scheduleOf = (entry: CalendarEntry): CalendarSchedule => ({
   time: entry.time ?? null,
   reminders: entry.reminders ?? [],
 });
+
+// The states the bell's dot tells apart, with what each means.
+const REMINDER_STATES = [
+  ["pending", "주황 = 대기(보낼 알림이 남음)"],
+  ["sent", "초록 = 모두 보냄"],
+  ["failed", "빨강 = 오류(받을 PC 없음 또는 시각이 지나도록 못 보냄)"],
+] as const;
 
 // The start time of an entry and its reminders. Both sites save the same
 // setting; the reminders themselves are pushed by the internal server through
@@ -53,6 +61,10 @@ export default function CalendarReminderEditor({
   const [address, setAddress] = useState<PushAddress | null>(null);
   const [testing, setTesting] = useState(false);
   const [notice, setNotice] = useState("");
+  // How this entry's reminders stand, as the card's bell shows it.
+  const [reminderStatus, setReminderStatus] = useState(
+    entry.reminderStatus ?? null,
+  );
   useEffect(() => {
     alive.current = true;
     const controller = new AbortController();
@@ -92,6 +104,7 @@ export default function CalendarReminderEditor({
           "PATCH",
         );
         base.current = scheduleOf(result);
+        setReminderStatus(result.reminderStatus ?? null);
         onSaved(result);
         if (alive.current) {
           setError("");
@@ -194,6 +207,23 @@ export default function CalendarReminderEditor({
           {destination}
           {destination && status && " · "}
           {status && <span role="status">{status}</span>}
+          {/* What the dot on the card's bell means, and this entry's now. */}
+          {reminding && !site.external && address?.enabled && (
+            <span className="calendar-reminder-legend">
+              {" · "}
+              <Bell size={11} aria-hidden="true" /> 종 아이콘의 점:
+              {REMINDER_STATES.map(([state, label]) => (
+                <span
+                  key={state}
+                  className="calendar-reminder-state"
+                  data-status={state}
+                  data-current={reminderStatus === state || undefined}
+                >
+                  {label}
+                </span>
+              ))}
+            </span>
+          )}
         </p>
       )}
       <ErrorNote error={error} />

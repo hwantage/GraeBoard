@@ -1302,6 +1302,36 @@
 .calendar-reminder-note [role="status"] {
   color: var(--accent);
 }
+.calendar-reminder-legend svg {
+  vertical-align: -1px;
+}
+.calendar-reminder-state {
+  margin-left: 8px;
+  white-space: nowrap;
+}
+.calendar-reminder-state::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: #8a949a;
+}
+.calendar-reminder-state[data-status="pending"]::before {
+  background: #e8a317;
+}
+.calendar-reminder-state[data-status="sent"]::before {
+  background: #1f9d55;
+}
+.calendar-reminder-state[data-status="failed"]::before {
+  background: #d93025;
+}
+/* The state this entry is in now. */
+.calendar-reminder-state[data-current] {
+  color: var(--ink);
+  font-weight: 600;
+}
 .calendar-schedule {
   display: flex;
   flex-direction: column;
