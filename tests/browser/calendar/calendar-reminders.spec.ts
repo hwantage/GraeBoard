@@ -234,6 +234,31 @@ test("일정 추가 창에서도 시작 알림을 켜 시각과 알림을 함께
   await expect(card(page, entry.id).locator("time")).toHaveText("15:45");
   await expect(bell(page, entry.id)).toHaveAttribute("data-status", "pending");
 
+  // Turned on and left without a title, the window opens with it off again.
+  const other = addDays(todayKey(), 2);
+  const add = (day: string) =>
+    page
+      .locator(`[data-date="${day}"]`)
+      .getByRole("button", { name: /일정 추가/ })
+      .first()
+      .click();
+  await add(other);
+  await expect(fields(dialog).toggle).not.toBeChecked();
+  await fields(dialog).toggle.check({ force: true });
+  await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await add(other);
+  await expect(fields(dialog).toggle).not.toBeChecked();
+  // With a title the draft keeps the reminder as it was left.
+  await dialog.getByLabel("새 일정 제목").fill("보관할 일정");
+  await fields(dialog).toggle.check({ force: true });
+  await fields(dialog).time.fill("11:20");
+  await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+  await add(other);
+  await expect(fields(dialog).time).toHaveValue("11:20");
+  await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+
   // A secret entry stays in this browser and has no reminders.
   await page
     .locator(`[data-date="${date}"]`)

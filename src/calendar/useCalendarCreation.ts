@@ -64,6 +64,10 @@ export default function useCalendarCreation({
     const tagIds: string[] = Array.isArray(saved?.tagIds)
       ? saved.tagIds.filter((id: string) => tagMap.get(id)?.userId === ownerId)
       : [];
+    const keptSchedule =
+      typeof saved?.title === "string" &&
+      !!saved.title.trim() &&
+      typeof saved.time === "string";
     setCreating({
       secret:
         ownerId === user.id && (saved?.secret === true || !writable(ownerId)),
@@ -78,9 +82,11 @@ export default function useCalendarCreation({
               tagIds.includes(id) && tagMap.get(id)?.kind === "check",
           )
         : [],
-      time: typeof saved?.time === "string" ? saved.time : null,
+      // The start reminder comes back only with a draft that has a title; a
+      // window closed without one opens with the reminder off again.
+      time: keptSchedule ? saved.time : null,
       reminders:
-        typeof saved?.time === "string" && Array.isArray(saved.reminders)
+        keptSchedule && Array.isArray(saved.reminders)
           ? saved.reminders.filter((minutes: unknown) =>
               Number.isInteger(minutes),
             )

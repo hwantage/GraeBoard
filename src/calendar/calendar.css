@@ -417,6 +417,15 @@
 .modal-body .calendar-create-form > label:not(.checkbox) {
   margin: 0;
 }
+.calendar-create-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.calendar-create-head > p {
+  margin: 0;
+}
 .modal-body .calendar-create-form > .button {
   align-self: flex-start;
 }
