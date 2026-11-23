@@ -22,6 +22,9 @@ import {
   accessTokenChecksum,
   maintenanceSql,
   sheetCloneChecksum,
+  sheetCloneSql,
+  calendarReminderSql,
+  calendarReminderChecksum,
 } from "../../../server/migrations/sqlite.mjs";
 import {
   frozenCutoverModule,
@@ -42,9 +45,14 @@ const RENAMED = {
   report_documents: "sheet_clone_documents",
   report_memos: "sheet_clone_memos",
 };
+// The frozen cutover tool converts to v34, the version it was released with;
+// `npm run migrate` then takes v34 to the current version.
+const CUTOVER_VERSION = 34;
+// v35 adds columns: an existing entry has neither a start time nor a reminder.
+const ADDED = { calendar_entries: { start_time: null, remind_minutes: null } };
 // node:sqlite rows have no prototype; a renamed column keeps its position.
-const renamed = (table, rows) =>
-  RENAMED[table]
+const renamed = (table, rows, version) =>
+  RENAMED[table] || (ADDED[table] && version >= 35)
     ? rows.map((row) =>
         Object.assign(
           Object.create(null),
@@ -54,15 +62,16 @@ const renamed = (table, rows) =>
               value,
             ]),
           ),
+          version >= 35 ? ADDED[table] : undefined,
         ),
       )
     : rows;
-const preserved = (after, before, skip = []) => {
+const preserved = (after, before, skip = [], version = SQLITE_VERSION) => {
   for (const [table, rows] of Object.entries(before))
     if (!skip.includes(table))
       assert.deepEqual(
         after[RENAMED[table] || table],
-        renamed(table, rows),
+        renamed(table, rows, version),
         table,
       );
 };
@@ -119,7 +128,7 @@ function shape(db) {
     .all();
 }
 
-test("v29 → v34 preserves all legacy rows, identities, revisions and references; new installation has the identical schema", () => {
+test("v29 → v35 preserves all legacy rows, identities, revisions and references; new installation has the identical schema", () => {
   const upgraded = legacy(),
     fresh = new DatabaseSync(":memory:");
   try {
@@ -290,7 +299,7 @@ test("CLI dry-run preserves original bytes and never creates a missing target; a
   }
 });
 
-test("released v30 upgrades atomically to v34, retaining the original migration checksum and all rows", () => {
+test("released v30 upgrades atomically to v35, retaining the original migration checksum and all rows", () => {
   const db = legacy();
   try {
     db.exec(syncSql);
@@ -331,7 +340,7 @@ test("released v30 upgrades atomically to v34, retaining the original migration 
   }
 });
 
-test("released v33 upgrades to v34 with every earlier checksum kept; an interrupted conversion keeps v33", () => {
+test("released v33 upgrades to v35 with every earlier checksum kept; an interrupted conversion keeps v33", () => {
   const db = legacy();
   try {
     db.exec(syncSql);
@@ -379,6 +388,12 @@ test("released v33 upgrades to v34 with every earlier checksum kept; an interrup
         .prepare("SELECT checksum FROM schema_migrations WHERE version=34")
         .get().checksum,
       sheetCloneChecksum,
+    );
+    assert.equal(
+      db
+        .prepare("SELECT checksum FROM schema_migrations WHERE version=35")
+        .get().checksum,
+      calendarReminderChecksum,
     );
     preserved(contents(db), before, ["schema_migrations"]);
     assert.match(
@@ -450,7 +465,7 @@ test("released v31 index upgrade preserves old checksums, rolls back DDL and use
   }
 });
 
-test("v31 startup preserves the database and directs operators to the cutover tool before booting v34", () => {
+test("v31 startup preserves the database and directs operators to the cutover tool, then to the v35 migration, before booting", () => {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-v31-startup-")),
     path = join(dir, "existing.sqlite");
   let db = legacy(path);
@@ -487,8 +502,29 @@ test("v31 startup preserves the database and directs operators to the cutover to
     const { from, to, applied } = JSON.parse(migrated.stdout);
     assert.deepEqual(
       { from, to, applied },
-      { from: 31, to: SQLITE_VERSION, applied: true },
+      { from: 31, to: CUTOVER_VERSION, applied: true },
     );
+    // The converted v34 database still needs the additive v35 migration.
+    assert.throws(
+      () => openDatabase(path),
+      (error) => {
+        assert.match(error.message, /v34/);
+        assert.match(error.message, /npm run migrate -- --engine sqlite/);
+        return true;
+      },
+    );
+    const upgrading = new DatabaseSync(path);
+    try {
+      upgrading.exec("PRAGMA foreign_keys=ON");
+      assert.deepEqual(
+        (({ from, to, applied }) => ({ from, to, applied }))(
+          migrateSqlite(upgrading),
+        ),
+        { from: CUTOVER_VERSION, to: SQLITE_VERSION, applied: true },
+      );
+    } finally {
+      upgrading.close();
+    }
     db = openDatabase(path);
     assert.equal(sqliteVersion(db), SQLITE_VERSION);
     assertSqliteHistory(db);
@@ -543,7 +579,7 @@ test("an installation that never shared history converts its SQLite database alo
       const planned = JSON.parse(preview.stdout);
       assert.deepEqual(
         [planned.from, planned.to, planned.applied, planned.dryRun],
-        [version, SQLITE_VERSION, false, true],
+        [version, CUTOVER_VERSION, false, true],
         `v${version}`,
       );
       assert.deepEqual(readFileSync(path), bytes, `v${version}`);
@@ -552,13 +588,13 @@ test("an installation that never shared history converts its SQLite database alo
       const result = JSON.parse(applied.stdout);
       assert.deepEqual(
         [result.from, result.to, result.applied, result.checksum],
-        [version, SQLITE_VERSION, true, sheetCloneChecksum],
+        [version, CUTOVER_VERSION, true, sheetCloneChecksum],
         `v${version}`,
       );
       db = new DatabaseSync(path, { readOnly: true });
-      assertSqliteHistory(db);
+      assertSqliteHistory(db, { version: CUTOVER_VERSION });
       assertSqliteIntegrity(db);
-      preserved(contents(db), before, ["schema_migrations"]);
+      preserved(contents(db), before, ["schema_migrations"], CUTOVER_VERSION);
       db.close();
       // A rerun validates the converted database and changes nothing.
       const converted = readFileSync(path),
@@ -567,7 +603,7 @@ test("an installation that never shared history converts its SQLite database alo
       const again = JSON.parse(rerun.stdout);
       assert.deepEqual(
         [again.from, again.to, again.applied],
-        [SQLITE_VERSION, SQLITE_VERSION, false],
+        [CUTOVER_VERSION, CUTOVER_VERSION, false],
       );
       assert.deepEqual(readFileSync(path), converted);
     }
@@ -619,6 +655,150 @@ test("an installation that never shared history converts its SQLite database alo
       /a v29 database has no synchronization history; convert it with --database alone/,
     );
   } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// A database as the previous release (v34) created and filled it.
+function released34(path = ":memory:") {
+  const db = new DatabaseSync(path);
+  db.exec("PRAGMA foreign_keys=ON");
+  db.exec(baseSql);
+  for (const [version, sql, checksum] of [
+    [30, syncSql, syncChecksum],
+    [31, keySql, keyChecksum],
+    [32, maintenanceSql, maintenanceChecksum],
+    [33, accessTokenSql, accessTokenChecksum],
+    [34, sheetCloneSql, sheetCloneChecksum],
+  ]) {
+    db.exec(sql);
+    db.prepare("INSERT INTO schema_migrations VALUES(?,?,?)").run(
+      version,
+      checksum,
+      "released" + version,
+    );
+  }
+  db.exec(`
+    INSERT INTO teams VALUES('team','기존 팀','{"revision":8}');
+    INSERT INTO users(id,username,name,password,system_role,created_at) VALUES('person','existing@example.test','기존 사용자','preserved-password-hash','admin','2026-01-01');
+    INSERT INTO memberships VALUES('person','team','lead');
+    INSERT INTO document_versions VALUES('version','team','main','content-hash','# 보존 본문','1','2026-01-01','person');
+    INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,lane,title,preview,revision,updated_at,actor_id,version_id,deleted_at,deletion_id) VALUES('event','team','person','2026-10-01','2026-10-02',3,'보존 일정','본문',7,'2026-01-01','person','version',NULL,'deletion');
+    INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,title,updated_at,actor_id,deleted_at) VALUES('shared','team',NULL,'2026-10-05','2026-10-05','지운 팀 일정','2026-01-02','person','2026-01-03');
+    INSERT INTO calendar_tags(id,team_id,user_id,name,color,kind) VALUES('tag','team','person','확인','mint','check');
+    INSERT INTO calendar_entry_tags VALUES('event','tag',0,1);
+    PRAGMA user_version=34;
+  `);
+  return db;
+}
+
+test("v34 upgrades additively to v35 with npm run migrate: every row is kept, an interruption rolls back and the schema equals a new installation", () => {
+  const db = released34(),
+    fresh = new DatabaseSync(":memory:");
+  try {
+    const before = contents(db),
+      shapeBefore = shape(db);
+    // No conversion step is needed or asked for.
+    const planned = migrateSqlite(db, { dryRun: true });
+    assert.deepEqual(
+      [planned.from, planned.to, planned.applied, planned.checksum],
+      [34, 35, false, calendarReminderChecksum],
+    );
+    assert.equal(sqliteVersion(db), 34);
+    assert.deepEqual(contents(db), before);
+    assert.throws(
+      () =>
+        migrateSqlite(db, {
+          afterDdl(version) {
+            if (version === 35) throw new Error("interrupted35");
+          },
+        }),
+      /interrupted35/,
+    );
+    assert.equal(sqliteVersion(db), 34);
+    assert.deepEqual(contents(db), before);
+    assert.deepEqual(shape(db), shapeBefore);
+    const result = migrateSqlite(db);
+    assert.deepEqual(
+      [result.from, result.to, result.applied, result.checksum],
+      [34, 35, true, calendarReminderChecksum],
+    );
+    const after = contents(db);
+    preserved(after, before, ["schema_migrations"]);
+    assert.deepEqual(
+      after.schema_migrations.slice(0, 5),
+      before.schema_migrations,
+    );
+    assert.equal(after.schema_migrations[5].version, 35);
+    assert.equal(after.schema_migrations[5].checksum, calendarReminderChecksum);
+    assert.deepEqual(after.push_addresses, []);
+    assert.deepEqual(after.calendar_reminder_sends, []);
+    assertSqliteHistory(db);
+    assertSqliteIntegrity(db);
+    assert.equal(migrateSqlite(db).applied, false);
+    migrateSqlite(fresh, { initialize: true });
+    assert.deepEqual(shape(fresh), shape(db));
+    // The new columns accept only a time of day and a bounded reminder.
+    db.exec(
+      "UPDATE calendar_entries SET start_time='09:30',remind_minutes=10 WHERE id='event'",
+    );
+    for (const sql of [
+      "UPDATE calendar_entries SET start_time='9:30' WHERE id='event'",
+      "UPDATE calendar_entries SET remind_minutes=1441 WHERE id='event'",
+      "UPDATE calendar_entries SET remind_minutes=-1 WHERE id='event'",
+    ])
+      assert.throws(() => db.exec(sql), /CHECK constraint failed/);
+    assert.equal(calendarReminderSql.includes("DROP"), false);
+  } finally {
+    db.close();
+    fresh.close();
+  }
+});
+
+test("v34 startup preserves the database and names the migrate command; the CLI previews and applies v35", () => {
+  const dir = mkdtempSync(join(tmpdir(), "graeboard-v34-startup-")),
+    path = join(dir, "existing.sqlite");
+  let db = released34(path);
+  try {
+    const before = contents(db);
+    db.close();
+    db = null;
+    const bytes = readFileSync(path);
+    assert.throws(
+      () => openDatabase(path),
+      /v34.*npm run migrate -- --engine sqlite/,
+    );
+    assert.deepEqual(readFileSync(path), bytes);
+    const cli = (...args) =>
+      spawnSync(
+        process.execPath,
+        [
+          "scripts/admin/migrate.mjs",
+          "--engine",
+          "sqlite",
+          "--database",
+          path,
+          ...args,
+        ],
+        { encoding: "utf8" },
+      );
+    const preview = cli("--dry-run");
+    assert.equal(preview.status, 0, preview.stderr);
+    assert.deepEqual(
+      (({ from, to, applied }) => ({ from, to, applied }))(
+        JSON.parse(preview.stdout),
+      ),
+      { from: 34, to: 35, applied: false },
+    );
+    assert.deepEqual(readFileSync(path), bytes);
+    const applied = cli();
+    assert.equal(applied.status, 0, applied.stderr);
+    assert.equal(JSON.parse(applied.stdout).applied, true);
+    db = openDatabase(path);
+    assert.equal(sqliteVersion(db), SQLITE_VERSION);
+    preserved(contents(db), before, ["schema_migrations"]);
+  } finally {
+    db?.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });

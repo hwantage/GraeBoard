@@ -1263,6 +1263,47 @@
   color: var(--accent);
   padding-bottom: 7px;
 }
+.calendar-reminder-editor {
+  margin-top: 10px;
+}
+.calendar-entry-heading .calendar-reminder-editor input,
+.calendar-entry-heading .calendar-reminder-editor select {
+  width: 150px;
+  min-height: 33px;
+  padding: 5px 7px;
+  font-size: 12px;
+  font-weight: 400;
+}
+.calendar-reminder-clear {
+  min-height: 33px;
+}
+.calendar-reminder-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.calendar-reminder-note p {
+  margin: 0;
+}
+.calendar-reminder-note strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.calendar-reminder-address {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.calendar-entry-heading .calendar-reminder-address input {
+  width: 160px;
+}
+.calendar-entry-time {
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  opacity: 0.8;
+}
 .calendar-entry-tools {
   display: flex;
   align-items: center;

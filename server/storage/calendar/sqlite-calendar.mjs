@@ -27,7 +27,7 @@ import {
 import { readDocumentVersion } from "../../documents/document-storage.mjs";
 import { resolveSqliteDocumentLinks } from "../documents/sqlite-document-links.mjs";
 
-const entryColumns = `id,team_id AS teamId,user_id AS userId,date,end_date AS endDate,lane,title,preview,revision,updated_at AS updatedAt,
+const entryColumns = `id,team_id AS teamId,user_id AS userId,date,end_date AS endDate,lane,title,start_time AS time,remind_minutes AS remindMinutes,preview,revision,updated_at AS updatedAt,
   COALESCE((SELECT has_content FROM document_versions WHERE id=calendar_entries.version_id),0) AS hasDocument,
   (SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM calendar_entry_tags WHERE entry_id=calendar_entries.id ORDER BY position)) AS tagIds,
   (SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM calendar_entry_tags WHERE entry_id=calendar_entries.id AND checked=1 ORDER BY position)) AS checkedTagIds`;
@@ -918,6 +918,8 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
           previous.date === data.date &&
           previous.end_date === endDate &&
           previous.title === data.title &&
+          previous.start_time === (data.time ?? null) &&
+          previous.remind_minutes === (data.remindMinutes ?? null) &&
           json(tagIdsFor(previous.id)) === json(data.tagIds) &&
           json([...checkedTagIdsFor(previous.id)].sort()) ===
             json([...data.checkedTagIds].sort()),
@@ -926,7 +928,7 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
       );
     } else {
       db.prepare(
-        "INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,lane,title,updated_at,actor_id) VALUES(?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,lane,title,updated_at,actor_id,start_time,remind_minutes) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
       ).run(
         data.id,
         data.teamId,
@@ -943,6 +945,8 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
         data.title,
         now(),
         actorId,
+        data.time ?? null,
+        data.remindMinutes ?? null,
       );
       setTags(data.id, data.tagIds, data.checkedTagIds);
     }
@@ -989,6 +993,8 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
           date: source.date,
           endDate: source.end_date,
           title: nextCalendarCopyTitle(source.title, titles),
+          time: source.start_time,
+          remindMinutes: source.remind_minutes,
           tagIds: tagIdsFor(source.id),
           checkedTagIds: checkedTagIdsFor(source.id),
         },
@@ -1099,6 +1105,31 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
         return { ...summary(row.id), ...positions };
       });
       return saved;
+    }
+    if ("time" in data) {
+      const unchanged =
+        row.start_time === data.time &&
+        row.remind_minutes === data.remindMinutes;
+      requireThat(
+        (row.start_time === data.expectedTime &&
+          row.remind_minutes === data.expectedRemindMinutes) ||
+          unchanged,
+        409,
+        "다른 사용자가 일정 시각이나 알림을 변경했습니다. 최신 값을 확인하세요.",
+        {
+          currentSchedule: {
+            time: row.start_time,
+            remindMinutes: row.remind_minutes,
+          },
+        },
+      );
+      if (!unchanged)
+        transaction(db, () => {
+          db.prepare(
+            "UPDATE calendar_entries SET start_time=?,remind_minutes=?,updated_at=? WHERE id=?",
+          ).run(data.time, data.remindMinutes, nextStamp(row), row.id);
+        });
+      return summary(row.id);
     }
     requireThat(
       row.title === data.expectedTitle || row.title === data.title,

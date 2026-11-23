@@ -3,7 +3,7 @@ import { useTouchPress } from "../ui/useTouchPress";
 import { isSecretEntry } from "./secret-calendar";
 import { calendarDisplayLane } from "./secret-calendar-layout";
 import { busyProps } from "../ui/busyProps";
-import { FileText, LockKeyhole } from "lucide-react";
+import { Bell, FileText, LockKeyhole } from "lucide-react";
 import { normalizeSearchQuery } from "../../shared/search.js";
 import { addDays, moveCalendarRange } from "../../shared/calendar/calendar.js";
 import type { CalendarEntry, CalendarTag } from "./calendar-types";
@@ -166,9 +166,19 @@ export default function CalendarEntries({
           )}
           <span className="calendar-entry-title">
             {before && <i aria-hidden="true">← </i>}
+            {item.time && !before && (
+              <time className="calendar-entry-time">{item.time} </time>
+            )}
             {item.title}
             {after && <i aria-hidden="true"> →</i>}
           </span>
+          {item.time && item.remindMinutes != null && (
+            <Bell
+              size={12}
+              className="calendar-document-icon"
+              aria-label="알림 설정됨"
+            />
+          )}
           {(item.hasDocument ?? !!item.preview) && (
             <FileText
               size={12}

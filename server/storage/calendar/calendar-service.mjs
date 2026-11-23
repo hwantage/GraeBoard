@@ -18,6 +18,8 @@ import {
   calendarWeek,
   CALENDAR_MAX_RANGE_DAYS,
   CALENDAR_MEMBER_BATCH,
+  CALENDAR_TIME_PATTERN,
+  CALENDAR_REMINDER_MAX_MINUTES,
   addDays,
   daysBetween,
 } from "../../../shared/calendar/calendar.js";
@@ -80,6 +82,18 @@ export function matchesCalendarTaskFilters(values, filters) {
   );
 }
 export const rangeSchema = z.object({ date: dateSchema, endDate: dateSchema });
+// An entry's start time and how long before it to remind; null is unset.
+const timeSchema = z.string().regex(CALENDAR_TIME_PATTERN).nullable();
+const remindSchema = z
+  .number()
+  .int()
+  .min(0)
+  .max(CALENDAR_REMINDER_MAX_MINUTES)
+  .nullable();
+const needsTime = [
+  (data) => data.remindMinutes === null || data.time !== null,
+  { message: "알림은 시작 시각을 정한 일정에만 설정할 수 있습니다." },
+];
 const bodySchemas = {
   savePreferences: z
     .object({
@@ -143,8 +157,11 @@ const bodySchemas = {
       title: titleSchema,
       tagIds: tagIdsSchema.default([]),
       checkedTagIds: tagIdsSchema.default([]),
+      time: timeSchema.default(null),
+      remindMinutes: remindSchema.default(null),
     })
-    .strict(),
+    .strict()
+    .refine(...needsTime),
   copyEntry: z.object({ id: uuid }).strict(),
   updateEntry: z.union([
     z
@@ -162,6 +179,15 @@ const bodySchemas = {
       })
       .strict(),
     z.object({ tagIds: tagIdsSchema, expectedTagIds: tagIdsSchema }).strict(),
+    z
+      .object({
+        time: timeSchema,
+        remindMinutes: remindSchema,
+        expectedTime: timeSchema,
+        expectedRemindMinutes: remindSchema,
+      })
+      .strict()
+      .refine(...needsTime),
   ]),
   checkTag: z
     .object({ checked: z.boolean(), expectedChecked: z.boolean() })

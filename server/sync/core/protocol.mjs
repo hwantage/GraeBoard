@@ -485,7 +485,20 @@ const payloadFields = {
     "createdAt",
     "data",
   ],
-  calendar: ["userId", "date", "endDate", "lane", "title", "deletedAt", "tags"],
+  // time and remindMinutes (2026-11-23) are optional and independent: an
+  // entry carries each only when set, so entries shared before them and
+  // entries without a start time keep their payload.
+  calendar: [
+    "userId",
+    "date",
+    "endDate",
+    "lane",
+    "title",
+    "deletedAt",
+    "tags",
+    "time",
+    "remindMinutes",
+  ],
   tag: ["userId", "name", "color", "kind"],
   rule: ["propertyId", "values", "mode"],
   // importedAt orders a week's items (2026-11-04). Items shared before it
@@ -642,6 +655,21 @@ export function validateEntityPayload(
       !Number.isInteger(payload.lane))
   )
     throw new Error("Invalid calendar payload");
+  if (
+    entity === "calendar" &&
+    ((payload.time !== undefined &&
+      !(
+        typeof payload.time === "string" &&
+        /^([01]\d|2[0-3]):[0-5]\d$/.test(payload.time)
+      )) ||
+      (payload.remindMinutes !== undefined &&
+        !(
+          Number.isInteger(payload.remindMinutes) &&
+          payload.remindMinutes >= 0 &&
+          payload.remindMinutes <= 1440
+        )))
+  )
+    throw new Error("Invalid calendar time");
   // A personal entry or tag names its owner; a team one carries null. The
   // receiver creates a placeholder user for an unknown owner, so the reference
   // must at least be a usable ID.

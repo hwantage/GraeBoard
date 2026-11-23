@@ -14,7 +14,8 @@ const help = `Usage: npm run migrate -- --engine sqlite --database /absolute/pat
        npm run migrate -- --engine postgres --scope slides --url-env PG_SITE_URL [--dry-run]
        npm run migrate -- --engine sqlite-slides --database /absolute/slide-files/slide-files.sqlite [--dry-run]
 
-SQLite initializes a new empty v34 database with --initialize. An existing v29-v33 database holds sheet clones
+SQLite initializes a new empty v35 database with --initialize and upgrades v34 to v35 additively (calendar
+start times, reminders and push addresses). An existing v29-v33 database holds sheet clones
 under their earlier names; only the one-time SheetClone cutover tool converts it (npm run cutover:sheet-clone).
 PostgreSQL upgrades control v1 to v2, or initializes the dedicated graeboard schema (team v4) with --initialize.
 The site scope upgrades site v1/v2 to v3, or atomically initializes graeboard_site and graeboard in one database for one external team.

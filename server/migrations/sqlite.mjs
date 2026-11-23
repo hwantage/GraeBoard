@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-export const SQLITE_VERSION = 34;
+export const SQLITE_VERSION = 35;
 export const baseSql = readFileSync(
   new URL("./sqlite/029-base.sql", import.meta.url),
   "utf8",
@@ -39,10 +39,20 @@ export const sheetCloneSql = readFileSync(
 export const sheetCloneChecksum = createHash("sha256")
   .update(sheetCloneSql)
   .digest("hex");
+export const calendarReminderSql = readFileSync(
+  new URL("./sqlite/035-calendar-reminders.sql", import.meta.url),
+  "utf8",
+);
+export const calendarReminderChecksum = createHash("sha256")
+  .update(calendarReminderSql)
+  .digest("hex");
 // v34 renames the copy tables. An existing database also needs what its rows
 // store converted, in the same transaction: the caller supplies that step
 // (convert), which only the one-time SheetClone cutover tool does
 // (tools/sheet-clone-cutover). A new empty database has nothing to convert.
+// v35 only adds: an entry's start time and reminder, the address each
+// person's reminders are pushed to and the reminders already sent. It
+// converts no stored row, so `npm run migrate` upgrades a v34 database.
 const migrations = [
   { version: 30, sql: syncSql, checksum: syncChecksum },
   { version: 31, sql: keySql, checksum: keyChecksum },
@@ -54,7 +64,13 @@ const migrations = [
     checksum: sheetCloneChecksum,
     convert: true,
   },
+  {
+    version: 35,
+    sql: calendarReminderSql,
+    checksum: calendarReminderChecksum,
+  },
 ];
+const latestChecksum = migrations.at(-1).checksum;
 
 // Read the released v29 definition, never the current application's initializer.
 // Checking the actual shape prevents a mislabeled/partially converted DB from
@@ -97,7 +113,10 @@ export function sqliteVersion(db) {
   return db.prepare("PRAGMA user_version").get().user_version;
 }
 export function assertSqliteHistory(db, { version = SQLITE_VERSION } = {}) {
-  if (![30, 31, 32, 33, 34].includes(version) || sqliteVersion(db) !== version)
+  if (
+    ![30, 31, 32, 33, 34, 35].includes(version) ||
+    sqliteVersion(db) !== version
+  )
     throw new Error(
       "DB migration required: npm run migrate -- --engine sqlite --database /absolute/path.sqlite",
     );
@@ -140,7 +159,7 @@ export function migrateSqlite(
     assertSqliteIntegrity(db);
     return { from, to: from, applied: false };
   }
-  if (![0, 29, 30, 31, 32, 33].includes(from))
+  if (![0, 29, 30, 31, 32, 33, 34].includes(from))
     throw new Error(`Unsupported SQLite version ${from}; data preserved`);
   if (from === 0) {
     if (
@@ -159,7 +178,7 @@ export function migrateSqlite(
   if (from >= 30) assertSqliteHistory(db, { version: from });
   assertSqliteIntegrity(db);
   // Existing rows need the one-time conversion; checks no row before writing.
-  if (from !== 0 && !convert)
+  if (from !== 0 && from < 34 && !convert)
     throw new Error(
       "SQLite v34 renames stored sheet clone data; convert an existing database with the SheetClone cutover tool (npm run cutover:sheet-clone, docs/OPERATIONS.md)",
     );
@@ -170,7 +189,7 @@ export function migrateSqlite(
       to: SQLITE_VERSION,
       applied: false,
       dryRun: true,
-      checksum: sheetCloneChecksum,
+      checksum: latestChecksum,
     };
   }
   const conversions = [];
@@ -208,7 +227,7 @@ export function migrateSqlite(
     from,
     to: SQLITE_VERSION,
     applied: true,
-    checksum: sheetCloneChecksum,
+    checksum: latestChecksum,
     ...(conversions.length ? { conversion: conversions[0] } : {}),
   };
 }

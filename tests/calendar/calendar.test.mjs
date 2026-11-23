@@ -2626,19 +2626,25 @@ test("캘린더 이미지의 공통 업로드·권한·백업 복구와 문서 �
 test("이전 스키마는 자동 이관하지 않고 기존 DB를 보존한 채 거부한다", () => {
   const dir = mkdtempSync(join(tmpdir(), "calendar-schema-")),
     path = join(dir, "old.sqlite");
-  const previous = new DatabaseSync(path);
-  previous.exec(`PRAGMA user_version=${SCHEMA_VERSION - 1}`);
-  previous.close();
   try {
-    assert.throws(() => openDatabase(path), /지원하지 않습니다/);
-    const verify = new DatabaseSync(path, { readOnly: true });
-    try {
-      assert.equal(
-        verify.prepare("PRAGMA user_version").get().user_version,
-        SCHEMA_VERSION - 1,
-      );
-    } finally {
-      verify.close();
+    // The previous version is upgraded only by the explicit migrate command.
+    for (const [version, message] of [
+      [SCHEMA_VERSION - 1, /npm run migrate -- --engine sqlite/],
+      [28, /지원하지 않습니다/],
+    ]) {
+      const previous = new DatabaseSync(path);
+      previous.exec(`PRAGMA user_version=${version}`);
+      previous.close();
+      assert.throws(() => openDatabase(path), message);
+      const verify = new DatabaseSync(path, { readOnly: true });
+      try {
+        assert.equal(
+          verify.prepare("PRAGMA user_version").get().user_version,
+          version,
+        );
+      } finally {
+        verify.close();
+      }
     }
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -3610,3 +3616,93 @@ for (const transport of ["direct", "shared"])
       "권한 회수 후 비공개 입력",
     );
   });
+
+test("일정 시작 시각·알림은 함께 저장하고 충돌 시 최신 값을 돌려주며, 알림 받을 PC 주소는 본인 것만 다룬다", async (t) => {
+  const f = await fixture(t);
+  const created = await f.create("2026-10-20");
+  assert.equal(created.status, 201);
+  const path = `/calendar/entries/${created.data.id}`;
+  assert.deepEqual(
+    [created.data.time, created.data.remindMinutes],
+    [null, null],
+  );
+  const schedule = {
+    time: "09:30",
+    remindMinutes: 10,
+    expectedTime: null,
+    expectedRemindMinutes: null,
+  };
+  const saved = await f.req(path, "PATCH", schedule);
+  assert.equal(saved.status, 200);
+  assert.deepEqual([saved.data.time, saved.data.remindMinutes], ["09:30", 10]);
+  assert.ok(saved.data.updatedAt > created.data.updatedAt);
+  // A retry of the same request changes nothing more.
+  const retried = await f.req(path, "PATCH", schedule);
+  assert.equal(retried.data.updatedAt, saved.data.updatedAt);
+  const conflict = await f.req(path, "PATCH", { ...schedule, time: "11:00" });
+  assert.equal(conflict.status, 409);
+  assert.deepEqual(conflict.data.details.currentSchedule, {
+    time: "09:30",
+    remindMinutes: 10,
+  });
+  for (const body of [
+    { ...schedule, time: null },
+    { ...schedule, time: "25:00" },
+    { ...schedule, remindMinutes: 2000 },
+    { time: "10:00", remindMinutes: null },
+  ])
+    assert.equal((await f.req(path, "PATCH", body)).status, 400);
+  // Another member cannot change a personal entry's time.
+  assert.equal(
+    (
+      await f.req(
+        path,
+        "PATCH",
+        {
+          time: null,
+          remindMinutes: null,
+          expectedTime: "09:30",
+          expectedRemindMinutes: 10,
+        },
+        "second",
+      )
+    ).status,
+    403,
+  );
+  assert.deepEqual(
+    (({ time, remindMinutes }) => [time, remindMinutes])(
+      (await f.req(path)).data,
+    ),
+    ["09:30", 10],
+  );
+
+  // Requests of this test come from the loopback address, which no push reaches.
+  assert.deepEqual((await f.req("/push-address")).data, {
+    enabled: false,
+    ip: null,
+    manual: false,
+    detectedIp: null,
+  });
+  assert.equal(
+    (await f.req("/push-address", "PUT", { ip: "office-pc" })).status,
+    400,
+  );
+  assert.equal(
+    (await f.req("/push-address", "PUT", { ip: "10.1.2.3", userId: "x" }))
+      .status,
+    400,
+  );
+  assert.deepEqual(
+    (await f.req("/push-address", "PUT", { ip: "10.1.2.3" })).data,
+    { enabled: false, ip: "10.1.2.3", manual: true, detectedIp: null },
+  );
+  assert.equal(
+    (await f.req("/push-address", "GET", undefined, "second")).data.ip,
+    null,
+  );
+  assert.equal((await f.req("/push-address/test", "POST", {})).status, 409);
+  assert.equal(
+    (await f.req("/push-address", "PUT", { ip: null })).data.ip,
+    null,
+  );
+});

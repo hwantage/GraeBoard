@@ -15,6 +15,9 @@ import DocumentLoading from "../documents/DocumentLoading";
 import CalendarRangeEditor, {
   type CalendarRangeHandle,
 } from "./CalendarRangeEditor";
+import CalendarReminderEditor, {
+  type CalendarReminderHandle,
+} from "./CalendarReminderEditor";
 import type {
   CalendarDocument,
   CalendarEntry,
@@ -82,6 +85,7 @@ export default function CalendarEntryPanel({
   const [controls, setControls] = useState<HTMLDivElement | null>(null);
   const editor = useRef<DocumentHandle>(null);
   const rangeEditor = useRef<CalendarRangeHandle>(null);
+  const reminderEditor = useRef<CalendarReminderHandle>(null);
   const current = useRef(entry);
   const draft = useRef(entry.title);
   const composing = useRef(false);
@@ -313,11 +317,12 @@ export default function CalendarEntryPanel({
       if (alive.current) setBusy(false);
     }
   }
-  // Saves the title, range and document. Closing and deleting start here.
+  // Saves the title, range, time and document. Closing and deleting start here.
   async function flush() {
     return (
       (await saveTitle()) &&
       (!rangeEditor.current || (await rangeEditor.current.flush())) &&
+      (!reminderEditor.current || (await reminderEditor.current.flush())) &&
       (!editor.current || (await editor.current.flush()))
     );
   }
@@ -453,6 +458,25 @@ export default function CalendarEntryPanel({
             }}
           />
         )}
+        {ready && (
+          <CalendarReminderEditor
+            ref={reminderEditor}
+            entry={current.current}
+            readOnly={readOnly}
+            onSaved={(saved) => {
+              current.current = {
+                ...current.current,
+                time: saved.time ?? null,
+                remindMinutes: saved.remindMinutes ?? null,
+                updatedAt:
+                  saved.updatedAt > current.current.updatedAt
+                    ? saved.updatedAt
+                    : current.current.updatedAt,
+              };
+              onSaved(current.current);
+            }}
+          />
+        )}
         <div className="calendar-entry-tools">
           <CalendarTagPicker
             userId={entry.userId}
@@ -553,6 +577,8 @@ export default function CalendarEntryPanel({
                   date: current.current.date,
                   endDate: current.current.endDate,
                   lane: current.current.lane,
+                  time: current.current.time,
+                  remindMinutes: current.current.remindMinutes,
                   tagIds: current.current.tagIds,
                   checkedTagIds: current.current.checkedTagIds,
                   updatedAt:

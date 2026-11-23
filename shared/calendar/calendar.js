@@ -6,6 +6,44 @@ export const CALENDAR_MAX_RANGE_DAYS = 62;
 export const CALENDAR_MEMBER_BATCH = 50;
 export const CALENDAR_DAYS = [0, 1, 2, 3, 4, 5, 6];
 export const DAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
+// An entry may start at a time of day ("HH:MM") on its first date and ask for
+// a reminder that many minutes before. Both are optional, and a reminder
+// needs a time. The time is read in Korea Standard Time on both sites.
+export const CALENDAR_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+export const CALENDAR_REMINDER_MAX_MINUTES = 1440;
+export const CALENDAR_REMINDER_OPTIONS = [0, 5, 10, 15, 30, 60, 120, 1440];
+export const CALENDAR_TIME_ZONE_OFFSET = "+09:00";
+/** "정시", "10분 전", "1시간 전" or "하루 전" for a reminder's minutes. */
+export function calendarReminderLabel(minutes) {
+  if (minutes === 0) return "정시";
+  if (minutes === 1440) return "하루 전";
+  if (minutes % 60 === 0) return `${minutes / 60}시간 전`;
+  return `${minutes}분 전`;
+}
+/**
+ * The shared (synchronized) fields of a start time and its reminder: a field
+ * that is not set is left out, so entries without a time keep the payload
+ * they had before these fields existed. The two are stored independently,
+ * because sites may change them at the same time; the commands of both sites
+ * clear the reminder with the time, and a reminder without a time never fires.
+ * @param {string | null | undefined} time
+ * @param {number | null | undefined} remindMinutes
+ * @returns {{ time?: string, remindMinutes?: number }}
+ */
+export function calendarSchedule(time, remindMinutes) {
+  return {
+    ...(time ? { time } : {}),
+    ...(remindMinutes === null || remindMinutes === undefined
+      ? {}
+      : { remindMinutes }),
+  };
+}
+/** When an entry starts, in epoch milliseconds; null without a start time. */
+export function calendarStartMs(date, time) {
+  if (!time) return null;
+  const ms = Date.parse(`${date}T${time}:00${CALENDAR_TIME_ZONE_OFFSET}`);
+  return Number.isFinite(ms) ? ms : null;
+}
 export function addDays(key, count) {
   const date = new Date(`${key}T12:00:00Z`);
   date.setUTCDate(date.getUTCDate() + count);

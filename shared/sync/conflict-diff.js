@@ -51,6 +51,8 @@ const FIELD_NAMES = {
   date: "날짜",
   endDate: "종료일",
   lane: "표시 줄",
+  time: "시작 시각",
+  remindMinutes: "알림",
   userId: "담당자",
   deletedAt: "삭제 시각",
   years: "연도",

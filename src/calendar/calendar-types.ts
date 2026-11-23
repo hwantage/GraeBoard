@@ -7,6 +7,10 @@ export type CalendarEntry = {
   endDate: string;
   lane: number;
   title: string;
+  // "HH:MM" on the first date and minutes before it to remind; null or
+  // absent (secret entries) when unset.
+  time?: string | null;
+  remindMinutes?: number | null;
   preview: string;
   hasDocument?: boolean;
   revision: number;
