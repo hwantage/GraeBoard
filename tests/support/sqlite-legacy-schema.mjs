@@ -1,7 +1,8 @@
 import { stateHash } from "../../server/sync/core/protocol.mjs";
 
-// A fresh v34 database put back into the released v33 shape: the copy tables
-// regain their earlier names, the v34 history is removed and the
+// A fresh database put back into the released v33 shape: what v35 added is
+// dropped, the copy tables regain their earlier names, the later history is
+// removed and the
 // synchronization state returns to protocol 1/2 with the earlier record names.
 // Tests that exercise migrations up to v33 start from this shape.
 const LEGACY = {
@@ -12,6 +13,11 @@ const LEGACY = {
 const LEGACY_SCOPE = { sheetClone: "report", sheetCloneMemo: "reportMemo" };
 export function revertToV33(db) {
   db.exec(`
+    DROP INDEX calendar_entries_reminder_idx;
+    DROP TABLE calendar_reminder_sends;
+    DROP TABLE push_addresses;
+    ALTER TABLE calendar_entries DROP COLUMN remind_minutes;
+    ALTER TABLE calendar_entries DROP COLUMN start_time;
     DROP INDEX sheet_clone_documents_version_idx;
     DROP INDEX sheet_clone_memos_version_idx;
     ALTER TABLE sheet_clone_memos RENAME COLUMN sheet_clone_id TO report_id;

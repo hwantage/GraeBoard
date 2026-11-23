@@ -22,6 +22,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import pg from "pg";
 import { openDatabase } from "../../../server/db.mjs";
+import { migrateSqlite } from "../../../server/migrations/sqlite.mjs";
 import { createApp } from "../../../server/app.mjs";
 import { unpack } from "../../../shared/formatting/compact.js";
 import { migratePostgres } from "../../../server/migrations/postgres.mjs";
@@ -185,6 +186,19 @@ const teamVersion = async (team) =>
       )
     ).rows[0].v,
   );
+// The frozen tool leaves the v34 it was released with. The current release
+// opens that database after its additive migration (npm run migrate); a copy
+// already migrated is left as it is.
+const openConverted = (path) => {
+  const db = new DatabaseSync(path);
+  try {
+    db.exec("PRAGMA foreign_keys=ON");
+    migrateSqlite(db);
+  } finally {
+    db.close();
+  }
+  return openDatabase(path);
+};
 const sqliteVersion = (path) => {
   const db = new DatabaseSync(path, { readOnly: true });
   try {
@@ -505,7 +519,7 @@ for (const [label, from, to, port] of [
       cpSync(new URL("images", FIXTURE).pathname, imagesDir, {
         recursive: true,
       });
-      const db = openDatabase(dbPath);
+      const db = openConverted(dbPath);
       t.after(() => db.close());
       const app = createApp({
         db,
@@ -913,7 +927,7 @@ for (const [label, from, to, port] of [
       // A copy restored for recovery reconciles from its own head on to the
       // current head, whichever snapshot is the newest.
       const recoverCopy = async (path, name, options = {}) => {
-        const db = openDatabase(path);
+        const db = openConverted(path);
         t.after(() => db.close());
         const head = db
             .prepare(
