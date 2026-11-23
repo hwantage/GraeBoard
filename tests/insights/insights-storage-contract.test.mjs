@@ -657,7 +657,7 @@ test("insights settings contract on SQLite routes and real backup", async (t) =>
     );
     assert.equal(
       restored.prepare("PRAGMA user_version").get().user_version,
-      34,
+      35,
     );
     assert.equal(
       restored.prepare("PRAGMA integrity_check").get().integrity_check,
@@ -717,5 +717,5 @@ test("insights settings contract on actual external PostgreSQL routes and backup
       row.entity === "cell" && JSON.parse(row.entity_key)[1] === "2027-02-01",
   );
   assert.equal(JSON.parse(markedCell.payload).style.work, true);
-  assert.equal(f.db.prepare("PRAGMA user_version").get().user_version, 34);
+  assert.equal(f.db.prepare("PRAGMA user_version").get().user_version, 35);
 });

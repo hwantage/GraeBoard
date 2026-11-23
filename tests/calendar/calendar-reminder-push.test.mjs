@@ -293,6 +293,10 @@ test("the address follows where the person uses the site from until they set one
   assert.deepEqual(await f.push.test(owner), { ok: true, ip: "10.1.2.50" });
   assert.equal(f.calls.at(-1).body.target_ip, "10.1.2.50");
   assert.equal(f.calls.at(-1).body.title, "그래보드 알림 테스트");
+  // One test push at a time, then again after a short wait.
+  await assert.rejects(f.push.test(owner), /잠시 후 다시/);
+  assert.equal(f.calls.length, 1);
+  f.clock.ms += 10000;
   f.hub.fail = true;
   await assert.rejects(f.push.test(owner), /연결하지 못했습니다/);
   // Clearing it follows the current address again, or forgets it.

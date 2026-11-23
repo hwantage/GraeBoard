@@ -24,6 +24,8 @@ export const CALENDAR_REMINDER_GRACE_MS = 10 * 60 * 1000;
 const TICK_MS = 30 * 1000;
 const REQUEST_TIMEOUT_MS = 5000;
 const SENT_LOG_DAYS = 7;
+// A person may send themselves a test push this often.
+const TEST_INTERVAL_MS = 10 * 1000;
 const ZONE_MS =
   (CALENDAR_TIME_ZONE_OFFSET.startsWith("-") ? -1 : 1) *
   (Number(CALENDAR_TIME_ZONE_OFFSET.slice(1, 3)) * 60 +
@@ -73,6 +75,7 @@ export function createCalendarReminderPush({
   const enabled = /^https?:\/\//.test(base);
   // The address last stored for each person, to write only when it changes.
   const seen = new Map();
+  const tested = new Map();
   let timer = null,
     running = null,
     lastCleanup = 0;
@@ -238,6 +241,12 @@ export function createCalendarReminderPush({
       );
       const ip = address(userId).ip;
       requireThat(ip, 409, "알림을 받을 PC 주소가 아직 등록되지 않았습니다.");
+      requireThat(
+        now() - (tested.get(userId) ?? -Infinity) >= TEST_INTERVAL_MS,
+        429,
+        "테스트 알림은 잠시 후 다시 보낼 수 있습니다.",
+      );
+      tested.set(userId, now());
       requireThat(
         await send(ip, {
           msg_type: "noti",
