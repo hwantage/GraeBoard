@@ -31,6 +31,7 @@ import {
 } from "./documents/document-images.mjs";
 
 import { installCalendarRoutes } from "./calendar/calendar.mjs";
+import { installCalendarReminderPush } from "./calendar/calendar-reminder-push.mjs";
 import { installSlideFileRoutes } from "./slides/slide-file-routes.mjs";
 import { installSlideEditorStatic } from "./slides/slide-editor-static.mjs";
 import { createSlideFileSync } from "./slides/slide-file-sync.mjs";
@@ -87,6 +88,12 @@ export function createApp({
     allowSetup,
     rateLimits,
   });
+  const reminderPush = installCalendarReminderPush(app, {
+    db,
+    // Open calendars read the entry again and show how its reminder went.
+    onSent: (teamId) => documentEvents.invalidate("team:" + teamId),
+  });
+  app.locals.calendarReminderPush = reminderPush;
   installLinkTitleRoute(app, {
     privateHosts: process.env.GRAEBOARD_LINK_TITLE_PRIVATE_HOSTS,
     ...linkTitleOptions,
@@ -152,6 +159,7 @@ export function createApp({
       closeSync(),
       documentPreparation.close(),
       slideFileSync.close(),
+      reminderPush.close(),
     ]);
   app.use("/api", (req, res, next) =>
     sync.capture.withActor(req.user?.id, next),

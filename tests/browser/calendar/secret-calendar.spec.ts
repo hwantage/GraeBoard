@@ -666,7 +666,9 @@ test("라이트·다크와 각 팔레트에서 기존 카드와 구별된다", a
 
 async function expectCreatingSwitch(page: Page, checked = true) {
   const dialog = createDialog(page);
-  const label = dialog.locator(".switch-field");
+  // The secret switch sits at the right end of the date line, above the
+  // title; the start-reminder switch below it is another one.
+  const label = dialog.locator(".calendar-create-head .switch-field");
   const track = label.locator(".switch-track");
   await expect(label.getByRole("switch")).toBeChecked({ checked });
   await expect(label).toBeInViewport({ ratio: 1 });
@@ -686,7 +688,8 @@ async function expectCreatingSwitch(page: Page, checked = true) {
         .boundingBox();
       if (!text || !toggle || !title) return false;
       return (
-        Math.abs(text.x - title.x) <= 1 &&
+        Math.abs(toggle.x + toggle.width - (title.x + title.width)) <= 1 &&
+        toggle.y + toggle.height <= title.y &&
         Math.abs(text.y + text.height / 2 - toggle.y - toggle.height / 2) <=
           1 &&
         toggle.x > text.x + text.width
@@ -695,7 +698,7 @@ async function expectCreatingSwitch(page: Page, checked = true) {
     .toBe(true);
 }
 
-test("1366px에서 시크릿 생성 스위치를 왼쪽 한 줄로 표시한다", async ({
+test("1366px에서 시크릿 생성 스위치를 날짜 줄 오른쪽 끝에 표시한다", async ({
   page,
 }, testInfo) => {
   await page.setViewportSize({ width: 1366, height: 900 });
