@@ -54,6 +54,7 @@ import {
 } from "./secret-calendar-layout";
 
 import { isSecretEntry, setSecretCalendarMode } from "./secret-calendar";
+import CalendarScheduleFields from "./CalendarScheduleFields";
 import CalendarEntries from "./CalendarEntries";
 import CalendarTaskPicker from "./CalendarTaskPicker";
 import CalendarTagManager, {
@@ -1624,6 +1625,16 @@ export default function Calendar({
               disabled: locked,
               run: () => void duplicateEntry(entryMenu.entry),
             },
+            // A secret entry's document lives in this browser and is not copied.
+            ...(isSecretEntry(entryMenu.entry)
+              ? []
+              : [
+                  {
+                    label: "일정 복제 (본문 포함)",
+                    disabled: locked,
+                    run: () => void duplicateEntry(entryMenu.entry, true),
+                  },
+                ]),
             {
               label: "태그 설정",
               disabled: locked,
@@ -1667,6 +1678,7 @@ export default function Calendar({
       {creating && (
         <Modal
           title="일정 추가"
+          className="calendar-create-modal"
           initialFocus={createTitle}
           onOutsideClick={() => {
             if (locked || composingTitle.current) return;
@@ -1693,12 +1705,34 @@ export default function Calendar({
                 event.preventDefault();
             }}
           >
-            <p>
-              {creating.date} ·{" "}
-              {creating.userId === null
-                ? "팀 공용 일정"
-                : members.find((m) => m.id === creating.userId)?.name}
-            </p>
+            {/* The date and owner, with the secret switch at the right. */}
+            <div className="calendar-create-head">
+              <p>
+                {creating.date} ·{" "}
+                {creating.userId === null
+                  ? "팀 공용 일정"
+                  : members.find((m) => m.id === creating.userId)?.name}
+              </p>
+              {creating.userId === user.id && (
+                <label className="switch-field">
+                  <span>시크릿 일정</span>
+                  <input
+                    type="checkbox"
+                    role="switch"
+                    aria-label="시크릿 일정"
+                    checked={creating.secret}
+                    disabled={locked || !writable(creating.userId)}
+                    onChange={(event) =>
+                      changeCreating({
+                        ...creating,
+                        secret: event.target.checked,
+                      })
+                    }
+                  />
+                  <span className="switch-track" aria-hidden="true" />
+                </label>
+              )}
+            </div>
             <label className="calendar-field">
               일정 제목
               <input
@@ -1721,29 +1755,19 @@ export default function Calendar({
                 }}
               />
             </label>
-            {creating.userId === user.id && (
-              <label className="switch-field">
-                <span>시크릿 일정</span>
-                <input
-                  type="checkbox"
-                  role="switch"
-                  aria-label="시크릿 일정"
-                  checked={creating.secret}
-                  disabled={locked || !writable(creating.userId)}
-                  onChange={(event) =>
-                    changeCreating({
-                      ...creating,
-                      secret: event.target.checked,
-                    })
-                  }
-                />
-                <span className="switch-track" aria-hidden="true" />
-              </label>
-            )}
             {creating.secret && (
               <p className="calendar-hint">
                 이 브라우저에만 저장되며 다른 사람·관리자에게 보이지 않습니다.
               </p>
+            )}
+            {!creating.secret && (
+              <CalendarScheduleFields
+                value={{ time: creating.time, reminders: creating.reminders }}
+                disabled={locked}
+                onChange={(schedule) =>
+                  changeCreating({ ...creating, ...schedule })
+                }
+              />
             )}
             <CalendarTagPicker
               userId={creating.userId}

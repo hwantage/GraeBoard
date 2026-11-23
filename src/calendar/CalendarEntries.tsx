@@ -3,7 +3,7 @@ import { useTouchPress } from "../ui/useTouchPress";
 import { isSecretEntry } from "./secret-calendar";
 import { calendarDisplayLane } from "./secret-calendar-layout";
 import { busyProps } from "../ui/busyProps";
-import { FileText, LockKeyhole } from "lucide-react";
+import { Bell, FileText, LockKeyhole } from "lucide-react";
 import { normalizeSearchQuery } from "../../shared/search.js";
 import { addDays, moveCalendarRange } from "../../shared/calendar/calendar.js";
 import type { CalendarEntry, CalendarTag } from "./calendar-types";
@@ -154,6 +154,37 @@ export default function CalendarEntries({
     const open = (detail: number) => {
       if (!disabled && (!detail || canClick())) onOpen(item);
     };
+    // The bell sits in the card's top right corner, on the segment where the
+    // entry starts, and tells how the reminders went where that is known.
+    const reminderStatus =
+      !before && item.time && item.reminders?.length
+        ? (item.reminderStatus ?? "set")
+        : null;
+    const bell = reminderStatus && (
+      <span
+        className="calendar-entry-bell"
+        data-status={reminderStatus}
+        role="img"
+        aria-label={
+          {
+            set: "알림 설정됨",
+            pending: "알림 대기",
+            sent: "알림 보냄",
+            failed: "알림 오류",
+          }[reminderStatus]
+        }
+        title={
+          {
+            set: "알림 설정됨",
+            pending: "알림 대기 중",
+            sent: "알림을 보냈습니다",
+            failed: "알림을 보내지 못했습니다(받을 PC 없음 또는 시각 지남)",
+          }[reminderStatus]
+        }
+      >
+        <Bell size={11} aria-hidden="true" />
+      </span>
+    );
     const content = (
       <span className="calendar-entry-content">
         <strong>
@@ -166,6 +197,9 @@ export default function CalendarEntries({
           )}
           <span className="calendar-entry-title">
             {before && <i aria-hidden="true">← </i>}
+            {item.time && !before && (
+              <time className="calendar-entry-time">{item.time} </time>
+            )}
             {item.title}
             {after && <i aria-hidden="true"> →</i>}
           </span>
@@ -264,6 +298,7 @@ export default function CalendarEntries({
             >
               {content}
             </button>
+            {bell}
             {separateTags && (
               <span className="calendar-entry-tag-overlay">
                 <span className="calendar-entry-content">
@@ -299,7 +334,6 @@ export default function CalendarEntries({
                   {...busyProps(disabled && !drag)}
                   aria-disabled={disabled || undefined}
                   aria-label={`${mode === "start" ? "시작일" : "종료일"} 조정`}
-                  title={`${mode === "start" ? "시작일" : "종료일"} 드래그 · 좌우 방향키 1일, 위아래 방향키 1주`}
                   onClick={(e) => open(e.detail)}
                   onPointerDown={
                     disabled ? undefined : (e) => onDragStart(e, item, mode)
