@@ -24,7 +24,10 @@ import {
   CALENDAR_DAYS,
   CALENDAR_MAX_RANGE_DAYS,
 } from "../../../shared/calendar/calendar.js";
-import { readDocumentVersion } from "../../documents/document-storage.mjs";
+import {
+  readDocumentVersion,
+  storeDocumentVersion,
+} from "../../documents/document-storage.mjs";
 import { resolveSqliteDocumentLinks } from "../documents/sqlite-document-links.mjs";
 
 const entryColumns = `id,team_id AS teamId,user_id AS userId,date,end_date AS endDate,lane,title,start_time AS time,remind_minutes AS remindMinutes,preview,revision,updated_at AS updatedAt,
@@ -61,6 +64,7 @@ import {
   parseCalendarTaskFilters,
   matchesCalendarTaskFilters,
   CALENDAR_ROUTES,
+  calendarPreview,
 } from "./calendar-service.mjs";
 
 function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
@@ -985,7 +989,7 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
         )
         .all(source.team_id, source.user_id)
         .map((row) => row.title);
-      return createEntry(
+      const copied = createEntry(
         {
           id: data.id,
           teamId: source.team_id,
@@ -1000,6 +1004,30 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
         },
         request.user.id,
       );
+      // The body is copied as the copy's first saved document, in the same
+      // transaction. A body this site may not show is not copied.
+      const markdown =
+        data.includeDocument &&
+        !retentionView(db, source.team_id).hidden("document", [
+          "calendar",
+          source.id,
+          "main",
+        ]) &&
+        readDocumentVersion(db, source.version_id)?.markdown;
+      if (!markdown) return copied;
+      db.prepare(
+        "UPDATE calendar_entries SET version_id=?,preview=?,revision=revision+1 WHERE id=?",
+      ).run(
+        storeDocumentVersion(db, {
+          teamId: source.team_id,
+          documentId: `calendar:${data.id}`,
+          markdown,
+          actorId: request.user.id,
+        }),
+        calendarPreview(markdown),
+        data.id,
+      );
+      return summary(data.id);
     });
     return entry;
   };

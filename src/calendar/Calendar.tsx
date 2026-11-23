@@ -1624,6 +1624,16 @@ export default function Calendar({
               disabled: locked,
               run: () => void duplicateEntry(entryMenu.entry),
             },
+            // A secret entry's document lives in this browser and is not copied.
+            ...(isSecretEntry(entryMenu.entry)
+              ? []
+              : [
+                  {
+                    label: "일정 복제 (본문 포함)",
+                    disabled: locked,
+                    run: () => void duplicateEntry(entryMenu.entry, true),
+                  },
+                ]),
             {
               label: "태그 설정",
               disabled: locked,

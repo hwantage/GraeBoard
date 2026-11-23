@@ -172,6 +172,49 @@ test("일정 복제는 월 밖의 이름·동시 요청·재시도를 고려해 
   );
   assert.equal(sharedCopy.status, 201);
   assert.equal(sharedCopy.data.title, "팀 회의 (1)");
+  // With its body: the copy starts with the same document, the source keeps
+  // its own, and a retry of the request changes nothing.
+  const withBody = randomUUID();
+  const copied = await f.req(path, "POST", {
+    id: withBody,
+    includeDocument: true,
+  });
+  assert.equal(copied.status, 201);
+  assert.equal(copied.data.hasDocument, true);
+  assert.equal(copied.data.preview, "복제하지 않을 본문");
+  const copiedDocument = (await f.req(`/calendar/entries/${withBody}/document`))
+    .data;
+  assert.equal(copiedDocument.markdown, "복제하지 않을 본문");
+  assert.deepEqual(
+    (await f.req(path, "POST", { id: withBody, includeDocument: true })).data,
+    copied.data,
+  );
+  assert.equal(
+    (
+      await f.req(`/calendar/entries/${withBody}/document`, "PUT", {
+        markdown: "복제본에서 고친 본문",
+        expectedRevision: copiedDocument.revision,
+        operationId: randomUUID(),
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (await f.req(`/calendar/entries/${source.id}/document`)).data.markdown,
+    "복제하지 않을 본문",
+  );
+  // An entry without a body copies as before, and the option must be a boolean.
+  const empty = await f.req(`/calendar/entries/${id}/copy`, "POST", {
+    id: randomUUID(),
+    includeDocument: true,
+  });
+  assert.equal(empty.status, 201);
+  assert.equal(empty.data.hasDocument, false);
+  assert.equal(
+    (await f.req(path, "POST", { id: randomUUID(), includeDocument: "yes" }))
+      .status,
+    400,
+  );
 });
 
 test("일정 즉시 삭제·실행취소는 본문·태그·체크·상대 순서를 보존하고 권한과 재시도를 검사한다", async (t) => {

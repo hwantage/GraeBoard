@@ -881,6 +881,14 @@ async function calendarOperation(ctx, operation, params, body, query) {
             title,
             lane: firstCalendarLane(await layout(s, p.userId), p),
           });
+          // The body is copied as the copy's own document.
+          const document =
+            body.includeDocument &&
+            (await s.get("document", ["calendar", row.key[0], "main"]));
+          if (document && !document.deleted && document.payload.markdown)
+            await s.put("document", ["calendar", id, "main"], {
+              ...document.payload,
+            });
           return entryView(s, saved);
         }
         if (params.tagId) {

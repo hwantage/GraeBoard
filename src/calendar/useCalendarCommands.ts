@@ -99,9 +99,11 @@ export default function useCalendarCommands({
   onNotify: (message: string) => void;
 }) {
   const { activeScope, alive, busy, action, localAction } = mutation;
-  const copyRequest = useRef<{ source: CalendarEntry; id: string } | null>(
-    null,
-  );
+  const copyRequest = useRef<{
+    source: CalendarEntry;
+    id: string;
+    includeDocument: boolean;
+  } | null>(null);
   const deleteRequests = useRef(new Map<string, string>());
   const [deleted, setDeleted] = useState<{
     entry: CalendarEntry;
@@ -271,7 +273,11 @@ export default function useCalendarCommands({
     onNotify("");
     setEntry(null);
   }
-  async function duplicateEntry(source: CalendarEntry) {
+  // includeDocument also copies the document body (server entries only).
+  async function duplicateEntry(
+    source: CalendarEntry,
+    includeDocument = false,
+  ) {
     if (isSecretEntry(source)) {
       localAction(() => {
         copySecretEntry(
@@ -282,13 +288,20 @@ export default function useCalendarCommands({
       return;
     }
     if (!writable(source.userId)) return;
-    if (copyRequest.current?.source.id !== source.id)
-      copyRequest.current = { source, id: crypto.randomUUID() };
+    if (
+      copyRequest.current?.source.id !== source.id ||
+      copyRequest.current.includeDocument !== includeDocument
+    )
+      copyRequest.current = {
+        source,
+        id: crypto.randomUUID(),
+        includeDocument,
+      };
     const copy = copyRequest.current;
     await action(async () => {
       const saved = await send<CalendarEntry>(
         `/calendar/entries/${copy.source.id}/copy`,
-        { id: copy.id },
+        { id: copy.id, includeDocument: copy.includeDocument },
       );
       upsert(saved);
       copyRequest.current = null;

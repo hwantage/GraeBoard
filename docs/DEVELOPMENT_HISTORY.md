@@ -18,6 +18,14 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-23 — 캘린더 시작 시각·알림(다바다 푸시)과 본문 포함 복제
+
+일정에 선택 항목인 시작 시각(`HH:MM`, 한국 표준시)과 알림(0~1440분 전)을 더했습니다. 사내·외부가 같은 명령으로 저장하고 동기화 `calendar` payload의 선택 필드 `time`·`remindMinutes`로 공유합니다. 발송은 다바다허브에 닿는 사내 Node만 하며 30초마다 알림 시각이 된 일정을 `POST /api/push/send`로 보냅니다. 개인 일정은 소유자, 팀 공용 일정은 활성 팀원 전원이 대상입니다. 허브가 IP로 수신자를 구분하므로 사내 서버가 사용자의 접속 IP를 `push_addresses`에 기록하고(직접 지정 가능), 보낸 알림은 `calendar_reminder_sends`로 한 번만 보냅니다. 사용자 승인에 따라 SQLite를 v35로 올렸고(열 2개·부분 인덱스·사내 전용 테이블 2개 추가, 기존 행 변환 없음) PostgreSQL 스키마와 프로토콜 번호는 그대로입니다. v29~v33은 고정 전환 도구로 v34까지, v34는 `npm run migrate`로 v35가 됩니다.
+
+카드 메뉴에 **일정 복제 (본문 포함)**을 더했습니다. 기존 복제 요청의 선택 값 `includeDocument`로 두 저장소가 본문을 복제본의 문서로 함께 저장하며 저장 형식 변경은 없습니다. 복제는 두 방식 모두 시각·알림을 복사합니다.
+
+검증: 발송 시각·유예·대상·재시도·주소 자동/직접 지정은 시계와 허브를 대역으로(`tests/calendar/calendar-reminder-push.test.mjs`), 시각·알림 저장·충돌·복제는 SQLite·PostgreSQL 공통 계약과 사내 HTTP로, v34 → v35와 전환 도구 결과의 v35 승격·중단 롤백·신규 설치와의 스키마 일치는 `tests/sync/recovery/sync-migrations.test.mjs`로, 본문 포함 복제의 양방향 동기화는 `tests/sync/integration/sync-calendar-documents.test.mjs`로 검사합니다. 개발 PC(Windows)에서는 공식 실행기가 고정 소스의 심볼릭 링크·`npm` 실행·PostgreSQL 실행 파일 이름 때문에 돌지 않아, Node 22·PostgreSQL 18.7 Linux 컨테이너에서 `TEST_PG_BIN=… npm test`와 `npm run build:edge`를 실행했습니다. 실제 건수는 PR에 기록합니다. `npm run build`는 `tsc`·Vite 빌드까지 통과했고 CanvaSlide 편집기 배포본 단계는 컨테이너의 외부 접속 차단(내려받기 실패)과 Windows 줄바꿈으로 달라진 빌드 ID 때문에 확인하지 못했습니다. 브라우저 검사는 설치된 Chrome으로 `calendar-reminders.spec.ts`·`calendar-improvements.spec.ts` 10건을 실행했고 Firefox·WebKit은 실행하지 못했습니다. 실제 다바다허브로의 발송은 읽기 전용 응답 확인만 했으며 운영 DB migration과 배포는 수행하지 않았습니다.
+
 ## 2026-11-22 — CanvaSlide 게시 주기와 제목 검증
 
 사내·외부 모두 같은 자료를 여러 번 저장하면 사이트 내에서는 매번 조회할 수 있고 Git에는 1분 주기마다 최신본만 게시합니다. 사내 재시도도 다음 주기에 실행합니다. 두 사이트의 공통 제목 검사에 NFC 정규화 후 길이 검사를 추가했습니다.

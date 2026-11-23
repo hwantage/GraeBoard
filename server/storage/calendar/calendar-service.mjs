@@ -162,7 +162,10 @@ const bodySchemas = {
     })
     .strict()
     .refine(...needsTime),
-  copyEntry: z.object({ id: uuid }).strict(),
+  // includeDocument also copies the entry's document body.
+  copyEntry: z
+    .object({ id: uuid, includeDocument: z.boolean().default(false) })
+    .strict(),
   updateEntry: z.union([
     z
       .object({ title: titleSchema, expectedTitle: z.string().max(120) })

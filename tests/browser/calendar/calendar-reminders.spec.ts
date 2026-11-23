@@ -127,3 +127,62 @@ test("일정 상세에서 시작 시각과 알림을 저장하고 카드에 표�
   await expect(card(page, entry.id).locator("time")).toHaveCount(0);
   await expect(card(page, entry.id).getByLabel("알림 설정됨")).toHaveCount(0);
 });
+
+test("카드 메뉴의 일정 복제 (본문 포함)은 시각·알림과 본문을 함께 복사하고 일정 복제는 본문을 비운다", async ({
+  page,
+}) => {
+  const entry = await request(page, "/calendar/entries", "POST", {
+    id: randomUUID(),
+    teamId,
+    userId,
+    title: "주간 회의",
+    date: todayKey(),
+    time: "10:00",
+    remindMinutes: 30,
+  });
+  await request(page, `/calendar/entries/${entry.id}/document`, "PUT", {
+    markdown: "안건 정리",
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  await page.goto("/");
+  await page.getByLabel("팀 선택", { exact: true }).selectOption(teamId);
+  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await expect(card(page, entry.id)).toBeVisible();
+  const copies = async () =>
+    (
+      await request(
+        page,
+        `/calendar?teamId=${teamId}&userId=${userId}&from=${todayKey()}&to=${todayKey()}`,
+      )
+    ).entries.filter((item: { id: string }) => item.id !== entry.id);
+
+  await card(page, entry.id).click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "일정 복제 (본문 포함)", exact: true })
+    .click();
+  await expect(page.locator(".calendar-entry-card")).toHaveCount(2);
+  const [withBody] = await copies();
+  expect(withBody).toMatchObject({
+    title: "주간 회의 (1)",
+    time: "10:00",
+    remindMinutes: 30,
+    hasDocument: true,
+  });
+  expect(
+    (await request(page, `/calendar/entries/${withBody.id}/document`)).markdown,
+  ).toBe("안건 정리");
+
+  await card(page, entry.id).click({ button: "right" });
+  await page.getByRole("menuitem", { name: "일정 복제", exact: true }).click();
+  await expect(page.locator(".calendar-entry-card")).toHaveCount(3);
+  const plain = (await copies()).find(
+    (item: { id: string }) => item.id !== withBody.id,
+  );
+  expect(plain).toMatchObject({
+    title: "주간 회의 (2)",
+    time: "10:00",
+    remindMinutes: 30,
+    hasDocument: false,
+  });
+});
