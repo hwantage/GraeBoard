@@ -1306,15 +1306,15 @@
   flex-wrap: wrap;
   gap: 8px 14px;
 }
-.calendar-schedule-time {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
+/* Wide enough for the start time and its reminders on one line. */
+.modal.calendar-create-modal {
+  width: min(580px, calc(100vw - 32px));
 }
-.modal-body .calendar-schedule-time input {
+/* Above the modal's full-width inputs. */
+.modal-body
+  .calendar-schedule
+  .calendar-schedule-fields
+  input.calendar-schedule-time[type="time"] {
   width: 130px;
   min-height: 33px;
   padding: 5px 7px;

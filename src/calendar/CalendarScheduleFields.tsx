@@ -73,19 +73,17 @@ export default function CalendarScheduleFields({
       </label>
       {on && (
         <div className="calendar-schedule-fields">
-          <label className="calendar-schedule-time">
-            시작 시각
-            <input
-              type="time"
-              aria-label="일정 시작 시각"
-              value={value.time ?? ""}
-              disabled={disabled}
-              readOnly={readOnly}
-              onChange={(event) =>
-                onChange({ ...value, time: event.target.value }, false)
-              }
-            />
-          </label>
+          <input
+            type="time"
+            className="calendar-schedule-time"
+            aria-label="일정 시작 시각"
+            value={value.time ?? ""}
+            disabled={disabled}
+            readOnly={readOnly}
+            onChange={(event) =>
+              onChange({ ...value, time: event.target.value }, false)
+            }
+          />
           <div
             className="calendar-reminder-options"
             role="group"

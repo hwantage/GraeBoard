@@ -1678,6 +1678,7 @@ export default function Calendar({
       {creating && (
         <Modal
           title="일정 추가"
+          className="calendar-create-modal"
           initialFocus={createTitle}
           onOutsideClick={() => {
             if (locked || composingTitle.current) return;

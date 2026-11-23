@@ -204,6 +204,19 @@ test("일정 추가 창에서도 시작 알림을 켜 시각과 알림을 함께
   await toggle.check({ force: true });
   await time.fill("15:45");
   await expect(option("5분 전")).toBeChecked();
+  // The window is wide enough for the time and every check box on one line.
+  const [createTime, createLast] = await Promise.all([
+    time.boundingBox(),
+    option("1시간 전").boundingBox(),
+  ]);
+  expect(createLast!.x).toBeGreaterThan(createTime!.x + createTime!.width);
+  expect(createLast!.y).toBeGreaterThan(createTime!.y);
+  expect(createLast!.y + createLast!.height).toBeLessThan(
+    createTime!.y + createTime!.height,
+  );
+  await expect(dialog.getByText("시작 시각", { exact: true })).toHaveCount(0);
+  if (process.env.SHOT_DIR)
+    await dialog.screenshot({ path: process.env.SHOT_DIR + "/create.png" });
   await option("30분 전").check();
   const created = page.waitForResponse(
     (response) =>
