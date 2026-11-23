@@ -4,12 +4,15 @@ import { randomUUID } from "node:crypto";
 import { openDatabase, json } from "../../server/db.mjs";
 import { DEFAULT_SETTINGS } from "../../shared/domain.js";
 import {
+  CALENDAR_REMINDER_GRACE_MS,
+  CALENDAR_REMINDER_OPTIONS,
   calendarReminderLabel,
+  calendarReminderStatus,
+  calendarReminders,
   calendarSchedule,
   calendarStartMs,
 } from "../../shared/calendar/calendar.js";
 import {
-  CALENDAR_REMINDER_GRACE_MS,
   calendarReminderMessage,
   createCalendarReminderPush,
   pushAddress,
@@ -44,7 +47,8 @@ function fixture(t, { hubUrl = HUB, appOrigin = "http://board.test" } = {}) {
         teamId,
       );
   }
-  const calls = [];
+  const calls = [],
+    notified = [];
   const clock = { ms: Date.parse("2026-11-23T00:00:00.000Z") };
   const hub = { status: 200, fail: false };
   const push = createCalendarReminderPush({
@@ -52,6 +56,7 @@ function fixture(t, { hubUrl = HUB, appOrigin = "http://board.test" } = {}) {
     hubUrl,
     appOrigin,
     now: () => clock.ms,
+    onSent: (team) => notified.push(team),
     request: async (url, options) => {
       calls.push({ url, body: JSON.parse(options.body) });
       if (hub.fail) throw new Error("connect ECONNREFUSED");
@@ -63,7 +68,7 @@ function fixture(t, { hubUrl = HUB, appOrigin = "http://board.test" } = {}) {
   const entry = (values) => {
     const id = randomUUID();
     db.prepare(
-      "INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,title,updated_at,actor_id,start_time,remind_minutes,deleted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,title,updated_at,actor_id,start_time,reminders,deleted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
     ).run(
       id,
       teamId,
@@ -74,35 +79,47 @@ function fixture(t, { hubUrl = HUB, appOrigin = "http://board.test" } = {}) {
       "2026-11-01T00:00:00.000Z",
       people.owner,
       values.time ?? null,
-      values.remindMinutes ?? null,
+      values.reminders ? JSON.stringify(values.reminders) : null,
       values.deletedAt ?? null,
     );
     return id;
   };
   const sends = () =>
     db.prepare("SELECT * FROM calendar_reminder_sends ORDER BY fire_at").all();
-  return { db, teamId, people, calls, clock, hub, push, entry, sends };
+  return {
+    db,
+    teamId,
+    people,
+    calls,
+    notified,
+    clock,
+    hub,
+    push,
+    entry,
+    sends,
+  };
 }
 // 2026-11-23 10:00 in Korea.
 const START = Date.parse("2026-11-23T01:00:00.000Z");
 
-test("times are civil Korean times and unset fields are left out of the shared payload", () => {
+test("times are civil Korean times, reminders are a sorted list and unset fields are left out of the shared payload", () => {
   assert.equal(calendarStartMs("2026-11-23", "10:00"), START);
   assert.equal(calendarStartMs("2026-11-23", null), null);
-  assert.deepEqual(calendarSchedule(null, null), {});
+  assert.deepEqual(CALENDAR_REMINDER_OPTIONS, [0, 5, 10, 15, 30, 60]);
+  assert.deepEqual(calendarReminders([30, 0, 30, 10]), [0, 10, 30]);
+  assert.deepEqual(calendarReminders(null), []);
+  assert.deepEqual(calendarSchedule(null, []), {});
   assert.deepEqual(calendarSchedule("09:05", null), { time: "09:05" });
-  assert.deepEqual(calendarSchedule("09:05", 0), {
+  assert.deepEqual(calendarSchedule("09:05", [10, 0]), {
     time: "09:05",
-    remindMinutes: 0,
+    reminders: [0, 10],
   });
   // Stored independently, so a concurrent merge loses neither value.
-  assert.deepEqual(calendarSchedule(null, 10), { remindMinutes: 10 });
-  assert.deepEqual([0, 10, 60, 120, 1440].map(calendarReminderLabel), [
+  assert.deepEqual(calendarSchedule(null, [10]), { reminders: [10] });
+  assert.deepEqual([0, 10, 60].map(calendarReminderLabel), [
     "정시",
     "10분 전",
     "1시간 전",
-    "2시간 전",
-    "하루 전",
   ]);
   assert.equal(pushAddress("::ffff:10.1.2.3"), "10.1.2.3");
   assert.equal(pushAddress(" 10.1.2.3 "), "10.1.2.3");
@@ -110,22 +127,27 @@ test("times are civil Korean times and unset fields are left out of the shared p
     assert.equal(pushAddress(value), "", value);
 });
 
-test("a personal reminder goes once to its owner's address at the reminder time", async (t) => {
+test("each of an entry's reminders goes once to its owner's address at its own time", async (t) => {
   const f = fixture(t);
   f.push.remember(f.people.owner, "::ffff:10.1.2.3");
-  const id = f.entry({ date: "2026-11-23", time: "10:00", remindMinutes: 10 });
+  const id = f.entry({
+    date: "2026-11-23",
+    time: "10:00",
+    reminders: [0, 10],
+  });
   f.entry({ date: "2026-11-23", time: "10:00" });
-  f.entry({ date: "2026-11-23", remindMinutes: 10 });
+  f.entry({ date: "2026-11-23", reminders: [10] });
   f.entry({
     date: "2026-11-23",
     time: "10:00",
-    remindMinutes: 10,
+    reminders: [10],
     deletedAt: "2026-11-22T00:00:00.000Z",
   });
-  // One second before the reminder time nothing is due.
+  // One second before the first reminder nothing is due.
   f.clock.ms = START - 10 * 60000 - 1000;
   await f.push.tick();
   assert.deepEqual(f.calls, []);
+  assert.deepEqual(f.notified, []);
   f.clock.ms = START - 10 * 60000;
   await f.push.tick();
   assert.equal(f.calls.length, 1);
@@ -142,28 +164,54 @@ test("a personal reminder goes once to its owner's address at the reminder time"
     expired_at: "2026-11-23T02:00:00.000Z",
     target_ip: "10.1.2.3",
   });
+  assert.deepEqual(f.notified, [f.teamId]);
+  // Later checks do not send it again; the second reminder waits its time.
+  f.clock.ms += 30000;
+  await f.push.tick();
+  await f.push.tick();
+  assert.equal(f.calls.length, 1);
+  f.clock.ms = START;
+  await f.push.tick();
+  assert.equal(f.calls.length, 2);
+  assert.equal(
+    f.calls[1].body.message,
+    "지금 시작하는 일정입니다. (2026-11-23 10:00 시작)",
+  );
   assert.deepEqual(
     f.sends().map(({ entry_id, fire_at, recipients }) => ({
       entry_id,
       fire_at,
       recipients,
     })),
-    [{ entry_id: id, fire_at: "2026-11-23T00:50:00.000Z", recipients: 1 }],
+    [
+      { entry_id: id, fire_at: "2026-11-23T00:50:00.000Z", recipients: 1 },
+      { entry_id: id, fire_at: "2026-11-23T01:00:00.000Z", recipients: 1 },
+    ],
   );
-  // Later checks do not send it again.
-  f.clock.ms += 30000;
-  await f.push.tick();
-  await f.push.tick();
-  assert.equal(f.calls.length, 1);
   // A changed time is another reminder.
   f.db
-    .prepare("UPDATE calendar_entries SET start_time='10:05' WHERE id=?")
+    .prepare(
+      "UPDATE calendar_entries SET start_time='10:05',reminders='[0]' WHERE id=?",
+    )
     .run(id);
-  f.clock.ms = START - 5 * 60000;
+  f.clock.ms = START + 5 * 60000;
   await f.push.tick();
-  assert.equal(f.calls.length, 2);
-  assert.equal(f.calls[1].body.title, "⏰ 10:05 주간 회의");
-  assert.equal(f.sends().length, 2);
+  assert.equal(f.calls.length, 3);
+  assert.equal(f.calls[2].body.title, "⏰ 10:05 주간 회의");
+  assert.equal(f.sends().length, 3);
+});
+
+test("reminders of one entry due together are all sent, the earliest first", async (t) => {
+  const f = fixture(t);
+  f.push.remember(f.people.owner, "10.1.2.3");
+  f.entry({ date: "2026-11-23", time: "10:00", reminders: [0, 5] });
+  // The server was down across both times and is back within the grace.
+  f.clock.ms = START + 60000;
+  await f.push.tick();
+  assert.deepEqual(
+    f.calls.map((call) => call.body.message.split(" (")[0]),
+    ["5분 전 알림입니다.", "지금 시작하는 일정입니다."],
+  );
 });
 
 test("a team entry reminds every active member with an address; others are skipped", async (t) => {
@@ -176,7 +224,7 @@ test("a team entry reminds every active member with an address; others are skipp
     userId: null,
     date: "2026-11-23",
     time: "10:00",
-    remindMinutes: 0,
+    reminders: [0],
     title: "팀 회의",
   });
   f.clock.ms = START;
@@ -198,7 +246,7 @@ test("a reminder nobody can receive is closed, an unreachable hub is retried wit
     userId: f.people.unregistered,
     date: "2026-11-23",
     time: "10:00",
-    remindMinutes: 0,
+    reminders: [0],
   });
   f.clock.ms = START;
   await f.push.tick();
@@ -209,7 +257,7 @@ test("a reminder nobody can receive is closed, an unreachable hub is retried wit
   );
 
   f.push.remember(f.people.owner, "10.1.2.3");
-  const id = f.entry({ date: "2026-11-23", time: "11:00", remindMinutes: 30 });
+  const id = f.entry({ date: "2026-11-23", time: "11:00", reminders: [30] });
   f.hub.fail = true;
   f.clock.ms = START + 30 * 60000;
   await f.push.tick();
@@ -231,7 +279,7 @@ test("a reminder nobody can receive is closed, an unreachable hub is retried wit
   );
 
   // The server was down past the grace period: the reminder is not sent late.
-  const late = f.entry({ date: "2026-11-23", time: "13:00", remindMinutes: 0 });
+  const late = f.entry({ date: "2026-11-23", time: "13:00", reminders: [0] });
   f.clock.ms =
     Date.parse("2026-11-23T04:00:00.000Z") + CALENDAR_REMINDER_GRACE_MS + 1;
   await f.push.tick();
@@ -240,18 +288,52 @@ test("a reminder nobody can receive is closed, an unreachable hub is retried wit
     f.sends().some((row) => row.entry_id === late),
     false,
   );
-  // A reminder a day ahead belongs to an entry dated tomorrow.
-  f.entry({ date: "2026-11-25", time: "09:00", remindMinutes: 1440 });
-  f.clock.ms = Date.parse("2026-11-24T00:00:00.000Z");
+  // Sent reminders stay on record, however old: they tell how each one went.
+  f.clock.ms += 30 * 86400000;
   await f.push.tick();
-  assert.equal(f.calls.length, 4);
-  assert.equal(f.calls[3].body.message.startsWith("하루 전 알림입니다."), true);
+  assert.equal(f.sends().length, 2);
+});
+
+test("an entry's reminders are pending, then sent, and failed once one reached nobody or was missed", () => {
+  const entry = { date: "2026-11-23", time: "10:00", reminders: [0, 10] },
+    early = "2026-11-23T00:50:00.000Z",
+    onTime = "2026-11-23T01:00:00.000Z",
+    status = (sent, now) => calendarReminderStatus(entry, new Map(sent), now);
+  assert.equal(status([], START - 3600000), "pending");
+  assert.equal(status([[early, 1]], START - 60000), "pending");
+  assert.equal(
+    status(
+      [
+        [early, 1],
+        [onTime, 2],
+      ],
+      START + 1000,
+    ),
+    "sent",
+  );
+  // Nobody had an address for the first one.
+  assert.equal(status([[early, 0]], START - 60000), "failed");
+  // Within the grace period a reminder not sent yet is still pending.
+  assert.equal(
+    status([[early, 1]], START + CALENDAR_REMINDER_GRACE_MS),
+    "pending",
+  );
+  assert.equal(
+    status([[early, 1]], START + CALENDAR_REMINDER_GRACE_MS + 1),
+    "failed",
+  );
+  for (const none of [
+    { date: "2026-11-23", time: null, reminders: [0] },
+    { date: "2026-11-23", time: "10:00", reminders: [] },
+    { date: "2026-11-23", time: "10:00" },
+  ])
+    assert.equal(calendarReminderStatus(none, new Map(), START), null);
 });
 
 test("without a hub address nothing is sent or recorded", async (t) => {
   const f = fixture(t, { hubUrl: "" });
   f.push.remember(f.people.owner, "10.1.2.3");
-  f.entry({ date: "2026-11-23", time: "10:00", remindMinutes: 0 });
+  f.entry({ date: "2026-11-23", time: "10:00", reminders: [0] });
   f.clock.ms = START;
   assert.equal(f.push.enabled, false);
   await f.push.tick();
@@ -259,39 +341,31 @@ test("without a hub address nothing is sent or recorded", async (t) => {
   await f.push.close();
   assert.deepEqual(f.calls, []);
   assert.deepEqual(f.sends(), []);
-  assert.equal(f.push.address(f.people.owner).enabled, false);
+  assert.deepEqual(f.push.address(f.people.owner), {
+    enabled: false,
+    ip: "10.1.2.3",
+  });
   await assert.rejects(f.push.test(f.people.owner), /DABADA_PUSH_URL/);
 });
 
-test("the address follows where the person uses the site from until they set one by hand", async (t) => {
+test("the address follows where the person uses the internal site from", async (t) => {
   const f = fixture(t);
   const { owner } = f.people;
-  assert.deepEqual(f.push.address(owner, "10.1.2.3"), {
-    enabled: true,
-    ip: null,
-    manual: false,
-    detectedIp: "10.1.2.3",
-  });
+  assert.deepEqual(f.push.address(owner), { enabled: true, ip: null });
   await assert.rejects(f.push.test(owner), /아직 등록되지 않았습니다/);
   f.push.remember(owner, "127.0.0.1");
   assert.equal(f.push.address(owner).ip, null);
   f.push.remember(owner, "10.1.2.3");
   f.push.remember(owner, "10.1.2.3");
+  assert.equal(f.push.address(owner).ip, "10.1.2.3");
   f.push.remember(owner, "10.9.9.9");
   assert.equal(f.push.address(owner).ip, "10.9.9.9");
-  assert.throws(() => f.push.setAddress(owner, "office-pc"), /IP 주소/);
-  assert.throws(() => f.push.setAddress(owner, "127.0.0.1"), /IP 주소/);
-  assert.deepEqual(f.push.setAddress(owner, " 10.1.2.50 ", "10.9.9.9"), {
-    enabled: true,
-    ip: "10.1.2.50",
-    manual: true,
-    detectedIp: "10.9.9.9",
-  });
-  // Using the site from elsewhere no longer moves a hand-set address.
-  f.push.remember(owner, "10.7.7.7");
-  assert.equal(f.push.address(owner).ip, "10.1.2.50");
-  assert.deepEqual(await f.push.test(owner), { ok: true, ip: "10.1.2.50" });
-  assert.equal(f.calls.at(-1).body.target_ip, "10.1.2.50");
+  assert.equal(
+    f.db.prepare("SELECT COUNT(*) AS n FROM push_addresses").get().n,
+    1,
+  );
+  assert.deepEqual(await f.push.test(owner), { ok: true, ip: "10.9.9.9" });
+  assert.equal(f.calls.at(-1).body.target_ip, "10.9.9.9");
   assert.equal(f.calls.at(-1).body.title, "그래보드 알림 테스트");
   // One test push at a time, then again after a short wait.
   await assert.rejects(f.push.test(owner), /잠시 후 다시/);
@@ -299,46 +373,38 @@ test("the address follows where the person uses the site from until they set one
   f.clock.ms += 10000;
   f.hub.fail = true;
   await assert.rejects(f.push.test(owner), /연결하지 못했습니다/);
-  // Clearing it follows the current address again, or forgets it.
-  assert.deepEqual(f.push.setAddress(owner, null, "10.7.7.7"), {
-    enabled: true,
-    ip: "10.7.7.7",
-    manual: false,
-    detectedIp: "10.7.7.7",
-  });
-  f.push.remember(owner, "10.8.8.8");
-  assert.equal(f.push.address(owner).ip, "10.8.8.8");
-  assert.equal(f.push.setAddress(owner, null, "127.0.0.1").ip, null);
   // Deleting the person removes the address with them.
   f.push.remember(f.people.outsider, "10.1.1.1");
   f.db.prepare("DELETE FROM users WHERE id=?").run(f.people.outsider);
   assert.equal(
     f.db.prepare("SELECT COUNT(*) AS n FROM push_addresses").get().n,
-    0,
+    1,
   );
 });
 
 test("a reminder message without an application origin carries no link", () => {
-  const message = calendarReminderMessage({
-    id: "entry",
-    userId: "person",
-    date: "2026-11-23",
-    time: "10:00",
-    remindMinutes: 60,
-    title: "점검",
-    teamName: "팀",
-  });
+  const message = calendarReminderMessage(
+    {
+      id: "entry",
+      userId: "person",
+      date: "2026-11-23",
+      time: "10:00",
+      title: "점검",
+      teamName: "팀",
+    },
+    60,
+  );
   assert.equal(message.action_url, null);
   assert.deepEqual(message.payload, { category: "그래보드 캘린더" });
   assert.equal(message.message, "1시간 전 알림입니다. (2026-11-23 10:00 시작)");
 });
 
-test("SQLite shares a time and a reminder only when set and applies received ones, including their removal", async (t) => {
+test("SQLite shares a time and reminders only when set and applies received ones, including their removal", async (t) => {
   const { readEntity, materializeEntity } =
     await import("../../server/sync/node/entities.mjs");
   const f = fixture(t);
   const plain = f.entry({ date: "2026-11-23" }),
-    timed = f.entry({ date: "2026-11-23", time: "10:00", remindMinutes: 15 });
+    timed = f.entry({ date: "2026-11-23", time: "10:00", reminders: [0, 15] });
   const read = (id) => readEntity(f.db, f.teamId, "calendar", [id]);
   assert.deepEqual(Object.keys(read(plain).payload), [
     "userId",
@@ -350,24 +416,26 @@ test("SQLite shares a time and a reminder only when set and applies received one
     "tags",
   ]);
   assert.deepEqual(
-    (({ time, remindMinutes }) => ({ time, remindMinutes }))(
-      read(timed).payload,
-    ),
-    { time: "10:00", remindMinutes: 15 },
+    (({ time, reminders }) => ({ time, reminders }))(read(timed).payload),
+    { time: "10:00", reminders: [0, 15] },
   );
-  // The other site set a time on one entry and cleared it on the other.
+  // The other site set a time with reminders on one entry and cleared the other.
   const received = read(plain);
   materializeEntity(
     f.db,
     f.teamId,
-    { ...received, payload: { ...received.payload, time: "08:15" } },
+    {
+      ...received,
+      payload: { ...received.payload, time: "08:15", reminders: [5, 30] },
+    },
     { actorId: f.people.owner },
   );
   assert.deepEqual(read(plain).payload, {
     ...received.payload,
     time: "08:15",
+    reminders: [5, 30],
   });
-  const { time, remindMinutes, ...cleared } = read(timed).payload;
+  const { time, reminders, ...cleared } = read(timed).payload;
   materializeEntity(
     f.db,
     f.teamId,
@@ -376,9 +444,7 @@ test("SQLite shares a time and a reminder only when set and applies received one
   );
   assert.deepEqual(read(timed).payload, cleared);
   const row = f.db
-    .prepare(
-      "SELECT start_time,remind_minutes FROM calendar_entries WHERE id=?",
-    )
+    .prepare("SELECT start_time,reminders FROM calendar_entries WHERE id=?")
     .get(timed);
-  assert.deepEqual([row.start_time, row.remind_minutes], [null, null]);
+  assert.deepEqual([row.start_time, row.reminders], [null, null]);
 });

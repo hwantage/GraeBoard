@@ -16,7 +16,7 @@ export function revertToV33(db) {
     DROP INDEX calendar_entries_reminder_idx;
     DROP TABLE calendar_reminder_sends;
     DROP TABLE push_addresses;
-    ALTER TABLE calendar_entries DROP COLUMN remind_minutes;
+    ALTER TABLE calendar_entries DROP COLUMN reminders;
     ALTER TABLE calendar_entries DROP COLUMN start_time;
     DROP INDEX sheet_clone_documents_version_idx;
     DROP INDEX sheet_clone_memos_version_idx;

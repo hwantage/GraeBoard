@@ -20,6 +20,8 @@ import {
   CALENDAR_MEMBER_BATCH,
   CALENDAR_TIME_PATTERN,
   CALENDAR_REMINDER_MAX_MINUTES,
+  CALENDAR_REMINDER_OPTIONS,
+  calendarReminders,
   addDays,
   daysBetween,
 } from "../../../shared/calendar/calendar.js";
@@ -82,16 +84,19 @@ export function matchesCalendarTaskFilters(values, filters) {
   );
 }
 export const rangeSchema = z.object({ date: dateSchema, endDate: dateSchema });
-// An entry's start time and how long before it to remind; null is unset.
+// An entry's start time (null is unset) and how many minutes before it to
+// remind, any number of times.
 const timeSchema = z.string().regex(CALENDAR_TIME_PATTERN).nullable();
-const remindSchema = z
-  .number()
-  .int()
-  .min(0)
-  .max(CALENDAR_REMINDER_MAX_MINUTES)
-  .nullable();
+const remindersSchema = z
+  .array(z.number().int().min(0).max(CALENDAR_REMINDER_MAX_MINUTES))
+  .max(CALENDAR_REMINDER_OPTIONS.length)
+  .refine(
+    (list) => new Set(list).size === list.length,
+    "같은 알림을 중복으로 지정할 수 없습니다.",
+  )
+  .transform(calendarReminders);
 const needsTime = [
-  (data) => data.remindMinutes === null || data.time !== null,
+  (data) => !data.reminders.length || data.time !== null,
   { message: "알림은 시작 시각을 정한 일정에만 설정할 수 있습니다." },
 ];
 const bodySchemas = {
@@ -158,7 +163,7 @@ const bodySchemas = {
       tagIds: tagIdsSchema.default([]),
       checkedTagIds: tagIdsSchema.default([]),
       time: timeSchema.default(null),
-      remindMinutes: remindSchema.default(null),
+      reminders: remindersSchema.default([]),
     })
     .strict()
     .refine(...needsTime),
@@ -185,9 +190,9 @@ const bodySchemas = {
     z
       .object({
         time: timeSchema,
-        remindMinutes: remindSchema,
+        reminders: remindersSchema,
         expectedTime: timeSchema,
-        expectedRemindMinutes: remindSchema,
+        expectedReminders: remindersSchema,
       })
       .strict()
       .refine(...needsTime),

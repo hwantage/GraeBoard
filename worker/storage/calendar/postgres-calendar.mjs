@@ -98,7 +98,9 @@ export async function entryView(s, row) {
     lane: p.lane,
     title: p.title,
     time: p.time ?? null,
-    remindMinutes: p.remindMinutes ?? null,
+    reminders: p.reminders ?? [],
+    // Reminders are sent by the internal site; this one cannot tell how.
+    reminderStatus: null,
     preview: calendarPreview((!doc?.deleted && doc?.payload.markdown) || ""),
     hasDocument:
       !doc?.deleted && hasDocumentContent(doc?.payload.markdown || ""),
@@ -769,7 +771,7 @@ async function calendarOperation(ctx, operation, params, body, query) {
       date = dateSchema.parse(body.date),
       endDate = body.endDate || date,
       title = titleSchema.parse(body.title),
-      schedule = calendarSchedule(body.time, body.remindMinutes);
+      schedule = calendarSchedule(body.time, body.reminders);
     validRange(date, endDate);
     return ctx.data(
       teamId,
@@ -1019,17 +1021,17 @@ async function calendarOperation(ctx, operation, params, body, query) {
           );
           next.title = titleSchema.parse(body.title);
         } else if ("time" in body) {
-          // The start time and its reminder are saved together.
-          const current = [p.time ?? null, p.remindMinutes ?? null];
+          // The start time and its reminders are saved together.
+          const current = [p.time ?? null, p.reminders ?? []];
           assert(
-            equal(current, [body.expectedTime, body.expectedRemindMinutes]) ||
-              equal(current, [body.time, body.remindMinutes]),
+            equal(current, [body.expectedTime, body.expectedReminders]) ||
+              equal(current, [body.time, body.reminders]),
             409,
             "다른 사용자가 일정 시각이나 알림을 변경했습니다. 최신 값을 확인하세요.",
           );
           delete next.time;
-          delete next.remindMinutes;
-          Object.assign(next, calendarSchedule(body.time, body.remindMinutes));
+          delete next.reminders;
+          Object.assign(next, calendarSchedule(body.time, body.reminders));
         } else if (body.tagIds) {
           assert(
             equal(

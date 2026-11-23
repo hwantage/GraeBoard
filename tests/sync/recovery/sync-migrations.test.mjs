@@ -49,7 +49,7 @@ const RENAMED = {
 // `npm run migrate` then takes v34 to the current version.
 const CUTOVER_VERSION = 34;
 // v35 adds columns: an existing entry has neither a start time nor a reminder.
-const ADDED = { calendar_entries: { start_time: null, remind_minutes: null } };
+const ADDED = { calendar_entries: { start_time: null, reminders: null } };
 // node:sqlite rows have no prototype; a renamed column keeps its position.
 const renamed = (table, rows, version) =>
   RENAMED[table] || (ADDED[table] && version >= 35)
@@ -738,14 +738,14 @@ test("v34 upgrades additively to v35 with npm run migrate: every row is kept, an
     assert.equal(migrateSqlite(db).applied, false);
     migrateSqlite(fresh, { initialize: true });
     assert.deepEqual(shape(fresh), shape(db));
-    // The new columns accept only a time of day and a bounded reminder.
+    // The new columns accept only a time of day and a JSON list.
     db.exec(
-      "UPDATE calendar_entries SET start_time='09:30',remind_minutes=10 WHERE id='event'",
+      "UPDATE calendar_entries SET start_time='09:30',reminders='[0,10]' WHERE id='event'",
     );
     for (const sql of [
       "UPDATE calendar_entries SET start_time='9:30' WHERE id='event'",
-      "UPDATE calendar_entries SET remind_minutes=1441 WHERE id='event'",
-      "UPDATE calendar_entries SET remind_minutes=-1 WHERE id='event'",
+      "UPDATE calendar_entries SET reminders='10' WHERE id='event'",
+      "UPDATE calendar_entries SET reminders='[0,' WHERE id='event'",
     ])
       assert.throws(() => db.exec(sql), /CHECK constraint failed/);
     assert.equal(calendarReminderSql.includes("DROP"), false);

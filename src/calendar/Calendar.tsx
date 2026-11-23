@@ -54,6 +54,7 @@ import {
 } from "./secret-calendar-layout";
 
 import { isSecretEntry, setSecretCalendarMode } from "./secret-calendar";
+import CalendarScheduleFields from "./CalendarScheduleFields";
 import CalendarEntries from "./CalendarEntries";
 import CalendarTaskPicker from "./CalendarTaskPicker";
 import CalendarTagManager, {
@@ -1754,6 +1755,15 @@ export default function Calendar({
               <p className="calendar-hint">
                 이 브라우저에만 저장되며 다른 사람·관리자에게 보이지 않습니다.
               </p>
+            )}
+            {!creating.secret && (
+              <CalendarScheduleFields
+                value={{ time: creating.time, reminders: creating.reminders }}
+                disabled={locked}
+                onChange={(schedule) =>
+                  changeCreating({ ...creating, ...schedule })
+                }
+              />
             )}
             <CalendarTagPicker
               userId={creating.userId}

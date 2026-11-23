@@ -627,7 +627,7 @@ test("weekly items may carry the time that orders their week", () => {
   );
 });
 
-test("calendar entries may carry a start time and a reminder, each on its own", () => {
+test("calendar entries may carry a start time and reminders, each on its own", () => {
   const base = {
       userId: null,
       date: "2026-11-23",
@@ -648,25 +648,31 @@ test("calendar entries may carry a start time and a reminder, each on its own", 
   // Entries shared before 2026-11-23 have neither field.
   valid({});
   valid({ time: "00:00" });
-  valid({ time: "23:59", remindMinutes: 0 });
-  valid({ time: "09:30", remindMinutes: 1440 });
-  // A concurrent merge may leave a reminder whose time was cleared.
-  valid({ remindMinutes: 10 });
+  valid({ time: "23:59", reminders: [0] });
+  valid({ time: "09:30", reminders: [0, 10, 1440] });
+  // A concurrent merge may leave reminders whose time was cleared.
+  valid({ reminders: [10] });
   for (const payload of [
     { time: "9:30" },
     { time: "24:00" },
     { time: "09:60" },
     { time: null },
     { time: 930 },
-    { time: "09:30", remindMinutes: -1 },
-    { time: "09:30", remindMinutes: 1441 },
-    { time: "09:30", remindMinutes: 1.5 },
-    { time: "09:30", remindMinutes: null },
-    { time: "09:30", remindMinutes: "10" },
+    { time: "09:30", reminders: [-1] },
+    { time: "09:30", reminders: [1441] },
+    { time: "09:30", reminders: [1.5] },
+    { time: "09:30", reminders: null },
+    { time: "09:30", reminders: 10 },
+    { time: "09:30", reminders: ["10"] },
+    // No reminders is the field left out, and the list is canonical.
+    { time: "09:30", reminders: [] },
+    { time: "09:30", reminders: [10, 0] },
+    { time: "09:30", reminders: [10, 10] },
+    { time: "09:30", remindMinutes: 10 },
   ])
     assert.throws(
       () => valid(payload),
-      /Invalid calendar time/,
+      /Invalid calendar time|Unsupported entity payload/,
       JSON.stringify(payload),
     );
   assert.throws(

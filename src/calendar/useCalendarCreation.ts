@@ -3,6 +3,7 @@ import { useState } from "react";
 import { send } from "../platform/api";
 
 import { saveSecretEntry } from "./secret-calendar";
+import { validSchedule } from "./CalendarScheduleFields";
 
 import { useCalendarData } from "./useCalendarData";
 
@@ -45,6 +46,9 @@ export default function useCalendarCreation({
     title: string;
     tagIds: string[];
     checkedTagIds: string[];
+    // The start time and reminders (server entries only).
+    time: string | null;
+    reminders: number[];
   } | null>(null);
   const draftKey = creating
     ? `weekly-plan:calendar-create:${user.id}:${team.id}:${creating.userId}:${creating.date}`
@@ -74,6 +78,13 @@ export default function useCalendarCreation({
               tagIds.includes(id) && tagMap.get(id)?.kind === "check",
           )
         : [],
+      time: typeof saved?.time === "string" ? saved.time : null,
+      reminders:
+        typeof saved?.time === "string" && Array.isArray(saved.reminders)
+          ? saved.reminders.filter((minutes: unknown) =>
+              Number.isInteger(minutes),
+            )
+          : [],
     });
   }
   function changeCreating(next: NonNullable<typeof creating>) {
@@ -87,6 +98,10 @@ export default function useCalendarCreation({
   function saveCreating() {
     if (!creating || locked || !creating.title.trim() || composingTitle.current)
       return;
+    if (!creating.secret && !validSchedule(creating)) {
+      setError("시작 시각을 시:분으로 입력하세요.");
+      return;
+    }
     if (creating.secret) {
       if (creating.userId !== user.id) return;
       localAction(() => {

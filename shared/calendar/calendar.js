@@ -7,36 +7,63 @@ export const CALENDAR_MEMBER_BATCH = 50;
 export const CALENDAR_DAYS = [0, 1, 2, 3, 4, 5, 6];
 export const DAY_LABELS = ["일", "월", "화", "수", "목", "금", "토"];
 // An entry may start at a time of day ("HH:MM") on its first date and ask for
-// a reminder that many minutes before. Both are optional, and a reminder
-// needs a time. The time is read in Korea Standard Time on both sites.
+// reminders some minutes before it, several at once. Both are optional, and
+// reminders need a time. The time is read in Korea Standard Time on both sites.
 export const CALENDAR_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
 export const CALENDAR_REMINDER_MAX_MINUTES = 1440;
-export const CALENDAR_REMINDER_OPTIONS = [0, 5, 10, 15, 30, 60, 120, 1440];
+export const CALENDAR_REMINDER_OPTIONS = [0, 5, 10, 15, 30, 60];
+// A reminder is still sent this long after its time (a restart, an entry that
+// arrived late from the other site). Later than that it counts as missed.
+export const CALENDAR_REMINDER_GRACE_MS = 10 * 60 * 1000;
+/** Reminder minutes without repeats, soonest before the start last. */
+export const calendarReminders = (list) =>
+  [...new Set(list || [])].sort((a, b) => a - b);
 export const CALENDAR_TIME_ZONE_OFFSET = "+09:00";
-/** "정시", "10분 전", "1시간 전" or "하루 전" for a reminder's minutes. */
+/** "정시", "10분 전" or "1시간 전" for a reminder's minutes. */
 export function calendarReminderLabel(minutes) {
   if (minutes === 0) return "정시";
-  if (minutes === 1440) return "하루 전";
   if (minutes % 60 === 0) return `${minutes / 60}시간 전`;
   return `${minutes}분 전`;
 }
 /**
- * The shared (synchronized) fields of a start time and its reminder: a field
+ * The shared (synchronized) fields of a start time and its reminders: a field
  * that is not set is left out, so entries without a time keep the payload
  * they had before these fields existed. The two are stored independently,
  * because sites may change them at the same time; the commands of both sites
- * clear the reminder with the time, and a reminder without a time never fires.
+ * clear the reminders with the time, and reminders without a time never fire.
  * @param {string | null | undefined} time
- * @param {number | null | undefined} remindMinutes
- * @returns {{ time?: string, remindMinutes?: number }}
+ * @param {number[] | null | undefined} reminders
+ * @returns {{ time?: string, reminders?: number[] }}
  */
-export function calendarSchedule(time, remindMinutes) {
+export function calendarSchedule(time, reminders) {
+  const list = calendarReminders(reminders);
   return {
     ...(time ? { time } : {}),
-    ...(remindMinutes === null || remindMinutes === undefined
-      ? {}
-      : { remindMinutes }),
+    ...(list.length ? { reminders: list } : {}),
   };
+}
+/**
+ * How an entry's reminders stand on the site that sends them: "failed" when
+ * one reached nobody or was missed, else "pending" while one is still to
+ * come, else "sent". null without a time or reminders.
+ * @param {{ date: string, time?: string | null, reminders?: number[] }} entry
+ * @param {Map<string, number>} sent recipients by the reminder's ISO time
+ * @param {number} now epoch milliseconds
+ * @returns {"pending" | "sent" | "failed" | null}
+ */
+export function calendarReminderStatus(entry, sent, now) {
+  const start = calendarStartMs(entry.date, entry.time);
+  if (start === null || !entry.reminders?.length) return null;
+  let pending = false;
+  for (const minutes of entry.reminders) {
+    const at = start - minutes * 60000,
+      recipients = sent.get(new Date(at).toISOString());
+    if (recipients === undefined) {
+      if (now - at > CALENDAR_REMINDER_GRACE_MS) return "failed";
+      pending = true;
+    } else if (!recipients) return "failed";
+  }
+  return pending ? "pending" : "sent";
 }
 /** When an entry starts, in epoch milliseconds; null without a start time. */
 export function calendarStartMs(date, time) {

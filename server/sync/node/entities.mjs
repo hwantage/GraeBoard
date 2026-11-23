@@ -306,7 +306,7 @@ export function readEntity(
             "SELECT tag_id AS id,checked FROM calendar_entry_tags WHERE entry_id=? ORDER BY position",
             a,
           ).map((x) => ({ ...x, checked: !!x.checked })),
-          ...calendarSchedule(r.start_time, r.remind_minutes),
+          ...calendarSchedule(r.start_time, parse(r.reminders, [])),
         };
       break;
     case "tag":
@@ -829,7 +829,7 @@ export function materializeEntity(
   }
   if (e.entity === "calendar") {
     db.prepare(
-      "INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,lane,title,updated_at,actor_id,deleted_at,start_time,remind_minutes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id,date=excluded.date,end_date=excluded.end_date,lane=excluded.lane,title=excluded.title,deleted_at=excluded.deleted_at,updated_at=excluded.updated_at,actor_id=excluded.actor_id,start_time=excluded.start_time,remind_minutes=excluded.remind_minutes,revision=calendar_entries.revision+1",
+      "INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,lane,title,updated_at,actor_id,deleted_at,start_time,reminders) VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id,date=excluded.date,end_date=excluded.end_date,lane=excluded.lane,title=excluded.title,deleted_at=excluded.deleted_at,updated_at=excluded.updated_at,actor_id=excluded.actor_id,start_time=excluded.start_time,reminders=excluded.reminders,revision=calendar_entries.revision+1",
     ).run(
       a,
       teamId,
@@ -842,7 +842,7 @@ export function materializeEntity(
       author(),
       dead ? p.deletedAt || stamp : null,
       p.time ?? null,
-      p.remindMinutes ?? null,
+      p.reminders?.length ? JSON.stringify(p.reminders) : null,
     );
     db.prepare("DELETE FROM calendar_entry_tags WHERE entry_id=?").run(a);
     for (const [i, t] of (p.tags || []).entries())

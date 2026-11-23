@@ -485,7 +485,7 @@ const payloadFields = {
     "createdAt",
     "data",
   ],
-  // time and remindMinutes (2026-11-23) are optional and independent: an
+  // time and reminders (2026-11-23) are optional and independent: an
   // entry carries each only when set, so entries shared before them and
   // entries without a start time keep their payload.
   calendar: [
@@ -497,7 +497,7 @@ const payloadFields = {
     "deletedAt",
     "tags",
     "time",
-    "remindMinutes",
+    "reminders",
   ],
   tag: ["userId", "name", "color", "kind"],
   rule: ["propertyId", "values", "mode"],
@@ -662,11 +662,19 @@ export function validateEntityPayload(
         typeof payload.time === "string" &&
         /^([01]\d|2[0-3]):[0-5]\d$/.test(payload.time)
       )) ||
-      (payload.remindMinutes !== undefined &&
+      // Minutes before the start, each once, in ascending order.
+      (payload.reminders !== undefined &&
         !(
-          Number.isInteger(payload.remindMinutes) &&
-          payload.remindMinutes >= 0 &&
-          payload.remindMinutes <= 1440
+          Array.isArray(payload.reminders) &&
+          payload.reminders.length >= 1 &&
+          payload.reminders.length <= 20 &&
+          payload.reminders.every(
+            (minutes, index) =>
+              Number.isInteger(minutes) &&
+              minutes >= 0 &&
+              minutes <= 1440 &&
+              (index === 0 || minutes > payload.reminders[index - 1]),
+          )
         )))
   )
     throw new Error("Invalid calendar time");

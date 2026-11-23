@@ -467,7 +467,8 @@ export default function CalendarEntryPanel({
               current.current = {
                 ...current.current,
                 time: saved.time ?? null,
-                remindMinutes: saved.remindMinutes ?? null,
+                reminders: saved.reminders ?? [],
+                reminderStatus: saved.reminderStatus,
                 updatedAt:
                   saved.updatedAt > current.current.updatedAt
                     ? saved.updatedAt
@@ -578,7 +579,8 @@ export default function CalendarEntryPanel({
                   endDate: current.current.endDate,
                   lane: current.current.lane,
                   time: current.current.time,
-                  remindMinutes: current.current.remindMinutes,
+                  reminders: current.current.reminders,
+                  reminderStatus: current.current.reminderStatus,
                   tagIds: current.current.tagIds,
                   checkedTagIds: current.current.checkedTagIds,
                   updatedAt:

@@ -20,6 +20,8 @@ import {
   calendarWeek,
   calendarRuleProblem,
   nextCalendarCopyTitle,
+  calendarReminders,
+  calendarReminderStatus,
   weeklyOrderStamps,
   CALENDAR_DAYS,
   CALENDAR_MAX_RANGE_DAYS,
@@ -30,7 +32,7 @@ import {
 } from "../../documents/document-storage.mjs";
 import { resolveSqliteDocumentLinks } from "../documents/sqlite-document-links.mjs";
 
-const entryColumns = `id,team_id AS teamId,user_id AS userId,date,end_date AS endDate,lane,title,start_time AS time,remind_minutes AS remindMinutes,preview,revision,updated_at AS updatedAt,
+const entryColumns = `id,team_id AS teamId,user_id AS userId,date,end_date AS endDate,lane,title,start_time AS time,reminders,preview,revision,updated_at AS updatedAt,
   COALESCE((SELECT has_content FROM document_versions WHERE id=calendar_entries.version_id),0) AS hasDocument,
   (SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM calendar_entry_tags WHERE entry_id=calendar_entries.id ORDER BY position)) AS tagIds,
   (SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM calendar_entry_tags WHERE entry_id=calendar_entries.id AND checked=1 ORDER BY position)) AS checkedTagIds`;
@@ -39,9 +41,16 @@ const tagColumns = `id,team_id AS teamId,user_id AS userId,name,color,kind,revis
 const entryJson = (row) => ({
   ...row,
   hasDocument: !!row.hasDocument,
+  reminders: readReminders(row.reminders),
   tagIds: parse(row.tagIds, []),
   checkedTagIds: parse(row.checkedTagIds, []),
 });
+// The column holds the list as JSON, or NULL without reminders.
+const readReminders = (text) => parse(text, null) ?? [];
+const storedReminders = (list) => {
+  const reminders = calendarReminders(list);
+  return reminders.length ? json(reminders) : null;
+};
 const nextStamp = (row) =>
   new Date(Math.max(Date.now(), Date.parse(row.updated_at) + 1)).toISOString();
 function validRange(data) {
@@ -117,8 +126,24 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
         }
       : { propertyId: "", values: [], mode: "include", revision: 0 };
   }
+  // This site sends the reminders, so it also knows how each one went.
+  const sentReminders = db.prepare(
+    "SELECT fire_at,recipients FROM calendar_reminder_sends WHERE entry_id=?",
+  );
   function visibleEntry(row, visibility = retentionView(db, row.teamId)) {
     const entry = entryJson(row);
+    entry.reminderStatus =
+      entry.time && entry.reminders.length
+        ? calendarReminderStatus(
+            entry,
+            new Map(
+              sentReminders
+                .all(entry.id)
+                .map((sent) => [sent.fire_at, sent.recipients]),
+            ),
+            Date.now(),
+          )
+        : null;
     if (visibility.hidden("document", ["calendar", row.id, "main"])) {
       entry.preview = "";
       entry.hasDocument = false;
@@ -923,7 +948,8 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
           previous.end_date === endDate &&
           previous.title === data.title &&
           previous.start_time === (data.time ?? null) &&
-          previous.remind_minutes === (data.remindMinutes ?? null) &&
+          json(readReminders(previous.reminders)) ===
+            json(calendarReminders(data.reminders)) &&
           json(tagIdsFor(previous.id)) === json(data.tagIds) &&
           json([...checkedTagIdsFor(previous.id)].sort()) ===
             json([...data.checkedTagIds].sort()),
@@ -932,7 +958,7 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
       );
     } else {
       db.prepare(
-        "INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,lane,title,updated_at,actor_id,start_time,remind_minutes) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,lane,title,updated_at,actor_id,start_time,reminders) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
       ).run(
         data.id,
         data.teamId,
@@ -950,7 +976,7 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
         now(),
         actorId,
         data.time ?? null,
-        data.remindMinutes ?? null,
+        storedReminders(data.reminders),
       );
       setTags(data.id, data.tagIds, data.checkedTagIds);
     }
@@ -998,7 +1024,7 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
           endDate: source.end_date,
           title: nextCalendarCopyTitle(source.title, titles),
           time: source.start_time,
-          remindMinutes: source.remind_minutes,
+          reminders: readReminders(source.reminders),
           tagIds: tagIdsFor(source.id),
           checkedTagIds: checkedTagIdsFor(source.id),
         },
@@ -1135,27 +1161,32 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
       return saved;
     }
     if ("time" in data) {
-      const unchanged =
-        row.start_time === data.time &&
-        row.remind_minutes === data.remindMinutes;
+      const current = json(readReminders(row.reminders)),
+        unchanged =
+          row.start_time === data.time && current === json(data.reminders);
       requireThat(
         (row.start_time === data.expectedTime &&
-          row.remind_minutes === data.expectedRemindMinutes) ||
+          current === json(data.expectedReminders)) ||
           unchanged,
         409,
         "다른 사용자가 일정 시각이나 알림을 변경했습니다. 최신 값을 확인하세요.",
         {
           currentSchedule: {
             time: row.start_time,
-            remindMinutes: row.remind_minutes,
+            reminders: readReminders(row.reminders),
           },
         },
       );
       if (!unchanged)
         transaction(db, () => {
           db.prepare(
-            "UPDATE calendar_entries SET start_time=?,remind_minutes=?,updated_at=? WHERE id=?",
-          ).run(data.time, data.remindMinutes, nextStamp(row), row.id);
+            "UPDATE calendar_entries SET start_time=?,reminders=?,updated_at=? WHERE id=?",
+          ).run(
+            data.time,
+            storedReminders(data.reminders),
+            nextStamp(row),
+            row.id,
+          );
         });
       return summary(row.id);
     }

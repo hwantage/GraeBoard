@@ -1,9 +1,9 @@
 import { isIP } from "node:net";
-import { z } from "zod";
 import { requireThat } from "../../shared/validation.js";
 import {
   calendarReminderLabel,
   calendarStartMs,
+  CALENDAR_REMINDER_GRACE_MS,
   CALENDAR_REMINDER_MAX_MINUTES,
   CALENDAR_TIME_ZONE_OFFSET,
 } from "../../shared/calendar/calendar.js";
@@ -13,17 +13,16 @@ import { documentLinkPath } from "../../shared/documents/document-links.js";
 // message to the desktop client connected from a fixed intranet address.
 // Only this internal server can reach the hub, so it alone sends: a reminder
 // set on the external site is sent here once synchronization delivered it.
+// Reminder times are compared with this server's clock.
 //
 // The hub addresses a person by IP, so this server remembers the address each
 // person last used the internal site from (push_addresses). That table and the
-// sent log (calendar_reminder_sends) are local and never synchronized.
+// sent log (calendar_reminder_sends) are local and never synchronized. The
+// log also tells how each reminder went (calendarReminderStatus), so its rows
+// stay as long as their entry.
 
-// A reminder is sent up to this long after its time, e.g. after a restart or
-// when the entry arrived late from the other site. Older ones are skipped.
-export const CALENDAR_REMINDER_GRACE_MS = 10 * 60 * 1000;
 const TICK_MS = 30 * 1000;
 const REQUEST_TIMEOUT_MS = 5000;
-const SENT_LOG_DAYS = 7;
 // A person may send themselves a test push this often.
 const TEST_INTERVAL_MS = 10 * 1000;
 const ZONE_MS =
@@ -41,7 +40,8 @@ export function pushAddress(value) {
   return isIP(ip) && ip !== "::1" && !ip.startsWith("127.") ? ip : "";
 }
 
-export function calendarReminderMessage(entry, { appOrigin } = {}) {
+// `minutes` is the reminder being sent, one of the entry's reminders.
+export function calendarReminderMessage(entry, minutes, { appOrigin } = {}) {
   const start = calendarStartMs(entry.date, entry.time);
   const link = appOrigin
     ? appOrigin.replace(/\/+$/, "") +
@@ -51,9 +51,9 @@ export function calendarReminderMessage(entry, { appOrigin } = {}) {
     msg_type: "noti",
     title: `⏰ ${entry.time} ${entry.title}`,
     message:
-      (entry.remindMinutes === 0
+      (minutes === 0
         ? "지금 시작하는 일정입니다."
-        : `${calendarReminderLabel(entry.remindMinutes)} 알림입니다.`) +
+        : `${calendarReminderLabel(minutes)} 알림입니다.`) +
       ` (${entry.date} ${entry.time} 시작` +
       (entry.userId === null ? ` · ${entry.teamName} 팀 일정)` : ")"),
     payload: { category: "그래보드 캘린더", ...(link ? { link } : {}) },
@@ -68,6 +68,9 @@ export function createCalendarReminderPush({
   appOrigin = process.env.APP_ORIGIN,
   request = fetch,
   now = Date.now,
+  // Called with the team of an entry whose reminder was just sent or closed,
+  // so open calendars show how it went.
+  onSent,
 } = {}) {
   const base = String(hubUrl || "")
     .trim()
@@ -77,52 +80,21 @@ export function createCalendarReminderPush({
   const seen = new Map();
   const tested = new Map();
   let timer = null,
-    running = null,
-    lastCleanup = 0;
+    running = null;
 
   function remember(userId, address) {
     const ip = pushAddress(address);
     if (!ip || seen.get(userId) === ip) return;
     seen.set(userId, ip);
-    // An address the person set by hand stays until they clear it.
     db.prepare(
-      "INSERT INTO push_addresses(user_id,ip,manual,updated_at) VALUES(?,?,0,?) ON CONFLICT(user_id) DO UPDATE SET ip=excluded.ip,updated_at=excluded.updated_at WHERE push_addresses.manual=0 AND push_addresses.ip<>excluded.ip",
+      "INSERT INTO push_addresses(user_id,ip,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET ip=excluded.ip,updated_at=excluded.updated_at WHERE push_addresses.ip<>excluded.ip",
     ).run(userId, ip, new Date(now()).toISOString());
   }
-  function address(userId, detected) {
+  function address(userId) {
     const row = db
-      .prepare("SELECT ip,manual FROM push_addresses WHERE user_id=?")
+      .prepare("SELECT ip FROM push_addresses WHERE user_id=?")
       .get(userId);
-    return {
-      enabled,
-      ip: row?.ip || null,
-      manual: !!row?.manual,
-      detectedIp: pushAddress(detected) || null,
-    };
-  }
-  function setAddress(userId, value, detected) {
-    const stamp = new Date(now()).toISOString();
-    if (value === null) {
-      // Back to following the address the person uses the site from.
-      const ip = pushAddress(detected);
-      if (ip)
-        db.prepare(
-          "INSERT INTO push_addresses(user_id,ip,manual,updated_at) VALUES(?,?,0,?) ON CONFLICT(user_id) DO UPDATE SET ip=excluded.ip,manual=0,updated_at=excluded.updated_at",
-        ).run(userId, ip, stamp);
-      else db.prepare("DELETE FROM push_addresses WHERE user_id=?").run(userId);
-      seen.delete(userId);
-    } else {
-      const ip = pushAddress(value);
-      requireThat(
-        ip,
-        400,
-        "알림을 받을 PC의 사내 IP 주소를 확인하세요. 예: 10.0.0.12",
-      );
-      db.prepare(
-        "INSERT INTO push_addresses(user_id,ip,manual,updated_at) VALUES(?,?,1,?) ON CONFLICT(user_id) DO UPDATE SET ip=excluded.ip,manual=1,updated_at=excluded.updated_at",
-      ).run(userId, ip, stamp);
-    }
-    return address(userId, detected);
+    return { enabled, ip: row?.ip || null };
   }
 
   // True once the hub took the message. It also keeps a message for a client
@@ -162,36 +134,38 @@ export function createCalendarReminderPush({
     );
     return db
       .prepare(
-        "SELECT e.id,e.team_id AS teamId,e.user_id AS userId,e.date,e.start_time AS time,e.remind_minutes AS remindMinutes,e.title,t.name AS teamName FROM calendar_entries e JOIN teams t ON t.id=e.team_id WHERE e.deleted_at IS NULL AND e.start_time IS NOT NULL AND e.remind_minutes IS NOT NULL AND e.date BETWEEN ? AND ? ORDER BY e.date,e.start_time,e.id",
+        "SELECT e.id,e.team_id AS teamId,e.user_id AS userId,e.date,e.start_time AS time,e.reminders,e.title,t.name AS teamName FROM calendar_entries e JOIN teams t ON t.id=e.team_id WHERE e.deleted_at IS NULL AND e.start_time IS NOT NULL AND e.reminders IS NOT NULL AND e.date BETWEEN ? AND ? ORDER BY e.date,e.start_time,e.id",
       )
       .all(
         dayOf(at - CALENDAR_REMINDER_GRACE_MS),
         dayOf(at + CALENDAR_REMINDER_MAX_MINUTES * 60000),
       )
-      .flatMap((entry) => {
+      .flatMap(({ reminders, ...entry }) => {
         const start = calendarStartMs(entry.date, entry.time);
         if (start === null) return [];
-        const fireMs = start - entry.remindMinutes * 60000;
-        if (fireMs > at || at - fireMs > CALENDAR_REMINDER_GRACE_MS) return [];
-        const fireAt = new Date(fireMs).toISOString();
-        if (sent.get(entry.id, fireAt)) return [];
-        return [
-          {
-            entry,
-            fireAt,
-            recipients:
+        let recipients;
+        // The earliest reminder first.
+        return JSON.parse(reminders)
+          .toSorted((a, b) => b - a)
+          .flatMap((minutes) => {
+            const fireMs = start - minutes * 60000;
+            if (fireMs > at || at - fireMs > CALENDAR_REMINDER_GRACE_MS)
+              return [];
+            const fireAt = new Date(fireMs).toISOString();
+            if (sent.get(entry.id, fireAt)) return [];
+            recipients ??=
               entry.userId === null
                 ? members.all(entry.teamId)
-                : owner.all(entry.userId),
-          },
-        ];
+                : owner.all(entry.userId);
+            return [{ entry, minutes, fireAt, recipients }];
+          });
       });
   }
 
   async function run() {
     const at = now();
-    for (const { entry, fireAt, recipients } of due(at)) {
-      const message = calendarReminderMessage(entry, { appOrigin });
+    for (const { entry, minutes, fireAt, recipients } of due(at)) {
+      const message = calendarReminderMessage(entry, minutes, { appOrigin });
       const results = await Promise.all(
         recipients.map(({ ip }) => send(ip, message)),
       );
@@ -206,12 +180,7 @@ export function createCalendarReminderPush({
         new Date(now()).toISOString(),
         results.filter(Boolean).length,
       );
-    }
-    if (at - lastCleanup > 60 * 60 * 1000) {
-      lastCleanup = at;
-      db.prepare("DELETE FROM calendar_reminder_sends WHERE sent_at<?").run(
-        new Date(at - SENT_LOG_DAYS * 86400000).toISOString(),
-      );
+      onSent?.(entry.teamId);
     }
   }
   // One pass at a time: a slow hub must not send a reminder twice.
@@ -230,7 +199,6 @@ export function createCalendarReminderPush({
     enabled,
     remember,
     address,
-    setAddress,
     due,
     tick,
     async test(userId) {
@@ -274,12 +242,8 @@ export function createCalendarReminderPush({
   };
 }
 
-const addressSchema = z
-  .object({ ip: z.string().trim().max(45).nullable() })
-  .strict();
-
 // Installed after authentication: every signed-in request tells where the
-// person uses the internal site from.
+// person uses the internal site from, which is where their reminders go.
 export function installCalendarReminderPush(app, options) {
   const push = createCalendarReminderPush(options);
   app.use("/api", (req, _res, next) => {
@@ -287,12 +251,7 @@ export function installCalendarReminderPush(app, options) {
     next();
   });
   app.get("/api/push-address", (req, res) =>
-    res.json(push.address(req.user.id, req.ip)),
-  );
-  app.put("/api/push-address", (req, res) =>
-    res.json(
-      push.setAddress(req.user.id, addressSchema.parse(req.body).ip, req.ip),
-    ),
+    res.json(push.address(req.user.id)),
   );
   app.post("/api/push-address/test", async (req, res) =>
     res.json(await push.test(req.user.id)),

@@ -154,6 +154,37 @@ export default function CalendarEntries({
     const open = (detail: number) => {
       if (!disabled && (!detail || canClick())) onOpen(item);
     };
+    // The bell sits in the card's top right corner, on the segment where the
+    // entry starts, and tells how the reminders went where that is known.
+    const reminderStatus =
+      !before && item.time && item.reminders?.length
+        ? (item.reminderStatus ?? "set")
+        : null;
+    const bell = reminderStatus && (
+      <span
+        className="calendar-entry-bell"
+        data-status={reminderStatus}
+        role="img"
+        aria-label={
+          {
+            set: "알림 설정됨",
+            pending: "알림 대기",
+            sent: "알림 보냄",
+            failed: "알림 오류",
+          }[reminderStatus]
+        }
+        title={
+          {
+            set: "알림 설정됨",
+            pending: "알림 대기 중",
+            sent: "알림을 보냈습니다",
+            failed: "알림을 보내지 못했습니다(받을 PC 없음 또는 시각 지남)",
+          }[reminderStatus]
+        }
+      >
+        <Bell size={11} aria-hidden="true" />
+      </span>
+    );
     const content = (
       <span className="calendar-entry-content">
         <strong>
@@ -172,13 +203,6 @@ export default function CalendarEntries({
             {item.title}
             {after && <i aria-hidden="true"> →</i>}
           </span>
-          {item.time && item.remindMinutes != null && (
-            <Bell
-              size={12}
-              className="calendar-document-icon"
-              aria-label="알림 설정됨"
-            />
-          )}
           {(item.hasDocument ?? !!item.preview) && (
             <FileText
               size={12}
@@ -274,6 +298,7 @@ export default function CalendarEntries({
             >
               {content}
             </button>
+            {bell}
             {separateTags && (
               <span className="calendar-entry-tag-overlay">
                 <span className="calendar-entry-content">

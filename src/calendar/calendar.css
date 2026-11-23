@@ -1264,18 +1264,102 @@
   padding-bottom: 7px;
 }
 .calendar-reminder-editor {
-  margin-top: 10px;
+  margin-top: 12px;
 }
-.calendar-entry-heading .calendar-reminder-editor input,
-.calendar-entry-heading .calendar-reminder-editor select {
+.calendar-reminder-editor [role="status"] {
+  font-size: 11px;
+  color: var(--accent);
+}
+.calendar-schedule {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+.calendar-schedule-fields {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+.calendar-schedule-time {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.modal-body .calendar-schedule-time input {
   width: 150px;
   min-height: 33px;
   padding: 5px 7px;
   font-size: 12px;
   font-weight: 400;
 }
-.calendar-reminder-clear {
+.calendar-reminder-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.calendar-reminder-option {
   min-height: 33px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.calendar-reminder-option[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.calendar-reminder-option:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.calendar-reminder-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* The bell in a card's top right corner; its dot tells how the reminders went. */
+.calendar-entry-bell {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  display: inline-flex;
+  color: var(--ink);
+  opacity: 0.75;
+  pointer-events: none;
+}
+.calendar-entry-bell::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 7px;
+  height: 7px;
+  border: 1px solid #fff;
+  border-radius: 50%;
+  background: #8a949a;
+}
+.calendar-entry-bell[data-status="set"]::after {
+  display: none;
+}
+.calendar-entry-bell[data-status="pending"]::after {
+  background: #e8a317;
+}
+.calendar-entry-bell[data-status="sent"]::after {
+  background: #1f9d55;
+}
+.calendar-entry-bell[data-status="failed"]::after {
+  background: #d93025;
+}
+.calendar-entry-segment:has(> .calendar-entry-bell) .calendar-entry-card {
+  padding-right: 24px;
 }
 .calendar-reminder-note {
   margin: 8px 0 0;
@@ -1295,9 +1379,6 @@
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 6px;
-}
-.calendar-entry-heading .calendar-reminder-address input {
-  width: 160px;
 }
 .calendar-entry-time {
   font-variant-numeric: tabular-nums;

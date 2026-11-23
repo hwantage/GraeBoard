@@ -1,7 +1,8 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { unpack } from "../../../shared/formatting/compact.js";
 import { todayKey } from "../../../shared/domain.js";
+import { addDays } from "../../../shared/calendar/calendar.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
 let teamId: string, userId: string;
@@ -23,7 +24,21 @@ const detail = (page: Page) =>
   page.getByRole("dialog", { name: "캘린더 일정", exact: true });
 const card = (page: Page, id: string) =>
   page.locator(`[data-entry-id="${id}"] .calendar-entry-card`).first();
-// The next save of the entry's time and reminder, as the server stored it.
+const bell = (page: Page, id: string) =>
+  page.locator(`[data-entry-id="${id}"] .calendar-entry-bell`);
+const schedule = async (page: Page, id: string) =>
+  (({ time, reminders }) => ({ time, reminders }))(
+    await request(page, `/calendar/entries/${id}`),
+  );
+const fields = (scope: Locator) => ({
+  toggle: scope.getByRole("switch", { name: "시작 알림", exact: true }),
+  time: scope.getByLabel("일정 시작 시각"),
+  option: (name: string) =>
+    scope
+      .getByRole("group", { name: "알림 시점", exact: true })
+      .getByRole("button", { name, exact: true }),
+});
+// The next save of the entry's time and reminders, as the server stored it.
 const saved = (page: Page, id: string) =>
   page
     .waitForResponse(
@@ -35,6 +50,12 @@ const saved = (page: Page, id: string) =>
     .then(async (response) => {
       expect(response.ok(), await response.text()).toBeTruthy();
     });
+async function calendar(page: Page) {
+  await page.goto("/");
+  await page.getByLabel("팀 선택", { exact: true }).selectOption(teamId);
+  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await expect(page.locator(".calendar-grid")).toBeVisible();
+}
 
 test.beforeEach(async ({ page }) => {
   await request(page, "/auth/login", "POST", {
@@ -53,7 +74,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test("일정 상세에서 시작 시각과 알림을 저장하고 카드에 표시하며 시각을 지우면 알림도 지운다", async ({
+test("일정 상세의 시작 알림을 켜면 시각과 여러 알림을 저장하고 끄면 모두 지운다", async ({
   page,
 }) => {
   const entry = await request(page, "/calendar/entries", "POST", {
@@ -61,71 +82,141 @@ test("일정 상세에서 시작 시각과 알림을 저장하고 카드에 표�
     teamId,
     userId,
     title: "주간 회의",
-    date: todayKey(),
+    // Tomorrow: every reminder is still to come.
+    date: addDays(todayKey(), 1),
   });
-  await page.goto("/");
-  await page.getByLabel("팀 선택", { exact: true }).selectOption(teamId);
-  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await calendar(page);
   await expect(card(page, entry.id)).toBeVisible();
-  await expect(card(page, entry.id).locator("time")).toHaveCount(0);
+  await expect(bell(page, entry.id)).toHaveCount(0);
   await card(page, entry.id).click();
 
-  const time = detail(page).getByLabel("일정 시작 시각"),
-    reminder = detail(page).getByLabel("일정 알림");
-  await expect(time).toHaveValue("");
-  // A reminder needs a time first.
-  await expect(reminder).toBeDisabled();
-  await time.fill("09:30");
-  await expect(reminder).toBeEnabled();
-  // Choosing the reminder saves the time with it.
-  await Promise.all([
-    saved(page, entry.id),
-    reminder.selectOption({ label: "10분 전" }),
-  ]);
-  await expect(detail(page).getByText("시각 저장됨")).toBeVisible();
-  expect(
-    (({ time, remindMinutes }) => ({ time, remindMinutes }))(
-      await request(page, `/calendar/entries/${entry.id}`),
-    ),
-  ).toEqual({ time: "09:30", remindMinutes: 10 });
-  // The internal site tells where this person's reminders go.
-  await expect(detail(page).getByText(/다바다 푸시/)).toBeVisible();
+  const { toggle, time, option } = fields(detail(page));
+  await expect(toggle).not.toBeChecked();
+  await expect(time).toHaveCount(0);
+  // Turning it on starts with a time and a reminder at that time.
+  await Promise.all([saved(page, entry.id), toggle.check({ force: true })]);
+  await expect(time).toHaveValue(/^\d{2}:\d{2}$/);
+  await expect(option("정시")).toHaveAttribute("aria-pressed", "true");
+  await expect(option("2시간 전")).toHaveCount(0);
+  await expect(option("하루 전")).toHaveCount(0);
+  expect((await schedule(page, entry.id)).reminders).toEqual([0]);
 
-  // Leaving the fields saves a changed time alone.
-  await time.fill("14:05");
+  // Several reminders at once; each choice is saved.
+  await Promise.all([saved(page, entry.id), option("10분 전").click()]);
+  await Promise.all([saved(page, entry.id), option("1시간 전").click()]);
+  await expect(detail(page).getByText("알림 저장됨")).toBeVisible();
+  // A typed time is saved on leaving the fields.
+  await time.fill("09:30");
   await Promise.all([
     saved(page, entry.id),
     detail(page).getByLabel("일정 제목").focus(),
   ]);
-  expect((await request(page, `/calendar/entries/${entry.id}`)).time).toBe(
-    "14:05",
-  );
+  expect(await schedule(page, entry.id)).toEqual({
+    time: "09:30",
+    reminders: [0, 10, 60],
+  });
+  // The internal site tells where this person's reminders go, and offers no
+  // way to point them elsewhere.
+  await expect(detail(page).getByText(/다바다 푸시/)).toBeVisible();
+  await expect(
+    detail(page).getByRole("button", { name: "주소 변경" }),
+  ).toHaveCount(0);
 
   await detail(page).getByRole("button", { name: "닫기", exact: true }).click();
   await expect(detail(page)).toHaveCount(0);
-  await expect(card(page, entry.id).locator("time")).toHaveText("14:05");
-  await expect(card(page, entry.id).getByLabel("알림 설정됨")).toBeVisible();
-  // The card keeps both after a reload.
-  await page.reload();
-  await expect(card(page, entry.id).locator("time")).toHaveText("14:05");
-
-  await card(page, entry.id).click();
-  await expect(time).toHaveValue("14:05");
-  await expect(reminder).toHaveValue("10");
-  await Promise.all([
-    saved(page, entry.id),
-    detail(page).getByTitle("시작 시각 지우기").click(),
+  await expect(card(page, entry.id).locator("time")).toHaveText("09:30");
+  // The bell is in the card's top right corner and waits.
+  await expect(bell(page, entry.id)).toHaveAttribute("data-status", "pending");
+  await expect(bell(page, entry.id)).toHaveAccessibleName("알림 대기");
+  const [cardBox, bellBox] = await Promise.all([
+    card(page, entry.id).boundingBox(),
+    bell(page, entry.id).boundingBox(),
   ]);
-  await expect(time).toHaveValue("");
-  await expect(reminder).toBeDisabled();
-  expect(
-    (({ time, remindMinutes }) => ({ time, remindMinutes }))(
-      await request(page, `/calendar/entries/${entry.id}`),
-    ),
-  ).toEqual({ time: null, remindMinutes: null });
+  expect(bellBox!.x).toBeGreaterThan(cardBox!.x + cardBox!.width / 2);
+  expect(bellBox!.y - cardBox!.y).toBeLessThan(10);
+  await page.reload();
+  await expect(card(page, entry.id).locator("time")).toHaveText("09:30");
+
+  // A reminder turned off stays off; the time alone needs none.
+  await card(page, entry.id).click();
+  for (const name of ["정시", "10분 전", "1시간 전"])
+    await Promise.all([saved(page, entry.id), option(name).click()]);
+  expect(await schedule(page, entry.id)).toEqual({
+    time: "09:30",
+    reminders: [],
+  });
+  await Promise.all([saved(page, entry.id), toggle.uncheck({ force: true })]);
+  await expect(time).toHaveCount(0);
+  expect(await schedule(page, entry.id)).toEqual({ time: null, reminders: [] });
   await detail(page).getByRole("button", { name: "닫기", exact: true }).click();
   await expect(card(page, entry.id).locator("time")).toHaveCount(0);
-  await expect(card(page, entry.id).getByLabel("알림 설정됨")).toHaveCount(0);
+  await expect(bell(page, entry.id)).toHaveCount(0);
+});
+
+test("일정 추가 창에서도 시작 알림을 켜 시각과 알림을 함께 만든다", async ({
+  page,
+}) => {
+  await calendar(page);
+  const date = addDays(todayKey(), 1);
+  await page
+    .locator(`[data-date="${date}"]`)
+    .getByRole("button", { name: /일정 추가/ })
+    .first()
+    .click();
+  const dialog = page.getByRole("dialog", { name: "일정 추가", exact: true });
+  await dialog.getByLabel("새 일정 제목").fill("알림 있는 일정");
+  const { toggle, time, option } = fields(dialog);
+  await expect(time).toHaveCount(0);
+  await toggle.check({ force: true });
+  await time.fill("15:45");
+  await option("5분 전").click();
+  await option("30분 전").click();
+  await option("정시").click();
+  const created = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/calendar/entries") &&
+      response.request().method() === "POST",
+  );
+  await dialog.getByRole("button", { name: "일정 만들기" }).click();
+  const entry = unpack(await (await created).json());
+  expect(entry).toMatchObject({
+    title: "알림 있는 일정",
+    time: "15:45",
+    reminders: [5, 30],
+  });
+  await expect(dialog).toHaveCount(0);
+  await expect(card(page, entry.id).locator("time")).toHaveText("15:45");
+  await expect(bell(page, entry.id)).toHaveAttribute("data-status", "pending");
+
+  // A secret entry stays in this browser and has no reminders.
+  await page
+    .locator(`[data-date="${date}"]`)
+    .getByRole("button", { name: /일정 추가/ })
+    .first()
+    .click();
+  await expect(fields(dialog).toggle).toBeVisible();
+  await dialog
+    .getByRole("switch", { name: "시크릿 일정", exact: true })
+    .check({ force: true });
+  await expect(fields(dialog).toggle).toHaveCount(0);
+});
+
+test("지나간 알림을 보내지 못한 일정의 종은 오류로 표시한다", async ({
+  page,
+}) => {
+  const entry = await request(page, "/calendar/entries", "POST", {
+    id: randomUUID(),
+    teamId,
+    userId,
+    title: "지난 회의",
+    date: addDays(todayKey(), -1),
+    time: "09:00",
+    reminders: [0],
+  });
+  expect(entry.reminderStatus).toBe("failed");
+  await calendar(page);
+  await expect(bell(page, entry.id)).toHaveAttribute("data-status", "failed");
+  await expect(bell(page, entry.id)).toHaveAccessibleName("알림 오류");
 });
 
 test("카드 메뉴의 일정 복제 (본문 포함)은 시각·알림과 본문을 함께 복사하고 일정 복제는 본문을 비운다", async ({
@@ -138,16 +229,14 @@ test("카드 메뉴의 일정 복제 (본문 포함)은 시각·알림과 본문
     title: "주간 회의",
     date: todayKey(),
     time: "10:00",
-    remindMinutes: 30,
+    reminders: [0, 30],
   });
   await request(page, `/calendar/entries/${entry.id}/document`, "PUT", {
     markdown: "안건 정리",
     expectedRevision: 0,
     operationId: randomUUID(),
   });
-  await page.goto("/");
-  await page.getByLabel("팀 선택", { exact: true }).selectOption(teamId);
-  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await calendar(page);
   await expect(card(page, entry.id)).toBeVisible();
   const copies = async () =>
     (
@@ -166,7 +255,7 @@ test("카드 메뉴의 일정 복제 (본문 포함)은 시각·알림과 본문
   expect(withBody).toMatchObject({
     title: "주간 회의 (1)",
     time: "10:00",
-    remindMinutes: 30,
+    reminders: [0, 30],
     hasDocument: true,
   });
   expect(
@@ -182,7 +271,7 @@ test("카드 메뉴의 일정 복제 (본문 포함)은 시각·알림과 본문
   expect(plain).toMatchObject({
     title: "주간 회의 (2)",
     time: "10:00",
-    remindMinutes: 30,
+    reminders: [0, 30],
     hasDocument: false,
   });
 });

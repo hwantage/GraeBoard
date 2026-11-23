@@ -88,7 +88,11 @@ export function createApp({
     allowSetup,
     rateLimits,
   });
-  const reminderPush = installCalendarReminderPush(app, { db });
+  const reminderPush = installCalendarReminderPush(app, {
+    db,
+    // Open calendars read the entry again and show how its reminder went.
+    onSent: (teamId) => documentEvents.invalidate("team:" + teamId),
+  });
   app.locals.calendarReminderPush = reminderPush;
   installLinkTitleRoute(app, {
     privateHosts: process.env.GRAEBOARD_LINK_TITLE_PRIVATE_HOSTS,

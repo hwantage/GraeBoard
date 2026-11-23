@@ -3666,18 +3666,20 @@ test("일정 시작 시각·알림은 함께 저장하고 충돌 시 최신 값�
   assert.equal(created.status, 201);
   const path = `/calendar/entries/${created.data.id}`;
   assert.deepEqual(
-    [created.data.time, created.data.remindMinutes],
-    [null, null],
+    [created.data.time, created.data.reminders, created.data.reminderStatus],
+    [null, [], null],
   );
   const schedule = {
     time: "09:30",
-    remindMinutes: 10,
+    reminders: [10, 0],
     expectedTime: null,
-    expectedRemindMinutes: null,
+    expectedReminders: [],
   };
   const saved = await f.req(path, "PATCH", schedule);
   assert.equal(saved.status, 200);
-  assert.deepEqual([saved.data.time, saved.data.remindMinutes], ["09:30", 10]);
+  assert.deepEqual([saved.data.time, saved.data.reminders], ["09:30", [0, 10]]);
+  // The entry is in the future of the test clock: its reminders wait.
+  assert.equal(saved.data.reminderStatus, "pending");
   assert.ok(saved.data.updatedAt > created.data.updatedAt);
   // A retry of the same request changes nothing more.
   const retried = await f.req(path, "PATCH", schedule);
@@ -3686,13 +3688,14 @@ test("일정 시작 시각·알림은 함께 저장하고 충돌 시 최신 값�
   assert.equal(conflict.status, 409);
   assert.deepEqual(conflict.data.details.currentSchedule, {
     time: "09:30",
-    remindMinutes: 10,
+    reminders: [0, 10],
   });
   for (const body of [
     { ...schedule, time: null },
     { ...schedule, time: "25:00" },
-    { ...schedule, remindMinutes: 2000 },
-    { time: "10:00", remindMinutes: null },
+    { ...schedule, reminders: [2000] },
+    { ...schedule, reminders: [5, 5] },
+    { time: "10:00", reminders: [] },
   ])
     assert.equal((await f.req(path, "PATCH", body)).status, 400);
   // Another member cannot change a personal entry's time.
@@ -3703,9 +3706,9 @@ test("일정 시작 시각·알림은 함께 저장하고 충돌 시 최신 값�
         "PATCH",
         {
           time: null,
-          remindMinutes: null,
+          reminders: [],
           expectedTime: "09:30",
-          expectedRemindMinutes: 10,
+          expectedReminders: [0, 10],
         },
         "second",
       )
@@ -3713,39 +3716,42 @@ test("일정 시작 시각·알림은 함께 저장하고 충돌 시 최신 값�
     403,
   );
   assert.deepEqual(
-    (({ time, remindMinutes }) => [time, remindMinutes])(
-      (await f.req(path)).data,
-    ),
-    ["09:30", 10],
+    (({ time, reminders }) => [time, reminders])((await f.req(path)).data),
+    ["09:30", [0, 10]],
   );
+  // Once sent, the reminders show as sent; one that reached nobody as failed.
+  const record = (minutes, recipients) =>
+    f.db
+      .prepare("INSERT INTO calendar_reminder_sends VALUES(?,?,?,?)")
+      .run(
+        created.data.id,
+        new Date(
+          Date.parse("2026-10-20T00:30:00.000Z") - minutes * 60000,
+        ).toISOString(),
+        now(),
+        recipients,
+      );
+  record(10, 1);
+  assert.equal((await f.req(path)).data.reminderStatus, "pending");
+  record(0, 1);
+  assert.equal((await f.req(path)).data.reminderStatus, "sent");
+  assert.equal(
+    (await f.list()).data.entries.find((item) => item.id === created.data.id)
+      .reminderStatus,
+    "sent",
+  );
+  f.db.prepare("UPDATE calendar_reminder_sends SET recipients=0").run();
+  assert.equal((await f.req(path)).data.reminderStatus, "failed");
 
-  // Requests of this test come from the loopback address, which no push reaches.
+  // Requests of this test come from the loopback address, which no push
+  // reaches, and nobody sets an address by hand.
   assert.deepEqual((await f.req("/push-address")).data, {
     enabled: false,
     ip: null,
-    manual: false,
-    detectedIp: null,
   });
   assert.equal(
-    (await f.req("/push-address", "PUT", { ip: "office-pc" })).status,
-    400,
-  );
-  assert.equal(
-    (await f.req("/push-address", "PUT", { ip: "10.1.2.3", userId: "x" }))
-      .status,
-    400,
-  );
-  assert.deepEqual(
-    (await f.req("/push-address", "PUT", { ip: "10.1.2.3" })).data,
-    { enabled: false, ip: "10.1.2.3", manual: true, detectedIp: null },
-  );
-  assert.equal(
-    (await f.req("/push-address", "GET", undefined, "second")).data.ip,
-    null,
+    (await f.req("/push-address", "PUT", { ip: "10.1.2.3" })).status,
+    404,
   );
   assert.equal((await f.req("/push-address/test", "POST", {})).status, 409);
-  assert.equal(
-    (await f.req("/push-address", "PUT", { ip: null })).data.ip,
-    null,
-  );
 });
