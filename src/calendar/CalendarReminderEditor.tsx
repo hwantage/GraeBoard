@@ -24,12 +24,12 @@ const scheduleOf = (entry: CalendarEntry): CalendarSchedule => ({
   reminders: entry.reminders ?? [],
 });
 
-// The states the bell's dot tells apart, with what each means.
-const REMINDER_STATES = [
-  ["pending", "주황 = 대기(보낼 알림이 남음)"],
-  ["sent", "초록 = 모두 보냄"],
-  ["failed", "빨강 = 오류(받을 PC 없음 또는 시각이 지나도록 못 보냄)"],
-] as const;
+// What each state of the bell says about the entry's reminders.
+const REMINDER_STATES = {
+  pending: "알림 대기 중",
+  sent: "모든 알림 전송 성공",
+  failed: "알림 전송 실패(받을 PC 없음 또는 시각이 지나도록 전송 못 함)",
+} as const;
 
 // The start time of an entry and its reminders. Both sites save the same
 // setting; the reminders themselves are pushed by the internal server through
@@ -207,21 +207,20 @@ export default function CalendarReminderEditor({
           {destination}
           {destination && status && " · "}
           {status && <span role="status">{status}</span>}
-          {/* What the dot on the card's bell means, and this entry's now. */}
-          {reminding && !site.external && address?.enabled && (
-            <span className="calendar-reminder-legend">
+          {/* How this entry's reminders stand, with the bell its card shows. */}
+          {reminding && reminderStatus && (
+            <span
+              className="calendar-reminder-current"
+              data-status={reminderStatus}
+            >
               {" · "}
-              <Bell size={11} aria-hidden="true" /> 종 아이콘의 점:
-              {REMINDER_STATES.map(([state, label]) => (
-                <span
-                  key={state}
-                  className="calendar-reminder-state"
-                  data-status={state}
-                  data-current={reminderStatus === state || undefined}
-                >
-                  {label}
-                </span>
-              ))}
+              <span
+                className="calendar-reminder-bell"
+                data-status={reminderStatus}
+              >
+                <Bell size={11} aria-hidden="true" />
+              </span>
+              {REMINDER_STATES[reminderStatus]}
             </span>
           )}
         </p>

@@ -135,6 +135,22 @@ test("일정 상세의 시작 알림을 켜면 시각과 여러 알림을 저장
   await expect(note).toHaveCount(1);
   await expect(note).toContainText("다바다 푸시");
   await expect(note).toContainText("알림 저장됨");
+  // The line ends with the bell the card shows and what it means now.
+  await expect(note.locator(".calendar-reminder-bell")).toHaveAttribute(
+    "data-status",
+    "pending",
+  );
+  await expect(note).toContainText("알림 대기 중");
+  // The colours are explained by the help beside the switch.
+  const help = detail(page).getByRole("button", {
+    name: "시작 알림 도움말",
+    exact: true,
+  });
+  await help.hover();
+  await expect(page.getByRole("tooltip")).toContainText(
+    "초록이면 모든 알림 전송 성공",
+  );
+  await page.mouse.move(0, 0);
   if (process.env.SHOT_DIR)
     await detail(page).screenshot({
       path: process.env.SHOT_DIR + "/detail2.png",

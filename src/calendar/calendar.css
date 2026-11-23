@@ -1291,7 +1291,7 @@
 .calendar-entry-schedule .calendar-schedule {
   display: contents;
 }
-.calendar-entry-schedule .calendar-schedule > .switch-field {
+.calendar-entry-schedule .calendar-schedule-switch {
   min-height: 33px;
 }
 .calendar-entry-schedule .calendar-schedule-fields,
@@ -1302,35 +1302,41 @@
 .calendar-reminder-note [role="status"] {
   color: var(--accent);
 }
-.calendar-reminder-legend svg {
-  vertical-align: -1px;
-}
-.calendar-reminder-state {
-  margin-left: 8px;
+.calendar-reminder-current {
+  color: var(--ink);
   white-space: nowrap;
 }
-.calendar-reminder-state::before {
+/* The card's bell with its dot, inline in the note. */
+.calendar-reminder-bell {
+  position: relative;
+  display: inline-flex;
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+.calendar-reminder-bell::after {
   content: "";
-  display: inline-block;
+  position: absolute;
+  top: -2px;
+  right: -3px;
   width: 7px;
   height: 7px;
-  margin-right: 4px;
+  border: 1px solid #fff;
   border-radius: 50%;
   background: #8a949a;
 }
-.calendar-reminder-state[data-status="pending"]::before {
+.calendar-reminder-bell[data-status="pending"]::after {
   background: #e8a317;
 }
-.calendar-reminder-state[data-status="sent"]::before {
+.calendar-reminder-bell[data-status="sent"]::after {
   background: #1f9d55;
 }
-.calendar-reminder-state[data-status="failed"]::before {
+.calendar-reminder-bell[data-status="failed"]::after {
   background: #d93025;
 }
-/* The state this entry is in now. */
-.calendar-reminder-state[data-current] {
-  color: var(--ink);
-  font-weight: 600;
+.calendar-schedule-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 .calendar-schedule {
   display: flex;

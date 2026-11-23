@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { CircleHelp } from "lucide-react";
 import {
   CALENDAR_REMINDER_OPTIONS,
   CALENDAR_TIME_PATTERN,
@@ -18,6 +19,8 @@ export const sameSchedule = (a: CalendarSchedule, b: CalendarSchedule) =>
 export const validSchedule = (schedule: CalendarSchedule) =>
   schedule.time === null || CALENDAR_TIME_PATTERN.test(schedule.time);
 
+const SCHEDULE_HELP =
+  "시작 시각과 그 전에 받을 알림을 정합니다. 알림은 사내 서버가 다바다 푸시로 보냅니다. 카드의 종 아이콘에 찍힌 점은 주황이면 대기, 초록이면 모든 알림 전송 성공, 빨강이면 전송 실패(받을 PC가 없거나 시각이 지나도록 전송 못 함)입니다.";
 // Turning the start reminder on asks for one five minutes before.
 const DEFAULT_REMINDER = 5;
 // The next half hour in Korea, where entry times are read.
@@ -52,25 +55,35 @@ export default function CalendarScheduleFields({
   const on = value.time !== null;
   return (
     <div className="calendar-schedule">
-      <label className="switch-field">
-        <span>시작 알림</span>
-        <input
-          type="checkbox"
-          role="switch"
-          aria-label="시작 알림"
-          checked={on}
-          disabled={disabled || readOnly}
-          onChange={(event) =>
-            onChange(
-              event.target.checked
-                ? { time: nextHalfHour(), reminders: [DEFAULT_REMINDER] }
-                : NO_SCHEDULE,
-              true,
-            )
-          }
-        />
-        <span className="switch-track" aria-hidden="true" />
-      </label>
+      <span className="calendar-schedule-switch">
+        <label className="switch-field">
+          <span>시작 알림</span>
+          <input
+            type="checkbox"
+            role="switch"
+            aria-label="시작 알림"
+            checked={on}
+            disabled={disabled || readOnly}
+            onChange={(event) =>
+              onChange(
+                event.target.checked
+                  ? { time: nextHalfHour(), reminders: [DEFAULT_REMINDER] }
+                  : NO_SCHEDULE,
+                true,
+              )
+            }
+          />
+          <span className="switch-track" aria-hidden="true" />
+        </label>
+        <button
+          type="button"
+          className="modal-help"
+          aria-label="시작 알림 도움말"
+          data-tooltip={SCHEDULE_HELP}
+        >
+          <CircleHelp size={15} aria-hidden="true" />
+        </button>
+      </span>
       {on && (
         <div className="calendar-schedule-fields">
           <input
