@@ -36,7 +36,7 @@ const fields = (scope: Locator) => ({
   option: (name: string) =>
     scope
       .getByRole("group", { name: "알림 시점", exact: true })
-      .getByRole("button", { name, exact: true }),
+      .getByRole("checkbox", { name, exact: true }),
 });
 // The next save of the entry's time and reminders, as the server stored it.
 const saved = (page: Page, id: string) =>
@@ -93,18 +93,52 @@ test("일정 상세의 시작 알림을 켜면 시각과 여러 알림을 저장
   const { toggle, time, option } = fields(detail(page));
   await expect(toggle).not.toBeChecked();
   await expect(time).toHaveCount(0);
-  // Turning it on starts with a time and a reminder at that time.
+  // The switch sits right of the end date, on the same row.
+  const [endDate, switchBox] = await Promise.all([
+    detail(page).getByLabel("일정 종료일").boundingBox(),
+    detail(page).locator(".calendar-schedule .switch-track").boundingBox(),
+  ]);
+  expect(switchBox!.x).toBeGreaterThan(endDate!.x + endDate!.width);
+  expect(switchBox!.y).toBeGreaterThan(endDate!.y - 4);
+  expect(switchBox!.y + switchBox!.height).toBeLessThan(
+    endDate!.y + endDate!.height + 4,
+  );
+  // Turned on and off again, nothing is left to tell.
+  await Promise.all([saved(page, entry.id), toggle.check({ force: true })]);
+  await Promise.all([saved(page, entry.id), toggle.uncheck({ force: true })]);
+  await expect(detail(page).getByText("알림 저장됨")).toHaveCount(0);
+  await expect(detail(page).locator(".calendar-reminder-note")).toHaveCount(0);
+  // Turning it on starts with a time and a reminder five minutes before.
   await Promise.all([saved(page, entry.id), toggle.check({ force: true })]);
   await expect(time).toHaveValue(/^\d{2}:\d{2}$/);
-  await expect(option("정시")).toHaveAttribute("aria-pressed", "true");
+  await expect(option("5분 전")).toBeChecked();
+  await expect(option("정시")).not.toBeChecked();
+  // The time and the check boxes are on one line.
+  const [timeBox, lastBox] = await Promise.all([
+    time.boundingBox(),
+    option("1시간 전").boundingBox(),
+  ]);
+  expect(lastBox!.x).toBeGreaterThan(timeBox!.x + timeBox!.width);
+  expect(lastBox!.y).toBeGreaterThan(timeBox!.y);
+  expect(lastBox!.y + lastBox!.height).toBeLessThan(
+    timeBox!.y + timeBox!.height,
+  );
   await expect(option("2시간 전")).toHaveCount(0);
   await expect(option("하루 전")).toHaveCount(0);
-  expect((await schedule(page, entry.id)).reminders).toEqual([0]);
+  expect((await schedule(page, entry.id)).reminders).toEqual([5]);
 
   // Several reminders at once; each choice is saved.
-  await Promise.all([saved(page, entry.id), option("10분 전").click()]);
-  await Promise.all([saved(page, entry.id), option("1시간 전").click()]);
-  await expect(detail(page).getByText("알림 저장됨")).toBeVisible();
+  await Promise.all([saved(page, entry.id), option("정시").check()]);
+  await Promise.all([saved(page, entry.id), option("1시간 전").check()]);
+  // Where the reminders go and what was saved share one line.
+  const note = detail(page).locator(".calendar-reminder-note");
+  await expect(note).toHaveCount(1);
+  await expect(note).toContainText("다바다 푸시");
+  await expect(note).toContainText("알림 저장됨");
+  if (process.env.SHOT_DIR)
+    await detail(page).screenshot({
+      path: process.env.SHOT_DIR + "/detail2.png",
+    });
   // A typed time is saved on leaving the fields.
   await time.fill("09:30");
   await Promise.all([
@@ -113,7 +147,7 @@ test("일정 상세의 시작 알림을 켜면 시각과 여러 알림을 저장
   ]);
   expect(await schedule(page, entry.id)).toEqual({
     time: "09:30",
-    reminders: [0, 10, 60],
+    reminders: [0, 5, 60],
   });
   // The internal site tells where this person's reminders go, and offers no
   // way to point them elsewhere.
@@ -139,8 +173,8 @@ test("일정 상세의 시작 알림을 켜면 시각과 여러 알림을 저장
 
   // A reminder turned off stays off; the time alone needs none.
   await card(page, entry.id).click();
-  for (const name of ["정시", "10분 전", "1시간 전"])
-    await Promise.all([saved(page, entry.id), option(name).click()]);
+  for (const name of ["정시", "5분 전", "1시간 전"])
+    await Promise.all([saved(page, entry.id), option(name).uncheck()]);
   expect(await schedule(page, entry.id)).toEqual({
     time: "09:30",
     reminders: [],
@@ -169,9 +203,8 @@ test("일정 추가 창에서도 시작 알림을 켜 시각과 알림을 함께
   await expect(time).toHaveCount(0);
   await toggle.check({ force: true });
   await time.fill("15:45");
-  await option("5분 전").click();
-  await option("30분 전").click();
-  await option("정시").click();
+  await expect(option("5분 전")).toBeChecked();
+  await option("30분 전").check();
   const created = page.waitForResponse(
     (response) =>
       response.url().endsWith("/api/calendar/entries") &&

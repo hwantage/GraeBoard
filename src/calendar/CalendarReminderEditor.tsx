@@ -25,7 +25,8 @@ const scheduleOf = (entry: CalendarEntry): CalendarSchedule => ({
 
 // The start time of an entry and its reminders. Both sites save the same
 // setting; the reminders themselves are pushed by the internal server through
-// the Dabada hub to the PC each person uses the internal site from.
+// the Dabada hub to the PC each person uses the internal site from. The
+// switch sits beside the entry's dates and the rest opens on the next line.
 export default function CalendarReminderEditor({
   entry,
   readOnly,
@@ -47,12 +48,27 @@ export default function CalendarReminderEditor({
   const [saved, setSaved] = useState(false);
   const inFlight = useRef<Promise<boolean> | null>(null);
   const alive = useRef(true);
+  // Where this person's reminders are pushed, which the internal server
+  // registers by itself.
+  const [address, setAddress] = useState<PushAddress | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [notice, setNotice] = useState("");
   useEffect(() => {
     alive.current = true;
+    const controller = new AbortController();
+    if (!site.external)
+      void api<PushAddress>("/push-address", { signal: controller.signal })
+        .then((data) => {
+          if (!controller.signal.aborted) setAddress(data);
+        })
+        .catch(() => {
+          /* The reminders are saved all the same. */
+        });
     return () => {
       alive.current = false;
+      controller.abort();
     };
-  }, []);
+  }, [site.external]);
   async function flush(): Promise<boolean> {
     if (inFlight.current) return (await inFlight.current) ? flush() : false;
     if (sameSchedule(draft.current, base.current)) return true;
@@ -105,6 +121,26 @@ export default function CalendarReminderEditor({
     return (await inFlight.current) ? flush() : false;
   }
   useImperativeHandle(ref, () => ({ flush }));
+  const on = schedule.time !== null;
+  const reminding = on && schedule.reminders.length > 0;
+  const destination = !reminding
+    ? ""
+    : site.external
+      ? "알림은 사내망에서 다바다 푸시로 전달됩니다. 받을 PC는 사내 그래보드에 접속하면 등록됩니다."
+      : !address
+        ? ""
+        : !address.enabled
+          ? "이 서버에는 다바다 푸시가 설정되지 않아 알림이 전달되지 않습니다."
+          : `${
+              entry.userId === null
+                ? "팀 일정 알림은 팀원 모두에게 다바다 푸시로 전달됩니다."
+                : "알림은 다바다 푸시로 전달됩니다."
+            } 내 알림을 받는 PC: ${address.ip ?? "아직 등록되지 않음"}`;
+  // One line: where the reminders go and what was just saved or sent.
+  const status = saving
+    ? "알림 저장 중…"
+    : notice ||
+      (saved && sameSchedule(schedule, base.current) ? "알림 저장됨" : "");
   return (
     <div
       className="calendar-reminder-editor"
@@ -124,86 +160,41 @@ export default function CalendarReminderEditor({
           draft.current = next;
           setSchedule(next);
           setSaved(false);
+          setNotice("");
           if (settled) void flush();
         }}
+        actions={
+          reminding &&
+          address?.enabled &&
+          address.ip && (
+            <Button
+              disabled={testing}
+              onClick={async () => {
+                setTesting(true);
+                setError("");
+                setNotice("");
+                try {
+                  await send("/push-address/test", {});
+                  if (alive.current) setNotice("테스트 알림을 보냈습니다.");
+                } catch (e) {
+                  if (alive.current) setError((e as Error).message);
+                } finally {
+                  if (alive.current) setTesting(false);
+                }
+              }}
+            >
+              테스트 알림
+            </Button>
+          )
+        }
       />
-      {saving && <span role="status">알림 저장 중…</span>}
-      {saved && sameSchedule(schedule, base.current) && (
-        <span role="status">알림 저장됨</span>
-      )}
-      <ErrorNote error={error} />
-      {schedule.reminders.length > 0 &&
-        (site.external ? (
-          <p className="calendar-reminder-note">
-            알림은 사내망에서 다바다 푸시로 전달됩니다. 받을 PC는 사내
-            그래보드에 접속하면 등록됩니다.
-          </p>
-        ) : (
-          <CalendarPushAddress teamEntry={entry.userId === null} />
-        ))}
-    </div>
-  );
-}
-
-// Where this person's reminders are pushed: the PC they use the internal site
-// from, which the server registers by itself.
-function CalendarPushAddress({ teamEntry }: { teamEntry: boolean }) {
-  const [address, setAddress] = useState<PushAddress | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  useEffect(() => {
-    const controller = new AbortController();
-    void api<PushAddress>("/push-address", { signal: controller.signal })
-      .then((data) => {
-        if (!controller.signal.aborted) setAddress(data);
-      })
-      .catch((e: Error) => {
-        if (!controller.signal.aborted) setError(e.message);
-      });
-    return () => controller.abort();
-  }, []);
-  if (!address) return <ErrorNote error={error} />;
-  if (!address.enabled)
-    return (
-      <p className="calendar-reminder-note">
-        이 서버에는 다바다 푸시가 설정되지 않아 알림이 전달되지 않습니다.
-        관리자에게 문의하세요.
-      </p>
-    );
-  return (
-    <div className="calendar-reminder-note">
-      <p>
-        {teamEntry
-          ? "팀 일정 알림은 팀원 모두에게 다바다 푸시로 전달됩니다. "
-          : "알림은 다바다 푸시로 전달됩니다. "}
-        내 알림을 받는 PC:{" "}
-        <strong>
-          {address.ip ?? "아직 등록되지 않음(사내 PC에서 접속하면 등록)"}
-        </strong>
-      </p>
-      {address.ip && (
-        <div className="calendar-reminder-address">
-          <Button
-            disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              setError("");
-              setNotice("");
-              try {
-                await send("/push-address/test", {});
-                setNotice("테스트 알림을 보냈습니다.");
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            테스트 알림
-          </Button>
-          {notice && <span role="status">{notice}</span>}
-        </div>
+      {/* Nothing to tell once the start reminder is off. */}
+      {on && (destination || status) && (
+        <p className="calendar-reminder-note">
+          {destination}
+          {destination && status && " · "}
+          {status && <span role="status">{status}</span>}
+        </p>
       )}
       <ErrorNote error={error} />
     </div>

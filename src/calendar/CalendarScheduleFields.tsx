@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   CALENDAR_REMINDER_OPTIONS,
   CALENDAR_TIME_PATTERN,
@@ -17,6 +18,8 @@ export const sameSchedule = (a: CalendarSchedule, b: CalendarSchedule) =>
 export const validSchedule = (schedule: CalendarSchedule) =>
   schedule.time === null || CALENDAR_TIME_PATTERN.test(schedule.time);
 
+// Turning the start reminder on asks for one five minutes before.
+const DEFAULT_REMINDER = 5;
 // The next half hour in Korea, where entry times are read.
 function nextHalfHour() {
   const offset =
@@ -28,19 +31,23 @@ function nextHalfHour() {
   return `${String(Math.floor(next / 60) % 24).padStart(2, "0")}:${String(next % 60).padStart(2, "0")}`;
 }
 
-// The "시작 알림" switch opens the start time and the reminder choices; with
-// it off the entry has neither. Used when adding an entry and in its detail.
+// The "시작 알림" switch opens the start time and, on the same line, a check
+// box for each reminder; with it off the entry has neither. Used when adding
+// an entry and in its detail.
 export default function CalendarScheduleFields({
   value,
   disabled = false,
   readOnly = false,
   onChange,
+  actions,
 }: {
   value: CalendarSchedule;
   disabled?: boolean;
   readOnly?: boolean;
   // `settled` is false for a time being typed, true for a choice.
   onChange: (next: CalendarSchedule, settled: boolean) => void;
+  // Shown after the last reminder choice, e.g. a test button.
+  actions?: ReactNode;
 }) {
   const on = value.time !== null;
   return (
@@ -56,7 +63,7 @@ export default function CalendarScheduleFields({
           onChange={(event) =>
             onChange(
               event.target.checked
-                ? { time: nextHalfHour(), reminders: [0] }
+                ? { time: nextHalfHour(), reminders: [DEFAULT_REMINDER] }
                 : NO_SCHEDULE,
               true,
             )
@@ -87,30 +94,32 @@ export default function CalendarScheduleFields({
             {CALENDAR_REMINDER_OPTIONS.map((minutes: number) => {
               const selected = value.reminders.includes(minutes);
               return (
-                <button
-                  key={minutes}
-                  type="button"
-                  className="calendar-reminder-option"
-                  aria-pressed={selected}
-                  disabled={disabled || readOnly}
-                  onClick={() =>
-                    onChange(
-                      {
-                        ...value,
-                        reminders: calendarReminders(
-                          selected
-                            ? value.reminders.filter((item) => item !== minutes)
-                            : [...value.reminders, minutes],
-                        ),
-                      },
-                      true,
-                    )
-                  }
-                >
+                <label key={minutes} className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={selected}
+                    disabled={disabled || readOnly}
+                    onChange={() =>
+                      onChange(
+                        {
+                          ...value,
+                          reminders: calendarReminders(
+                            selected
+                              ? value.reminders.filter(
+                                  (item) => item !== minutes,
+                                )
+                              : [...value.reminders, minutes],
+                          ),
+                        },
+                        true,
+                      )
+                    }
+                  />
                   {calendarReminderLabel(minutes)}
-                </button>
+                </label>
               );
             })}
+            {actions}
           </div>
         </div>
       )}

@@ -433,50 +433,50 @@ export default function CalendarEntryPanel({
     >
       <div className="calendar-entry-heading" inert={busy && leaving.current}>
         {ready && (
-          <CalendarRangeEditor
-            ref={rangeEditor}
-            entry={current.current}
-            userId={userId}
-            readOnly={readOnly}
-            onCloseWithDraft={() => void close(true)}
-            onSaved={(saved) => {
-              current.current = {
-                ...current.current,
-                date: saved.date,
-                endDate: saved.endDate,
-                lane: saved.lane,
-                updatedAt:
-                  saved.updatedAt > current.current.updatedAt
-                    ? saved.updatedAt
-                    : current.current.updatedAt,
-              };
-              onSaved({
-                ...current.current,
-                placements: saved.placements,
-                layout: saved.layout,
-              });
-            }}
-          />
-        )}
-        {ready && (
-          <CalendarReminderEditor
-            ref={reminderEditor}
-            entry={current.current}
-            readOnly={readOnly}
-            onSaved={(saved) => {
-              current.current = {
-                ...current.current,
-                time: saved.time ?? null,
-                reminders: saved.reminders ?? [],
-                reminderStatus: saved.reminderStatus,
-                updatedAt:
-                  saved.updatedAt > current.current.updatedAt
-                    ? saved.updatedAt
-                    : current.current.updatedAt,
-              };
-              onSaved(current.current);
-            }}
-          />
+          <div className="calendar-entry-schedule">
+            <CalendarRangeEditor
+              ref={rangeEditor}
+              entry={current.current}
+              userId={userId}
+              readOnly={readOnly}
+              onCloseWithDraft={() => void close(true)}
+              onSaved={(saved) => {
+                current.current = {
+                  ...current.current,
+                  date: saved.date,
+                  endDate: saved.endDate,
+                  lane: saved.lane,
+                  updatedAt:
+                    saved.updatedAt > current.current.updatedAt
+                      ? saved.updatedAt
+                      : current.current.updatedAt,
+                };
+                onSaved({
+                  ...current.current,
+                  placements: saved.placements,
+                  layout: saved.layout,
+                });
+              }}
+            />
+            <CalendarReminderEditor
+              ref={reminderEditor}
+              entry={current.current}
+              readOnly={readOnly}
+              onSaved={(saved) => {
+                current.current = {
+                  ...current.current,
+                  time: saved.time ?? null,
+                  reminders: saved.reminders ?? [],
+                  reminderStatus: saved.reminderStatus,
+                  updatedAt:
+                    saved.updatedAt > current.current.updatedAt
+                      ? saved.updatedAt
+                      : current.current.updatedAt,
+                };
+                onSaved(current.current);
+              }}
+            />
+          </div>
         )}
         <div className="calendar-entry-tools">
           <CalendarTagPicker
