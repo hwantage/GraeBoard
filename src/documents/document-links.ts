@@ -3,6 +3,7 @@ import { api } from "../platform/api";
 import {
   DOCUMENT_LINK_BATCH,
   documentLinkPath,
+  documentLinkWithoutDocument,
   parseDocumentLinkPath,
 } from "../../shared/documents/document-links.js";
 
@@ -11,10 +12,16 @@ import {
 // (shared/documents/document-links.js); the clipboard carries this site's absolute
 // address of the same path.
 export type DocumentLinkTarget =
-  | { kind: "task"; id: string }
+  // documentId: the task's document to show, when the link names one.
+  | { kind: "task"; id: string; documentId?: string }
   | { kind: "calendar"; id: string }
   | { kind: "memo"; teamId: string; year: number; id: string }
-  | { kind: "sheet-clone-task"; sheetCloneId: string; id: string }
+  | {
+      kind: "sheet-clone-task";
+      sheetCloneId: string;
+      id: string;
+      documentId?: string;
+    }
   | { kind: "sheet-clone-memo"; sheetCloneId: string; id: string };
 export type DocumentLinkTitle =
   | { status: "loading" }
@@ -23,6 +30,14 @@ export type DocumentLinkTitle =
 
 export const documentLinkKey = (target: DocumentLinkTarget): string =>
   documentLinkPath(target);
+// The detail window a link opens: links to different documents of one task
+// share it.
+export const documentLinkWindowKey = (target: DocumentLinkTarget): string =>
+  documentLinkPath(documentLinkWithoutDocument(target));
+export const documentLinkDocumentId = (target: DocumentLinkTarget) =>
+  target.kind === "task" || target.kind === "sheet-clone-task"
+    ? target.documentId
+    : undefined;
 export const documentLinkHref = (target: DocumentLinkTarget): string =>
   documentLinkPath(target);
 export const documentLinkUrl = (target: DocumentLinkTarget) =>

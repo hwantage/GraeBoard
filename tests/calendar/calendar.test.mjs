@@ -2149,6 +2149,26 @@ test("문서 링크 제목 조회는 열 수 있는 업무·일정의 현재 제
     paths.entry,
     paths.task,
   ]);
+  // A task link naming one of its documents answers with the task's title
+  // under the path asked, whether or not that document exists.
+  const withDocument = [
+    `${paths.task}/main`,
+    `${paths.task}/${missing}`,
+    `${paths.other}/main`,
+    `/links/task/${missing}/main`,
+  ];
+  assert.deepEqual(await links(withDocument), {
+    [withDocument[0]]: { teamId: f.teamId, title: "링크한 업무" },
+    [withDocument[1]]: { teamId: f.teamId, title: "링크한 업무" },
+  });
+  assert.equal(
+    (
+      await f.req(
+        `/document-links?${new URLSearchParams({ links: `${paths.entry}/main` })}`,
+      )
+    ).status,
+    400,
+  );
   assert.deepEqual(Object.keys(await links(all, "outsider")), [paths.other]);
   assert.equal(Object.keys(await links(all, "admin")).length, 3);
   const renamed = await f.req("/cells/batch", "POST", {

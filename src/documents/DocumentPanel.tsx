@@ -68,7 +68,8 @@ export type DocumentPanelProps = Pick<
   onSaved: (result: DocumentResult) => void;
   onListChanged: (result: DocumentListResult) => void;
   initialDocumentId?: string;
-  onDocumentSelected?: (id: string) => void;
+  // The document shown and how many the list holds.
+  onDocumentSelected?: (id: string, count: number) => void;
   inline?: boolean;
   inlineFullPage?: boolean;
   // Memo full page: where the selected memo's link button goes, in the page
@@ -509,7 +510,7 @@ export default forwardRef<DocumentPanelHandle, DocumentPanelProps>(
     }));
     useEffect(() => {
       if (opened && documents.some((doc) => doc.id === selected))
-        props.onDocumentSelected?.(selected);
+        props.onDocumentSelected?.(selected, documents.length);
     }, [opened, selected, documents]);
     async function select(documentId: string, navigate = true) {
       if (busy || !(await finishRename())) return false;

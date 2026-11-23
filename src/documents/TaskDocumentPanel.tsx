@@ -9,7 +9,7 @@ import { value } from "../../shared/domain.js";
 export type { DocumentHandle, DocumentPanelHandle } from "./DocumentPanel";
 type Props = Omit<DocumentEditorProps, "documentId" | "controlsTarget"> & {
   initialDocumentId?: string;
-  onDocumentSelected?: (id: string) => void;
+  onDocumentSelected?: (id: string, count: number) => void;
 };
 export default forwardRef<DocumentPanelHandle, Props>(
   function TaskDocumentPanel(props, ref) {

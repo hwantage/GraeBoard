@@ -35,7 +35,8 @@ import {
   UNAVAILABLE_LINK_MESSAGE,
   documentLinkFullPage,
   documentLinkDocument,
-  documentLinkKey,
+  documentLinkWindowKey,
+  documentLinkDocumentId,
   refreshDocumentLinkTitles,
   type DocumentLinkOpener,
   type DocumentLinkNavigation,
@@ -286,8 +287,10 @@ function Workspace({
   const [deepLink] = useState(() => {
     const target = parseDocumentLinkPath(location.pathname);
     if (!target) return null;
+    // The document comes from a full-page button's new tab or from the link.
     const fullPage = documentLinkFullPage(location.search),
-      documentId = documentLinkDocument(location.search);
+      documentId =
+        documentLinkDocument(location.search) ?? documentLinkDocumentId(target);
     history.replaceState(history.state, "", "/");
     return { target, fullPage, documentId };
   });
@@ -489,7 +492,8 @@ function Workspace({
       key: string;
       link: OpenedDocumentLink;
       fullPage?: boolean;
-      // The document a full-page button's new tab was showing.
+      // The document a full-page button's new tab was showing, or the one
+      // the link names.
       documentId?: string;
       browserTitle?: string;
     }[]
@@ -528,7 +532,11 @@ function Workspace({
   const documentLinks = useMemo<DocumentLinkOpener>(
     () => ({
       register(target, close, navigation) {
-        const entry = { key: documentLinkKey(target), close, navigation };
+        const entry = {
+          key: documentLinkWindowKey(target),
+          close,
+          navigation,
+        };
         openDetails.current.push(entry);
         return () => {
           openDetails.current = openDetails.current.filter(
@@ -542,7 +550,8 @@ function Workspace({
   );
   // Linked detail windows keep the screen below them for the return on close.
   openLink.current = async (target) => {
-    const key = documentLinkKey(target);
+    // Links to different documents of one task open the same window.
+    const key = documentLinkWindowKey(target);
     if (openingTargets.current.has(key)) return;
     openingTargets.current.add(key);
     try {
@@ -566,7 +575,10 @@ function Workspace({
         setLinkPanels((panels) =>
           panels.some((panel) => panel.key === key)
             ? panels
-            : [...panels, { key, link }],
+            : [
+                ...panels,
+                { key, link, documentId: documentLinkDocumentId(target) },
+              ],
         );
     } finally {
       openingTargets.current.delete(key);
@@ -603,7 +615,7 @@ function Workspace({
         if (link.kind === "calendar") workspaceRoute.commit("calendar", true);
         setLinkPanels([
           {
-            key: documentLinkKey(deepLink.target),
+            key: documentLinkWindowKey(deepLink.target),
             link,
             fullPage: deepLink.fullPage,
             documentId: deepLink.documentId,
