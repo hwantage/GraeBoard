@@ -76,7 +76,13 @@ import {
   calendarPreview,
 } from "./calendar-service.mjs";
 
-function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
+function calendarOperations({
+  db,
+  slideFiles,
+  teamAccess,
+  managedTeam,
+  taskAccess,
+}) {
   const operations = {};
 
   db.function(
@@ -1320,7 +1326,7 @@ function calendarOperations({ db, teamAccess, managedTeam, taskAccess }) {
   };
   operations.resolveLinks = (request) =>
     resolveSqliteDocumentLinks(
-      { db, teamAccess, user: request.user },
+      { db, slideFiles, teamAccess, user: request.user },
       request.query.links,
     );
   return {

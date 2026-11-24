@@ -31,6 +31,7 @@ test("link paths read back as written, with a task's document when named", () =>
       documentId: TASK,
     },
     { kind: "sheet-clone-memo", sheetCloneId: OTHER, id: "main" },
+    { kind: "slide", teamId: OTHER, id: TASK },
   ];
   for (const target of targets)
     assert.deepEqual(parseDocumentLinkPath(documentLinkPath(target)), target);
@@ -52,6 +53,22 @@ test("link paths read back as written, with a task's document when named", () =>
     }),
     `/links/sheet-clone-task/${OTHER}/${TASK}/main`,
   );
+  assert.equal(
+    documentLinkPath({ kind: "slide", teamId: OTHER, id: TASK }),
+    `/links/slide/${OTHER}/${TASK}`,
+  );
+});
+
+test("a slide link names a team and one of its files by UUID", () => {
+  for (const path of [
+    `/links/slide/${TASK}`,
+    `/links/slide/${OTHER}/main`,
+    `/links/slide/${OTHER}/${TASK}/main`,
+    `/links/slide/${OTHER}/${TASK}/`,
+    `/links/slide/not-a-team/${TASK}`,
+    `/links/slide/${OTHER}/${TASK}?share=abc`,
+  ])
+    assert.equal(parseDocumentLinkPath(path), null, path);
 });
 
 test("only tasks take a document, and only a document ID", () => {
