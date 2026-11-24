@@ -3,6 +3,7 @@ import {
   expect,
   type APIRequestContext,
   type BrowserContext,
+  type Locator,
   type Page,
 } from "@playwright/test";
 import { createHash, randomUUID } from "node:crypto";
@@ -79,6 +80,8 @@ const idleSave = (page: Page) =>
   saveButton(page).and(page.locator('[aria-busy="false"]'));
 const titleInput = (page: Page) =>
   page.getByRole("textbox", { name: "자료 제목" });
+const copyLink = (page: Page) =>
+  page.getByRole("button", { name: "링크 복사", exact: true });
 async function openTeamFile(page: Page, fileId: string) {
   await page.goto(`/slides?file=${fileId}`);
   await expect(editor(page).locator("[data-element-id]").first()).toBeVisible();
@@ -832,6 +835,82 @@ test("상세 제목을 고쳐 본문과 함께 저장하고 목록과 다시 연
   await expect(input).toHaveValue("상단에서 바로 저장");
 });
 
+test("상세 제목 입력은 제목 길이만큼만 넓고 바로 뒤의 링크 복사가 따라오며 다른 버튼은 제자리에 있다", async ({
+  page,
+}, info) => {
+  const file = await upload(
+    page.request,
+    teamId,
+    "짧은 제목",
+    example("flowchart.canvaslide"),
+  );
+  await openTeamFile(page, file.id);
+  const input = titleInput(page);
+  const bar = page.locator(".slide-editor-bar");
+  const fixed = [
+    page.getByRole("button", { name: "팀 자료 목록" }),
+    saveButton(page),
+    page.getByRole("button", { name: "자료 삭제", exact: true }),
+  ];
+  const box = async (locator: Locator) => (await locator.boundingBox())!;
+  const scrolls = () =>
+    input.evaluate(
+      (field: HTMLInputElement) => field.scrollWidth > field.clientWidth,
+    );
+  for (const width of [1366, 390]) {
+    await page.setViewportSize({ width, height: 850 });
+    await input.fill(file.title);
+    const places = await Promise.all(fixed.map(box));
+    // The copy button follows the field at the bar's gap, on its line; the
+    // other buttons keep their places and nothing wraps or overflows.
+    const layout = async () => {
+      const [field, copy] = await Promise.all([
+        box(input),
+        box(copyLink(page)),
+      ]);
+      const gap = copy.x - (field.x + field.width);
+      expect(gap).toBeGreaterThanOrEqual(0);
+      expect(gap).toBeLessThanOrEqual(10.5);
+      expect(
+        Math.abs(copy.y + copy.height / 2 - (field.y + field.height / 2)),
+      ).toBeLessThan(2);
+      expect(copy.x + copy.width).toBeLessThanOrEqual(places[1].x);
+      expect(await Promise.all(fixed.map(box))).toEqual(places);
+      expect(
+        await bar.evaluate(
+          (header) => header.scrollWidth <= header.clientWidth,
+        ),
+      ).toBe(true);
+      return field.width;
+    };
+    const short = await layout();
+    expect(await scrolls()).toBe(false);
+    await page.screenshot({
+      path: info.outputPath(`title-short-${width}.png`),
+    });
+    await input.fill(
+      `${file.title}${width === 390 ? " 안" : "에 덧붙인 설명"}`,
+    );
+    const longer = await layout();
+    expect(longer).toBeGreaterThan(short);
+    expect(await scrolls()).toBe(false);
+    await input.press("Backspace");
+    expect(await layout()).toBeLessThan(longer);
+    // An empty field keeps the width of its placeholder.
+    await input.fill("자료 제목");
+    const placeholder = await layout();
+    await input.fill("");
+    await expect(input).toHaveAttribute("placeholder", "자료 제목");
+    expect(Math.abs((await layout()) - placeholder)).toBeLessThan(1);
+    // A long title stops at the free space and scrolls in the field.
+    await input.fill("아주 긴 자료 제목 ".repeat(12).slice(0, 120));
+    const capped = await layout();
+    expect(await scrolls()).toBe(true);
+    expect(capped).toBeGreaterThan(width === 390 ? 60 : 600);
+    await page.screenshot({ path: info.outputPath(`title-long-${width}.png`) });
+  }
+});
+
 test("팀 자료를 열어 편집하고 Ctrl/Cmd+S로 저장하면 다른 팀원이 같은 내용을 열고 내려받는다", async ({
   page,
   context,
@@ -989,6 +1068,8 @@ test("새 자료는 이름 없이 편집하고 첫 저장 때만 팀 파일을 �
   await expect(
     page.getByRole("button", { name: /서버에 저장된 파일 내려받기|자료 삭제/ }),
   ).toHaveCount(0);
+  // A slide not saved yet has no address to copy.
+  await expect(copyLink(page)).toHaveCount(0);
   const viewport = editor(page).getByTestId("canvas-viewport");
   await viewport.click();
   await page.keyboard.press("r");
@@ -1061,10 +1142,12 @@ test("새 자료는 이름 없이 편집하고 첫 저장 때만 팀 파일을 �
   await viewport.click();
   await fileShortcut(page, "n");
   await expect(titleInput(page)).toHaveValue("");
+  await expect(copyLink(page)).toHaveCount(0);
   await titleInput(page).fill(title);
   await saveShortcut(page);
   await expect(page).toHaveURL(/file=/);
   await expect(idleSave(page)).toBeDisabled();
+  await expect(copyLink(page)).toBeVisible();
   const second = new URL(page.url()).searchParams.get("file")!;
   expect(second).not.toBe(fileId);
   expect(await meta(page.request, teamId, second)).toMatchObject({
@@ -1179,15 +1262,17 @@ test("상세에서 사본을 삭제할 때 취소와 실패는 편집을 유지�
   const confirm = page.getByRole("dialog", { name: "자료 삭제" });
   const bar = page.locator(".slide-editor-bar");
   const buttons = bar.getByRole("button");
-  await expect(buttons).toHaveCount(5);
+  await expect(buttons).toHaveCount(6);
   for (const width of [320, 390, 600, 768]) {
     await page.setViewportSize({ width, height: 800 });
+    // The link copy button is an icon only, at every width.
     await expect(bar.locator("button > span:visible")).toHaveCount(
       width <= 600 ? 0 : 5,
     );
-    await expect(bar.locator("button > svg:visible")).toHaveCount(5);
+    await expect(bar.locator("button > svg:visible")).toHaveCount(6);
+    // At 320px the title keeps 60px beside the link copy icon.
     const title = (await titleInput(page).boundingBox())!;
-    expect(title.width).toBeGreaterThan(70);
+    expect(title.width).toBeGreaterThan(55);
     for (const button of await buttons.all()) {
       await expect(button).toHaveAccessibleName(/\S/);
       const box = (await button.boundingBox())!;
@@ -1275,6 +1360,13 @@ test("편집기 배포본이 없는 서버에서도 자료 상세에서 저장�
   const back = page.getByRole("button", { name: "팀 자료 목록" });
   await expect(back.locator("svg")).toBeVisible();
   await expect(back.locator("span")).toBeHidden();
+  // The file's link is copied right of its title, as in the editor's header.
+  await expect(copyLink(page)).toBeInViewport();
+  expect(
+    await copyLink(page).evaluate(
+      (button) => button.previousElementSibling?.textContent,
+    ),
+  ).toBe(file.title);
   const exported = page.waitForEvent("download");
   await page
     .getByRole("button", { name: "서버에 저장된 파일 내려받기" })
@@ -1459,6 +1551,18 @@ test("열람자는 읽기만 하고, 팀 밖 사용자는 원본을 받을 수 �
   const viewerPage = await viewer.newPage();
   await openTeamFile(viewerPage, file.id);
   await expect(titleInput(viewerPage)).toHaveCount(0);
+  // Reading is enough to copy the link; it follows the shown title.
+  const shownTitle = viewerPage.locator("strong.slide-editor-title");
+  await expect(shownTitle).toHaveText(file.title);
+  const [shown, copy] = await Promise.all([
+    shownTitle.boundingBox(),
+    copyLink(viewerPage).boundingBox(),
+  ]);
+  expect(copy!.x - (shown!.x + shown!.width)).toBeGreaterThanOrEqual(0);
+  expect(copy!.x - (shown!.x + shown!.width)).toBeLessThanOrEqual(10.5);
+  await viewerPage.screenshot({
+    path: test.info().outputPath("viewer-header.png"),
+  });
   await expect(
     viewerPage.getByRole("button", { name: "자료 삭제" }),
   ).toHaveCount(0);
@@ -1609,6 +1713,8 @@ test("공유는 그래보드의 임시 스냅샷으로 만들어지고 팀원만
   await expect(
     writerPage.getByRole("button", { name: "다른 이름으로 저장" }),
   ).toBeDisabled();
+  // A snapshot is no team file and has no link to copy.
+  await expect(copyLink(writerPage)).toHaveCount(0);
   await writerPage.close();
 
   const member = await peerSession(page, context, "viewer");
