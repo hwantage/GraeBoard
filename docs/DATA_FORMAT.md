@@ -165,7 +165,7 @@ SQLite의 `styles(id,data)`에는 같은 내용의 축약 서식 JSON을 한 번
 
 ## 업무와 셀
 
-계정의 `username`은 로그인 아이디(이메일)입니다. 생성·수정 요청은 이메일 형식만 받으며 앞뒤 공백을 지우고 소문자로 저장합니다. `PATCH /api/admin/users/:id`에서 `username`을 생략하면 유지합니다. 계정의 `avatarInitials`는 빈 문자열(이름 첫 글자), 영문·숫자 1~3자 또는 한글 1~2자이며 `avatarImage`는 빈 문자열 또는 PNG·JPEG·WebP data URL입니다. `color`는 아바타 배경색(`#RRGGBB`)입니다. 계정 생성·수정 API에 선택적으로 전달하며 생략한 필드는 기존 값을 유지합니다. `PATCH /api/auth/profile`은 로그인한 본인의 `name`, `color`, `avatarInitials`, `avatarImage`만 수정하고 갱신된 `user`를 반환합니다. 아이디·비밀번호·시스템 권한·소속 변경 필드는 받지 않습니다. 이미지는 클라이언트에서 160×160으로 맞추고 서버에서 형식·150,000자 한도를 검사합니다. `users.system_role`은 시스템 권한(`admin`·`user`), `memberships.role`은 팀 내 권한(`lead`·`member`·`viewer`)입니다. 계정 응답은 `systemRole`, `teamIds`, `teamRoles`(팀 ID별 팀 내 권한)를 가집니다.
+계정의 `username`은 로그인 아이디(이메일)입니다. 생성·수정 요청은 이메일 형식만 받으며 앞뒤 공백을 지우고 소문자로 저장합니다. `PATCH /api/admin/users/:id`에서 `username`을 생략하면 유지합니다. 계정의 `avatarInitials`는 빈 문자열(이름 첫 글자), 영문·숫자 1~3자 또는 한글 1~2자이며 `avatarImage`는 빈 문자열 또는 PNG·JPEG·WebP data URL입니다. `color`는 아바타 배경색(`#RRGGBB`)입니다. 계정 생성·수정 API에 선택적으로 전달하며 생략한 필드는 기존 값을 유지합니다. `PATCH /api/auth/profile`은 로그인한 본인의 `name`, `color`, `avatarInitials`, `avatarImage`만 수정하고 갱신된 `user`를 반환합니다. 아이디·비밀번호·시스템 권한·소속 변경 필드는 받지 않습니다. 팀 사이트(외부, `SITE_TEAM_ID`)는 이름과 아바타(`color`·`avatarInitials`·`avatarImage`)를 사내 계정에서 받으므로 현재 값과 다른 값을 403으로 거절합니다(같은 값은 허용). 이미지는 클라이언트에서 160×160으로 맞추고 서버에서 형식·150,000자 한도를 검사합니다. `users.system_role`은 시스템 권한(`admin`·`user`), `memberships.role`은 팀 내 권한(`lead`·`member`·`viewer`)입니다. 계정 응답은 `systemRole`, `teamIds`, `teamRoles`(팀 ID별 팀 내 권한)를 가집니다.
 
 `bootstrap.users`에는 접근 가능한 팀에 현재 배속된 계정과 그 팀 업무의 Member 셀에 참조된 이전 팀원의 최신 프로필이 포함됩니다. 표시 목록과 선택 목록을 구분하며 선택·필터에는 현재 팀의 `teamRoles`가 팀장(`lead`)·팀원(`member`)인 계정만 사용합니다. 서버는 해당 셀에 남아 있는 이전 팀원 ID만 보존하도록 허용하고, 제거 후 재배정은 거절합니다. 내보내기와 새 사본에도 이전 팀원의 프로필을 포함합니다.
 
@@ -644,7 +644,20 @@ SQLite의 기존 업무 테이블을 유지하고 업무 트랜잭션의 첫 상
 
 `sync-directory/<사내 installation UUID>`의 `directory.json`은 `graeboard-team-directory` v1입니다. root는 `format/version/teamId/installationId/repoId/members`, 구성원은 `id/name/email/active/role`만 허용합니다. 최대 1,000명·512KiB이며 비밀번호·사내 세션·다른 팀 소속·전체 관리자 역할을 포함하지 않습니다. 사내 현재 멤버십만 추출하며 업무 이력의 과거 작성자는 표시 참조로만 남습니다. Google 신원과 승인 결과는 외부 DB에만 보관합니다.
 
-내부는 정상 동기화 주기마다 구성원 변경을 게시하며 업무 일시정지 상태에도 구성원 갱신을 유지합니다. 외부는 1분 Cron, 진입/포커스 시 30초 간격 확인, 계정 연결/승인 시 강제 확인으로 최신 Git 이력을 적용합니다. 이름·이메일·역할·활성 상태를 트랜잭션으로 반영하고 탈퇴/비활성 계정의 Google 연결·접속 세션을 철회합니다. 재가입은 다시 승인이 필요합니다. 재작성된 Git 이력·다른 팀 자료는 거절합니다. 통신 실패 시 마지막 정상 상태를 유지하므로 사내 변경은 다음 성공한 동기화부터 적용됩니다.
+같은 브랜치의 아바타 파일(2026-11-24 승인·도입)은 `directory.json`을 바꾸지 않고 옆에 둡니다. 이 파일을 모르는 이전 외부 서버는 `directory.json`만 읽으므로 그대로 동작하며, 배포 순서 제약이 없습니다.
+
+| 파일 | 형식 |
+| --- | --- |
+| `avatars.json` | `graeboard-team-avatars` v1. root는 `format/version/teamId/installationId/repoId/members`(식별자는 `directory.json`과 같음), 구성원은 `id/color/initials/image`만 허용. `color`·`initials`는 프로필 규칙과 같고, `image`는 빈 값 또는 이미지 data URL의 SHA-256(소문자 16진수 64자). 최대 1,000명·512KiB |
+| `avatars/<사용자 UUID>.txt` | 그 구성원의 이미지 data URL 원문(PNG·JPEG·WebP, 150,000자 이하). 내용의 SHA-256이 `image`와 같아야 함. 이미지를 지우면 빈 내용으로 덮음 |
+
+- 사내는 구성원 게시 때 아바타 목록을 함께 만들어 한 커밋으로 올립니다. 이미지 파일은 `image` 해시가 부모 커밋의 목록과 달라진 구성원만 씁니다. 그 밖의 파일은 부모 트리에서 그대로 이어받으므로, 아바타 파일을 모르는 이전 사내 서버가 명단을 다시 게시해도 지워지지 않습니다. 사내 프로필 값이 규칙에 맞지 않는 구성원은 목록에서 빼고 동기화 로그에 한 번 남깁니다(외부는 그 사람의 값을 유지).
+- 경로는 사람마다 하나로 고정합니다. 브랜치 트리는 "지금까지의 구성원 수 + 2"개 항목을 넘지 않으며 업무 브랜치(`sync-v1`)의 트리와 무관합니다. 지운 사진은 최신 트리에 남지 않지만 Git 이력에는 남습니다.
+- 외부는 구성원 반영에 이어 같은 커밋의 `avatars.json`을 읽고, 같은 커밋 `directory.json`에 없는 ID는 무시합니다. PostgreSQL이 저장된 이미지의 SHA-256(`encode(sha256(convert_to(avatar_image,'UTF8')),'hex')`)을 계산해 목록과 비교하고, 해시가 다른 이미지만 내려받아 해시·형식을 검사합니다. 한 번에 최대 20개를 받고 나머지는 다음 확인에서 이어 받습니다. 값이 다른 `users` 행만 갱신하며, 외부에서 따로 정했던 값도 사내 값으로 덮습니다. 손상된 이미지는 그 사람의 이전 사진을 유지하고 색·글자만 반영합니다. 아바타 처리 오류는 구성원 반영·로그인·승인을 막지 않습니다.
+- `site_meta.directory_hash`는 `<directory.json 해시>`(구성원만 반영)이거나 `<directory.json 해시>:<avatars.json 해시>`(아바타까지 반영, 목록 파일이 없으면 콜론 뒤가 빈 값)입니다. head가 같아도 콜론이 없으면 아바타를 이어서 반영합니다. 이전 버전이 기록한 값이나 20개 한도로 남은 이미지가 이 경우입니다. 컬럼은 추가하지 않았습니다.
+- 외부 bootstrap에서 업무 이력에만 남은 탈퇴자(`person`)는 외부 `users`에 남은 마지막 동기화 아바타로 표시합니다. 외부 `users` 행이 없으면 기본값(`#177b70`, 이름 첫 글자)입니다.
+
+내부는 정상 동기화 주기마다 구성원 변경을 게시하며 업무 일시정지 상태에도 구성원 갱신을 유지합니다. 외부는 1분 Cron, 진입/포커스 시 30초 간격 확인, 계정 연결/승인 시 강제 확인으로 최신 Git 이력을 적용합니다. 이름·이메일·역할·활성 상태와 아바타를 트랜잭션으로 반영하고 탈퇴/비활성 계정의 Google 연결·접속 세션을 철회합니다. 재가입은 다시 승인이 필요합니다. 재작성된 Git 이력·다른 팀 자료는 거절합니다. 통신 실패 시 마지막 정상 상태를 유지하므로 사내 변경은 다음 성공한 동기화부터 적용됩니다.
 
 Google 인증은 검증된 Access `(issuer,subject)`를 사용합니다. 최초 팀장은 내부에서 발급한 팀장 연결 키로 자신의 사내 팀장 계정을 연결하고 다른 사용자는 사내 계정을 선택해 `pending` 신청을 만듭니다. 현재 활성 팀장이 `approved/rejected`를 결정하며 사내 계정 하나는 Google 신원 하나에만 연결됩니다. `__Host-graeboard_account`는 선택한 사내 ID와 Google 신원에 묶인 30일 세션이며 서버에는 토큰 해시만 저장합니다. 요청과 SSE에서 현재 멤버십·승인·세션을 재검사합니다. 내부 팀장에게만 외부 사이트 관리자 역할을 계산해 부여하며 사내 전체 관리자 역할은 복제하지 않습니다.
 

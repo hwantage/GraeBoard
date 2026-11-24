@@ -15,15 +15,26 @@ export async function publishBranchJson(
     decode,
     unchanged = (previous, current) =>
       canonical(previous) === canonical(current),
-    cacheKey = digest(value),
+    // More JSON files of the same commit ({file, value, maxBytes, decode}). Each
+    // is compared by its canonical text; one the parent lacks counts as changed.
+    more = [],
+    // Further files a changed publication writes, given the parent's decoded
+    // `more` values (null where absent). The parent tree keeps every other file.
+    attachments = () => ({}),
+    cacheKey = digest(
+      more.length ? [value, ...more.map((d) => d.value)] : value,
+    ),
     expiresAt = () => now() + 60000,
     now = () => Date.now(),
     conflictMessage = "Metadata changed concurrently; retry synchronization",
   },
 ) {
-  const serialized = canonical(value);
-  if (Buffer.byteLength(serialized) > maxBytes)
-    throw new Error("Synchronization metadata exceeds byte limit");
+  const documents = [{ file, value, maxBytes }, ...more].map((document) => {
+    const serialized = canonical(document.value);
+    if (Buffer.byteLength(serialized) > document.maxBytes)
+      throw new Error("Synchronization metadata exceeds byte limit");
+    return { ...document, serialized };
+  });
   let entries = verified.get(transport);
   if (!entries) verified.set(transport, (entries = new Map()));
   const key = branch + "/" + file,
@@ -39,13 +50,36 @@ export async function publishBranchJson(
   };
   for (let attempt = 0; attempt < 3; attempt++) {
     const parent = await transport.readHead(branch);
+    let others = more.map(() => null);
     if (parent) {
       const previous = decode(await transport.readFile(parent, file));
-      if (unchanged(previous, value)) return remember(parent, previous);
+      if (more.length) {
+        const present = new Set(
+          (await transport.readCommit(parent)).files.map((f) => f.path),
+        );
+        others = await Promise.all(
+          more.map(async (document) =>
+            present.has(document.file)
+              ? document.decode(await transport.readFile(parent, document.file))
+              : null,
+          ),
+        );
+      }
+      if (
+        unchanged(previous, value) &&
+        others.every(
+          (other, i) =>
+            other && canonical(other) === documents[i + 1].serialized,
+        )
+      )
+        return remember(parent, previous);
     }
     const candidate = await transport.createCandidate(
       parent,
-      { [file]: serialized },
+      {
+        ...(await attachments(others)),
+        ...Object.fromEntries(documents.map((d) => [d.file, d.serialized])),
+      },
       message,
     );
     if (await transport.publish(candidate, parent, branch))
