@@ -5348,8 +5348,17 @@ body.document-block-moving * {
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
-  .settings-nav h3 {
-    display: none;
+  /* Keep the 팀·시스템 group names: both groups have an 외부 동기화 item. */
+  .modal-body .settings-nav h3 {
+    flex-shrink: 0;
+    align-self: center;
+    margin: 0;
+    white-space: nowrap;
+  }
+  .modal-body .settings-nav ul + h3 {
+    margin: 0 0 0 4px;
+    padding-left: 10px;
+    border-left: 1px solid var(--line);
   }
   .settings-version {
     flex-shrink: 0;
@@ -5870,18 +5879,27 @@ body.document-block-moving * {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
   }
+  /* One row per group, its name beside it, so a scrolled row keeps its name. */
   .settings-nav {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 4px 8px;
     max-height: 132px;
     padding: 8px;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+  }
+  .modal-body .settings-nav ul + h3 {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
   }
   .settings-nav ul {
     display: flex;
     flex-wrap: nowrap;
     gap: 4px;
     overflow-x: auto;
-    flex-shrink: 0;
   }
   .settings-nav li {
     flex-shrink: 0;
@@ -5900,8 +5918,10 @@ body.document-block-moving * {
     overflow-x: auto;
     flex-wrap: nowrap;
   }
+  /* The five team tabs, 외부 동기화 last, fit a 360px phone. */
   .settings-tabs [role="tab"] {
     flex-shrink: 0;
+    padding: 12px 8px;
   }
   .settings-danger {
     flex-wrap: wrap;
