@@ -1409,6 +1409,34 @@ test(
       ).status,
       403,
     );
+    // Control transactions (search_path graeboard_site) a call opens.
+    const controlTransactions = async (work) => {
+      const connect = pool.connect;
+      let opened = 0;
+      pool.connect = async function (...args) {
+        if (typeof args[0] === "function") return connect.apply(this, args);
+        const client = await connect.apply(this, args),
+          { query, release } = client;
+        client.query = function (text, ...rest) {
+          if (String(text).includes("search_path TO graeboard_site")) opened++;
+          return query.call(this, text, ...rest);
+        };
+        client.release = function (...rest) {
+          Object.assign(client, { query, release });
+          return release.apply(this, rest);
+        };
+        return client;
+      };
+      try {
+        const result = await work();
+        return { opened, result };
+      } finally {
+        pool.connect = connect;
+      }
+    };
+    const withMember = await controlTransactions(() =>
+      outside("lead-google", "/bootstrap"),
+    );
     success(
       await inside(
         `/teams/${teamId}/members`,
@@ -1419,13 +1447,17 @@ test(
     await app.locals.sync.get(teamId).run();
     await refreshDirectory(env, { force: true });
     assert.equal((await outside("member-google", "/bootstrap")).status, 401);
-    // A former member keeps the avatar last synchronized for them.
+    // A former member keeps the avatar last synchronized for them, taken from
+    // the accounts bootstrap already reads: no control transaction is added.
+    const withFormer = await controlTransactions(() =>
+      outside("lead-google", "/bootstrap"),
+    );
     assert.equal(
-      success(await outside("lead-google", "/bootstrap")).users.find(
-        (user) => user.id === member,
-      ).avatarInitials,
+      success(withFormer.result).users.find((user) => user.id === member)
+        .avatarInitials,
       "MB",
     );
+    assert.equal(withFormer.opened, withMember.opened);
     // The removed member's person record stays for old references, but the
     // calendar lists only the internal team's current active members.
     assert.equal(

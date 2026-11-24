@@ -51,9 +51,9 @@
 - 변경이 없으면 새 커밋·이미지 요청·외부 쓰기(`control_meta.revision`)가 없음.
 - 역할만 바뀌면 이미지 요청 0회.
 - 콜론 없는 이전 반영 표시에서 head가 같아도 아바타를 이어서 반영.
-- 탈퇴자의 마지막 아바타 표시.
+- 탈퇴자의 마지막 아바타 표시. bootstrap이 이미 읽는 계정 목록에서 채우므로 control 트랜잭션 수가 탈퇴자가 있어도 2회로 main과 같음(리뷰 반영, 별도 조회를 넣은 이전 구현은 3회).
 
-외부 모드 화면은 내부 서버의 실제 값으로 bootstrap 응답만 외부 모드로 바꿔 구성원 목록의 이미지·글자·색과 읽기 전용 프로필 창을 확인했습니다(`tests/browser/sync/data-sync.spec.ts`, Chromium·Firefox·WebKit). 실행 결과: `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 960건 통과(건너뜀 0), `npm run build`, `npm run build:edge`, `npm run check:structure`(오류 0), `npm run check:architecture`(위반 0), 관련 브라우저 검사 Chromium 41건·Firefox/WebKit 24건 통과.
+외부 모드 화면은 내부 서버의 실제 값으로 bootstrap 응답만 외부 모드로 바꿔 구성원 목록의 이미지·글자·색과 읽기 전용 프로필 창을 확인했습니다(`tests/browser/sync/data-sync.spec.ts`, Chromium·Firefox·WebKit). 실행 결과: `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 960건 통과(건너뜀 0), `npm run build`, `npm run build:edge`, `npm run check:structure`(오류 0), `npm run check:architecture`(위반 0), 관련 브라우저 검사 Chromium 41건·Firefox/WebKit 24건 통과. 리뷰 반영(탈퇴자 아바타를 이미 읽은 계정 목록에서 채움) 뒤 `npm test` 960건, `npm run build`, `npm run build:edge`, `team-site`, 팀 사이트 브라우저 검사를 다시 통과했습니다.
 
 ## 2026-11-23 — 캘린더 시작 시각·알림(다바다 푸시)과 본문 포함 복제
 

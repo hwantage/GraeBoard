@@ -87,8 +87,6 @@ export class PostgresControlRepository {
 export async function bootstrapFromTeamStores(ctx) {
   const teams = [],
     people = new Map(),
-    // People the team history names who are no longer members.
-    former = new Set(),
     years = new Set([new Date().getFullYear()]);
   let installedProfiles = [];
   try {
@@ -99,6 +97,7 @@ export async function bootstrapFromTeamStores(ctx) {
   const { users: controlUsers, teams: rows } = ctx.controlStore.usersAndTeams
     ? await ctx.controlStore.usersAndTeams(ctx.user)
     : { users: await ctx.controlStore.users(), teams: await ctx.teams() };
+  const accounts = new Map(controlUsers.map((user) => [user.id, user]));
   for (const row of rows) {
     let settings = DEFAULT_SETTINGS,
       name = row.name,
@@ -123,19 +122,19 @@ export async function bootstrapFromTeamStores(ctx) {
           };
           name = t?.payload?.name || name;
           for (const p of await s.list("person")) {
-            const person = {
+            // A former member keeps the avatar last synchronized for them.
+            const account = accounts.get(p.key[0]);
+            people.set(p.key[0], {
               id: p.key[0],
               name: p.payload.name,
               systemRole: "user",
               teamIds: [],
               teamRoles: {},
               active: false,
-              color: "#177b70",
-              avatarInitials: "",
-              avatarImage: "",
-            };
-            people.set(person.id, person);
-            former.add(person);
+              color: account?.color || "#177b70",
+              avatarInitials: account?.avatarInitials || "",
+              avatarImage: account?.avatarImage || "",
+            });
           }
           const result = await s.tx.query(
             "SELECT DISTINCT y.value::integer AS year FROM site_entities s CROSS JOIN LATERAL jsonb_array_elements_text(s.payload::jsonb->'years') y(value) WHERE s.team_id=$1 AND s.entity='task' AND s.deleted=0",
@@ -164,26 +163,6 @@ export async function bootstrapFromTeamStores(ctx) {
     for (const user of controlUsers)
       if (user.teamIds.includes(row.id)) people.set(user.id, user);
   }
-  // A former member keeps the avatar last synchronized while they belonged.
-  const formerIds = [...people.values()]
-    .filter((person) => former.has(person))
-    .map((person) => person.id);
-  if (formerIds.length)
-    for (const row of await controlTransaction(
-      ctx.env,
-      async (tx) =>
-        (
-          await tx.query(
-            "SELECT id,color,avatar_initials,avatar_image FROM users WHERE id=ANY($1::text[])",
-            [formerIds],
-          )
-        ).rows,
-    ))
-      Object.assign(people.get(row.id), {
-        color: row.color,
-        avatarInitials: row.avatar_initials,
-        avatarImage: row.avatar_image,
-      });
   return {
     user: ctx.user,
     teams,
