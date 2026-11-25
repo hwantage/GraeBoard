@@ -677,6 +677,43 @@ test("슬라이드 주소를 붙여넣으면 제목 링크가 되고 누르거�
   await peer.close();
 });
 
+test("슬라이드 편집 화면 제목 오른쪽의 링크 복사는 링크 주소와 제목을 복사하고 그 주소로 같은 편집 화면을 연다", async ({
+  page,
+  browserName,
+}, info) => {
+  const file = await slideFile(page, "복사한 슬라이드");
+  const origin = new URL(page.url()).origin;
+  await page.goto(`/slides?file=${file}`);
+  await expectSlideOpen(page, teamId, file);
+  const copy = page
+    .locator(".slide-editor-bar")
+    .getByRole("button", { name: "링크 복사", exact: true });
+  await expect(copy).toHaveAttribute("data-tooltip", "링크 복사");
+  const address = `${origin}/links/slide/${teamId}/${file}`;
+  const result = await copied(page, browserName, copy);
+  expect(result.text).toBe(address);
+  expect(result.html).toContain(`<a href="${address}">복사한 슬라이드</a>`);
+  await page.screenshot({ path: info.outputPath("slide-link-copied.png") });
+
+  // The address opens the same editing screen as the team's list does.
+  await page.goto("/");
+  await page.goto(new URL(result.text).pathname);
+  await expectSlideOpen(page, teamId, file);
+  await expect(page.getByRole("textbox", { name: "자료 제목" })).toHaveValue(
+    "복사한 슬라이드",
+  );
+
+  // Pasted in a document, it is the slide's title link, stored as a path.
+  await page.goto("/");
+  await page.getByLabel("팀 선택").selectOption(teamId);
+  const source = await open(page);
+  await paste(rich(source), result.text, result.html);
+  await expect(links(source)).toHaveText(["복사한 슬라이드"]);
+  await expect
+    .poll(() => taskMarkdown(page, taskIds[0]))
+    .toContain(`[복사한 슬라이드](/links/slide/${teamId}/${file})`);
+});
+
 test("캘린더 일정 상세의 슬라이드 링크는 일정 상세를 닫고 슬라이드 편집 화면을 연다", async ({
   page,
 }) => {

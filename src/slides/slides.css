@@ -279,17 +279,49 @@
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
 }
+/* The title is only as wide as its text, so the link copy button follows it;
+   the file actions stay at the right (.heading-actions). A long title stops
+   at the free space of the bar. */
 .slide-editor-title {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* As a sheet tab's name editor: a hidden copy of the title, or of the
+   placeholder when it is empty, sizes the grid cell the input fills. A title
+   wider than the free space scrolls inside the input. */
+.slide-editor-title-field {
+  display: inline-grid;
+  min-width: 0;
+}
+.slide-editor-title-measure,
 input.slide-editor-title {
-  height: 26px;
+  grid-area: 1 / 1;
   padding: 2px 6px;
   border: 1px solid transparent;
+}
+/* It gives the cell its width only; the extra right padding keeps the caret
+   at the end from scrolling the text. */
+.slide-editor-title-measure {
+  visibility: hidden;
+  font-weight: 600;
+  min-width: 0;
+  height: 0;
+  overflow: hidden;
+  padding-right: 8px;
+  white-space: pre;
+}
+/* Phones show the input's text at 16px or more (styles.css), so the copy too. */
+@media (max-width: 700px) {
+  .slide-editor-title-measure {
+    font-size: max(16px, 1em);
+  }
+}
+input.slide-editor-title {
+  width: 0;
+  min-width: 100%;
+  height: 26px;
   border-radius: 4px;
   background: transparent;
   color: inherit;
@@ -302,6 +334,13 @@ input.slide-editor-title:hover {
 input.slide-editor-title:focus {
   border-color: var(--accent);
 }
+/* A plain icon, as beside a task detail's title, apart from the file buttons. */
+.slide-editor-bar > .document-link-copy {
+  padding: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+}
 @media (max-width: 600px) {
   .slide-editor-bar {
     gap: 6px;
@@ -313,6 +352,9 @@ input.slide-editor-title:focus {
     width: 34px;
     height: 34px;
     padding: 0;
+  }
+  .slide-editor-bar > .document-link-copy {
+    width: 26px;
   }
   .slide-editor-bar > .button > span,
   .slide-editor-bar > .heading-actions > .button > span {
