@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { HttpError, requireThat } from "../../../shared/validation.js";
 import { slideThumbnailCache } from "./slide-thumbnail-cache.mjs";
 import { canContribute } from "../../../shared/domain.js";
@@ -8,6 +8,7 @@ import {
   MAX_SLIDE_SHARE_BYTES,
   normalizeSlideTitle,
   SLIDE_SHARE_TTL_MS,
+  slideContentHash,
   slideFileProblem,
   slideTitleProblem,
 } from "../../../shared/slides/slide-file-rules.js";
@@ -44,13 +45,10 @@ export class SlideFileService {
     requireThat(!problem, 400, problem);
     return normalizeSlideTitle(value);
   }
-  #content(bytes) {
+  async #content(bytes) {
     const problem = slideFileProblem(bytes);
     requireThat(!problem, problem.includes("까지") ? 413 : 400, problem);
-    return {
-      bytes,
-      contentHash: createHash("sha256").update(bytes).digest("hex"),
-    };
+    return { bytes, contentHash: await slideContentHash(bytes) };
   }
   #request(value) {
     requireThat(isSlideRequestId(value), 400, "저장 요청 ID가 필요합니다.");
@@ -97,7 +95,7 @@ export class SlideFileService {
       id: randomUUID(),
       teamId,
       title: this.#title(title),
-      ...this.#content(bytes),
+      ...(await this.#content(bytes)),
       requestId: this.#request(requestId),
       userId: this.user.id,
       at: this.now().toISOString(),
@@ -122,7 +120,7 @@ export class SlideFileService {
       baseRevision,
       title: title === undefined ? null : this.#title(title),
       baseTitle: title === undefined ? null : this.#title(baseTitle),
-      ...this.#content(bytes),
+      ...(await this.#content(bytes)),
       requestId: this.#request(requestId),
       userId: this.user.id,
       at: this.now().toISOString(),

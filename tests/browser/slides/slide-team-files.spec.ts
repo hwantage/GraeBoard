@@ -1407,6 +1407,81 @@ test("다른 팀원이 먼저 저장하면 두 내용을 모두 보존하고 사
   });
 });
 
+test("연 자료의 바이트는 복제하지 않고 편집기로 옮기며 저장·최신 자료 다시 열기·썸네일이 그대로 동작한다", async ({
+  page,
+}) => {
+  test.setTimeout(60000);
+  // Every file content the screen read from the server, as the buffer it got.
+  await page.addInitScript(() => {
+    const held: ArrayBuffer[] = [];
+    const read = Response.prototype.arrayBuffer;
+    Response.prototype.arrayBuffer = async function () {
+      const buffer = await read.call(this);
+      if (new URL(this.url).pathname.endsWith("/content")) held.push(buffer);
+      return buffer;
+    };
+    Object.assign(window, { slideContentBuffers: held });
+  });
+  const heldSizes = () =>
+    page.evaluate(() =>
+      (
+        window as unknown as { slideContentBuffers: ArrayBuffer[] }
+      ).slideContentBuffers.map((buffer) => buffer.byteLength),
+    );
+  const original = example("flowchart.canvaslide");
+  const title = `넘겨주기 ${randomUUID().slice(0, 8)}`;
+  const file = await upload(page.request, teamId, title, original);
+  await openTeamFile(page, file.id);
+  // The editor shows the file and the screen keeps no copy of its bytes.
+  expect(await heldSizes()).toEqual([0]);
+  await nudge(page);
+  await saveShortcut(page);
+  await expect(idleSave(page)).toBeDisabled();
+  expect((await meta(page.request, teamId, file.id)).revision).toBe(2);
+
+  // Another member saves; the author drops the next edit for the newer file.
+  const newer = Buffer.from(
+    original.toString().replaceAll("Order received", "Order reloaded"),
+  );
+  expect(
+    (
+      await page.request.put(`/api/teams/${teamId}/slides/${file.id}/content`, {
+        headers: {
+          ...headers,
+          "Content-Type": "application/octet-stream",
+          "X-Slide-Base-Revision": "2",
+          "X-Slide-Request-Id": randomUUID(),
+        },
+        data: newer,
+      })
+    ).ok(),
+  ).toBe(true);
+  await nudge(page);
+  await saveShortcut(page);
+  await page
+    .getByRole("dialog", { name: "다른 팀원이 먼저 저장했습니다" })
+    .getByRole("button", { name: "내 변경을 버리고 최신 자료 열기" })
+    .click();
+  const reloaded = editor(page).getByText("Order reloaded", { exact: true });
+  await expect(reloaded).toBeVisible();
+  await expect(idleSave(page)).toBeDisabled();
+  expect(await heldSizes()).toEqual([0, 0]);
+  await reloaded.click({ force: true });
+  await page.keyboard.press("ArrowRight");
+  await saveButton(page).click();
+  await expect(idleSave(page)).toBeDisabled();
+  expect((await meta(page.request, teamId, file.id)).revision).toBe(4);
+
+  await page.getByRole("button", { name: "팀 자료 목록" }).click();
+  await fileCard(page, title).scrollIntoViewIfNeeded();
+  await expect(
+    fileCard(page, title).locator(".slide-card-thumbnail img"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: title, exact: true }).click();
+  await expect(reloaded).toBeVisible();
+  await expect(idleSave(page)).toBeDisabled();
+});
+
 test("새 자료는 이름 없이 편집하고 첫 저장 때만 팀 파일을 만든다", async ({
   page,
 }) => {

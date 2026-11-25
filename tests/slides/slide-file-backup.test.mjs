@@ -31,7 +31,7 @@ const files = (directory) =>
         .sort()
     : [];
 
-function fixture(t, { slides = true } = {}) {
+async function fixture(t, { slides = true } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "slide-backup-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const source = join(directory, "source.sqlite");
@@ -54,11 +54,11 @@ function fixture(t, { slides = true } = {}) {
   });
   const first = slide("첫 저장");
   const current = slide("현재");
-  const file = repository.create(
+  const file = await repository.create(
     put(first, { id: randomUUID(), title: "자료" }),
   );
-  repository.replace(put(current, { fileId: file.id, baseRevision: 1 }));
-  const removed = repository.create(
+  await repository.replace(put(current, { fileId: file.id, baseRevision: 1 }));
+  const removed = await repository.create(
     put(slide("삭제한 자료"), { id: randomUUID(), title: "삭제" }),
   );
   repository.remove({
@@ -85,8 +85,8 @@ const options = (state, name = "restored") => ({
   slideFilesDir: join(state.directory, `${name}-slides`),
 });
 
-test("백업은 슬라이드 저장소와 참조하는 파일만 함께 묶고 새 경로로 복원한다", (t) => {
-  const state = fixture(t);
+test("백업은 슬라이드 저장소와 참조하는 파일만 함께 묶고 새 경로로 복원한다", async (t) => {
+  const state = await fixture(t);
   const backup = join(state.directory, "backup.sqlite");
   backupDatabase(state.source, backup, {
     documentImagesDir: join(state.directory, "images"),
@@ -120,7 +120,7 @@ test("백업은 슬라이드 저장소와 참조하는 파일만 함께 묶고 �
     directory: target.slideFilesDir,
   });
   t.after(() => repository.close());
-  const restored = repository.read(state.teamId, state.file.id);
+  const restored = await repository.read(state.teamId, state.file.id);
   assert.equal(restored.file.revision, 2);
   assert.equal(restored.file.contentHash, sha(state.current));
   assert.equal(Buffer.from(restored.bytes).equals(state.current), true);
@@ -136,16 +136,18 @@ test("백업은 슬라이드 저장소와 참조하는 파일만 함께 묶고 �
   );
   // A conditional save continues from the restored revision.
   assert.equal(
-    repository.replace({
-      teamId: state.teamId,
-      fileId: state.file.id,
-      baseRevision: 2,
-      bytes: slide("복원 뒤"),
-      contentHash: sha(slide("복원 뒤")),
-      requestId: randomUUID(),
-      userId: "user",
-      at: new Date().toISOString(),
-    }).file.revision,
+    (
+      await repository.replace({
+        teamId: state.teamId,
+        fileId: state.file.id,
+        baseRevision: 2,
+        bytes: slide("복원 뒤"),
+        contentHash: sha(slide("복원 뒤")),
+        requestId: randomUUID(),
+        userId: "user",
+        at: new Date().toISOString(),
+      })
+    ).file.revision,
     3,
   );
   const db = new DatabaseSync(restoredPath, { readOnly: true });
@@ -153,8 +155,8 @@ test("백업은 슬라이드 저장소와 참조하는 파일만 함께 묶고 �
   db.close();
 });
 
-test("슬라이드 저장소가 없는 사이트의 백업·복원은 이전과 같다", (t) => {
-  const state = fixture(t, { slides: false });
+test("슬라이드 저장소가 없는 사이트의 백업·복원은 이전과 같다", async (t) => {
+  const state = await fixture(t, { slides: false });
   const backup = join(state.directory, "backup.sqlite");
   backupDatabase(state.source, backup, {
     documentImagesDir: join(state.directory, "images"),
@@ -166,15 +168,15 @@ test("슬라이드 저장소가 없는 사이트의 백업·복원은 이전과 
   assert.equal(existsSync(target.slideFilesDir), false);
 });
 
-test("복원 대상 슬라이드 폴더에 남은 자료가 있으면 섞지 않고 거절한다", (t) => {
-  const state = fixture(t);
+test("복원 대상 슬라이드 폴더에 남은 자료가 있으면 섞지 않고 거절한다", async (t) => {
+  const state = await fixture(t);
   const withSlides = join(state.directory, "with-slides.sqlite");
   backupDatabase(state.source, withSlides, {
     documentImagesDir: join(state.directory, "images"),
     slideFilesDir: state.slideFilesDir,
   });
   // A backup taken before slides existed: no companion folder.
-  const old = fixture(t, { slides: false });
+  const old = await fixture(t, { slides: false });
   const oldBackup = join(old.directory, "old.sqlite");
   backupDatabase(old.source, oldBackup, {
     documentImagesDir: join(old.directory, "images"),
@@ -214,8 +216,8 @@ test("복원 대상 슬라이드 폴더에 남은 자료가 있으면 섞지 않
   assert.deepEqual(repository.list(state.teamId), []);
 });
 
-test("백업의 슬라이드 파일이 손상됐거나 빠졌으면 아무것도 복원하지 않는다", (t) => {
-  const state = fixture(t);
+test("백업의 슬라이드 파일이 손상됐거나 빠졌으면 아무것도 복원하지 않는다", async (t) => {
+  const state = await fixture(t);
   for (const damage of ["corrupt", "missing", "version"]) {
     const backup = join(state.directory, `${damage}.sqlite`);
     backupDatabase(state.source, backup, {
@@ -243,8 +245,8 @@ test("백업의 슬라이드 파일이 손상됐거나 빠졌으면 아무것도
   }
 });
 
-test("현재 revision의 파일이 없으면 백업을 만들지 않는다", (t) => {
-  const state = fixture(t);
+test("현재 revision의 파일이 없으면 백업을 만들지 않는다", async (t) => {
+  const state = await fixture(t);
   rmSync(slideBlobPath(state.slideFilesDir, state.teamId, sha(state.current)));
   const backup = join(state.directory, "backup.sqlite");
   assert.throws(
