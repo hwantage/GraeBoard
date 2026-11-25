@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import {
+import fs, {
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -10,8 +10,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { openDatabase } from "../../server/db.mjs";
 import { backupDatabase } from "../../scripts/transfer/backup.mjs";
 import { restoreDatabase } from "../../scripts/transfer/restore.mjs";
@@ -31,7 +32,7 @@ const files = (directory) =>
         .sort()
     : [];
 
-function fixture(t, { slides = true } = {}) {
+async function fixture(t, { slides = true } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "slide-backup-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const source = join(directory, "source.sqlite");
@@ -54,11 +55,11 @@ function fixture(t, { slides = true } = {}) {
   });
   const first = slide("첫 저장");
   const current = slide("현재");
-  const file = repository.create(
+  const file = await repository.create(
     put(first, { id: randomUUID(), title: "자료" }),
   );
-  repository.replace(put(current, { fileId: file.id, baseRevision: 1 }));
-  const removed = repository.create(
+  await repository.replace(put(current, { fileId: file.id, baseRevision: 1 }));
+  const removed = await repository.create(
     put(slide("삭제한 자료"), { id: randomUUID(), title: "삭제" }),
   );
   repository.remove({
@@ -84,9 +85,44 @@ const options = (state, name = "restored") => ({
   documentImagesDir: join(state.directory, `${name}-images`),
   slideFilesDir: join(state.directory, `${name}-slides`),
 });
+// Counts every read of a slide file's bytes by the tools, whichever fs call
+// makes it. A copy reads its source, and the copy is the same slide file, so
+// reads are counted per file name. `whole` counts the reads that bring a
+// complete file into memory.
+function countSlideReads(t) {
+  const counted = { reads: new Map(), whole: 0 };
+  const originals = {};
+  let nested = false;
+  const wrap = (name, record) => {
+    originals[name] = fs[name];
+    fs[name] = (...args) => {
+      // readFileSync opens its file through fs.openSync: one read, not two.
+      if (nested) return originals[name](...args);
+      if (String(args[0]).endsWith(".canvaslide") && record(args)) {
+        const file = basename(args[0]);
+        counted.reads.set(file, (counted.reads.get(file) || 0) + 1);
+      }
+      nested = true;
+      try {
+        return originals[name](...args);
+      } finally {
+        nested = false;
+      }
+    };
+  };
+  wrap("openSync", ([, flags = "r"]) => flags === "r");
+  wrap("copyFileSync", () => true);
+  wrap("readFileSync", () => ++counted.whole);
+  syncBuiltinESMExports();
+  t.after(() => {
+    Object.assign(fs, originals);
+    syncBuiltinESMExports();
+  });
+  return counted;
+}
 
-test("백업은 슬라이드 저장소와 참조하는 파일만 함께 묶고 새 경로로 복원한다", (t) => {
-  const state = fixture(t);
+test("백업은 슬라이드 저장소와 참조하는 파일만 함께 묶고 새 경로로 복원한다", async (t) => {
+  const state = await fixture(t);
   const backup = join(state.directory, "backup.sqlite");
   backupDatabase(state.source, backup, {
     documentImagesDir: join(state.directory, "images"),
@@ -120,7 +156,7 @@ test("백업은 슬라이드 저장소와 참조하는 파일만 함께 묶고 �
     directory: target.slideFilesDir,
   });
   t.after(() => repository.close());
-  const restored = repository.read(state.teamId, state.file.id);
+  const restored = await repository.read(state.teamId, state.file.id);
   assert.equal(restored.file.revision, 2);
   assert.equal(restored.file.contentHash, sha(state.current));
   assert.equal(Buffer.from(restored.bytes).equals(state.current), true);
@@ -136,16 +172,18 @@ test("백업은 슬라이드 저장소와 참조하는 파일만 함께 묶고 �
   );
   // A conditional save continues from the restored revision.
   assert.equal(
-    repository.replace({
-      teamId: state.teamId,
-      fileId: state.file.id,
-      baseRevision: 2,
-      bytes: slide("복원 뒤"),
-      contentHash: sha(slide("복원 뒤")),
-      requestId: randomUUID(),
-      userId: "user",
-      at: new Date().toISOString(),
-    }).file.revision,
+    (
+      await repository.replace({
+        teamId: state.teamId,
+        fileId: state.file.id,
+        baseRevision: 2,
+        bytes: slide("복원 뒤"),
+        contentHash: sha(slide("복원 뒤")),
+        requestId: randomUUID(),
+        userId: "user",
+        at: new Date().toISOString(),
+      })
+    ).file.revision,
     3,
   );
   const db = new DatabaseSync(restoredPath, { readOnly: true });
@@ -153,8 +191,8 @@ test("백업은 슬라이드 저장소와 참조하는 파일만 함께 묶고 �
   db.close();
 });
 
-test("슬라이드 저장소가 없는 사이트의 백업·복원은 이전과 같다", (t) => {
-  const state = fixture(t, { slides: false });
+test("슬라이드 저장소가 없는 사이트의 백업·복원은 이전과 같다", async (t) => {
+  const state = await fixture(t, { slides: false });
   const backup = join(state.directory, "backup.sqlite");
   backupDatabase(state.source, backup, {
     documentImagesDir: join(state.directory, "images"),
@@ -166,15 +204,15 @@ test("슬라이드 저장소가 없는 사이트의 백업·복원은 이전과 
   assert.equal(existsSync(target.slideFilesDir), false);
 });
 
-test("복원 대상 슬라이드 폴더에 남은 자료가 있으면 섞지 않고 거절한다", (t) => {
-  const state = fixture(t);
+test("복원 대상 슬라이드 폴더에 남은 자료가 있으면 섞지 않고 거절한다", async (t) => {
+  const state = await fixture(t);
   const withSlides = join(state.directory, "with-slides.sqlite");
   backupDatabase(state.source, withSlides, {
     documentImagesDir: join(state.directory, "images"),
     slideFilesDir: state.slideFilesDir,
   });
   // A backup taken before slides existed: no companion folder.
-  const old = fixture(t, { slides: false });
+  const old = await fixture(t, { slides: false });
   const oldBackup = join(old.directory, "old.sqlite");
   backupDatabase(old.source, oldBackup, {
     documentImagesDir: join(old.directory, "images"),
@@ -214,8 +252,8 @@ test("복원 대상 슬라이드 폴더에 남은 자료가 있으면 섞지 않
   assert.deepEqual(repository.list(state.teamId), []);
 });
 
-test("백업의 슬라이드 파일이 손상됐거나 빠졌으면 아무것도 복원하지 않는다", (t) => {
-  const state = fixture(t);
+test("백업의 슬라이드 파일이 손상됐거나 빠졌으면 아무것도 복원하지 않는다", async (t) => {
+  const state = await fixture(t);
   for (const damage of ["corrupt", "missing", "version"]) {
     const backup = join(state.directory, `${damage}.sqlite`);
     backupDatabase(state.source, backup, {
@@ -243,8 +281,8 @@ test("백업의 슬라이드 파일이 손상됐거나 빠졌으면 아무것도
   }
 });
 
-test("현재 revision의 파일이 없으면 백업을 만들지 않는다", (t) => {
-  const state = fixture(t);
+test("현재 revision의 파일이 없으면 백업을 만들지 않는다", async (t) => {
+  const state = await fixture(t);
   rmSync(slideBlobPath(state.slideFilesDir, state.teamId, sha(state.current)));
   const backup = join(state.directory, "backup.sqlite");
   assert.throws(
@@ -258,4 +296,53 @@ test("현재 revision의 파일이 없으면 백업을 만들지 않는다", (t)
   assert.equal(existsSync(backup), false);
   assert.equal(existsSync(backup + ".slides"), false);
   assert.equal(existsSync(backup + ".slides.partial"), false);
+});
+
+test("현재 revision의 파일 내용이 해시와 다르면 백업을 만들지 않는다", async (t) => {
+  const state = await fixture(t);
+  writeFileSync(
+    slideBlobPath(state.slideFilesDir, state.teamId, sha(state.current)),
+    "{}",
+  );
+  const backup = join(state.directory, "backup.sqlite");
+  assert.throws(
+    () =>
+      backupDatabase(state.source, backup, {
+        documentImagesDir: join(state.directory, "images"),
+        slideFilesDir: state.slideFilesDir,
+      }),
+    /슬라이드 자료 파일의 해시가 기록과 다릅니다/,
+  );
+  assert.equal(existsSync(backup), false);
+  assert.equal(existsSync(backup + ".slides"), false);
+  assert.equal(existsSync(backup + ".slides.partial"), false);
+});
+
+test("백업은 슬라이드 파일을 한 번, 복원은 두 번만 읽고 통째로 올리지 않는다", async (t) => {
+  const state = await fixture(t);
+  const each = (times) =>
+    [state.first, state.current, slide("삭제한 자료")]
+      .map((bytes) => [`${sha(bytes)}.canvaslide`, times])
+      .sort();
+  const counted = countSlideReads(t);
+  const backup = join(state.directory, "backup.sqlite");
+  backupDatabase(state.source, backup, {
+    documentImagesDir: join(state.directory, "images"),
+    slideFilesDir: state.slideFilesDir,
+  });
+  // The one read that copies a file also hashes it.
+  assert.deepEqual([...counted.reads].sort(), each(1));
+
+  counted.reads.clear();
+  const target = options(state);
+  restoreDatabase(backup, join(state.directory, "restored.sqlite"), target);
+  // One read checks the whole backup before anything is written; the second
+  // copies the file and hashes what it copies.
+  assert.deepEqual([...counted.reads].sort(), each(2));
+  assert.equal(counted.whole, 0);
+  assert.deepEqual(
+    files(target.slideFilesDir),
+    files(backup + ".slides"),
+    "the same files were restored",
+  );
 });

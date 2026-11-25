@@ -18,6 +18,263 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-25 — 슬라이드 게시에서 조각 한도를 다 쓴 뒤의 내용 읽기 제거 (#234)
+
+- 원인: `syncSlideFiles`의 게시 반복문은 한 실행이 올릴 수 있는 조각 수(외부 4개, 사내 64개)를 다 쓴 뒤에도 내용이 바뀐 나머지 자료마다 `syncReadContent`와 `slideChunks`를 실행했다. 한도가 없으면 조각을 하나도 올릴 수 없는데도 외부는 자료 전체를 R2에서 내려받아 전체와 조각별 SHA-256을 다시 계산했다. 25MB 자료 10개가 기다리면 16MiB만 올릴 수 있는 1분 실행마다 약 250MB를 읽고 해시했다. 사내는 같은 읽기와 해시를 요청 스레드에서 실행했다.
+- 변경: 조각 한도가 남지 않으면 내용을 읽어야 하는 자료는 읽지 않고 `pending`으로 세어 다음 실행으로 넘긴다. 내용이 그대로인 이름 변경·삭제는 전과 같이 한도와 관계없이 그 실행에서 게시한다. 작은 자료부터 게시하는 순서와 브랜치 형식·저장소 계약·DB 스키마는 그대로이며 조각 해시를 저장하지 않는다. 매 실행의 첫 내용 자료는 한도 전체를 가지고 읽으므로 새 저장이 이어지지 않는 한 기다리는 자료는 실행을 거듭하면 모두 게시된다. 조각이 이미 모두 브랜치에 있는 자료는 읽기 전에는 알 수 없어, 앞선 자료가 한도를 다 쓴 실행에서는 게시되지 않고 한도가 남은 실행까지 기다린다.
+- 검증: `tests/support/slide-sync-fixture.mjs`의 계약 검사에 회귀 1건을 추가해 사내 SQLite끼리와 사내 SQLite·외부 PostgreSQL 조합에서 각각 실행한다. 조각 한도 2개로 내용 변경 3건·새 2조각 자료 2건·이름 변경 1건·삭제 1건을 게시하며 실행별 `syncReadContent` 호출이 2·2·2·1·0건인지, 첫 실행에서 이름 변경·삭제가 게시되는지, 다섯 실행 뒤 받는 쪽의 목록과 바이트가 같은지 확인한다. 수정 전 코드에서는 두 조합 모두 첫 실행이 5건을 읽어 실패했다(2건 중 실패 2). 수정 후 `tests/slides/slide-file-sync.test.mjs`·`slide-file-sync-external.test.mjs`·`slide-file-storage-contract.test.mjs`·`slide-file-external-contract.test.mjs`를 실제 PostgreSQL 17로 실행해 53건 통과(실패·취소·skip 0). `check:structure`(804개 파일, 오류 0)·`check:architecture`(482개 모듈, 위반 0)·`build:edge` 통과. 이어 같은 커밋에서 `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 964건 통과(실패·취소·skip 0), `npm run build`·`npm run build:edge` 통과. 화면 변경이 없어 브라우저 검사는 실행하지 않았다.
+## 2026-11-25 — 변화 없는 슬라이드 동기화 실행의 비용 줄이기 (#240)
+
+슬라이드 동기화는 사내 서버와 외부 Cron이 활성 팀마다 1분에 한 번 실행합니다. 대부분은 받을 것도 올릴 것도 없는 실행인데, 그 한 번이 필요 이상으로 비쌌습니다.
+
+- 사내: `GitCliTransport.readHead`가 `git ls-remote`로 head를 읽은 뒤, 사내 clone이 이미 그 커밋에 있어도 항상 `git fetch`를 실행했습니다(원격 연결 2회).
+- 외부: 변화 없는 실행 한 번이 PostgreSQL 왕복 12회(슬라이드를 쓴 적 없는 팀은 7회)였습니다. 연결 상태 읽기 3회(트랜잭션 열기·조회·COMMIT), GitHub 대기 시각 읽기 3회, 이미 있는 행에 매번 쓰기 트랜잭션을 여는 `syncState` 5회(BEGIN·잠금·`INSERT … DO NOTHING`·SELECT·COMMIT), 게시할 것이 있는지 보려고 삭제된 자료까지 팀의 모든 행을 조각 목록과 함께 읽어 파싱하는 `syncFiles` 1회입니다.
+
+사용자가 보는 동작, DB 스키마·인덱스, 저장 형식, 브랜치 형식은 바꾸지 않았습니다. 받기·게시·충돌·분기 검출(`SlideBranchDiverged`)·커서 전진·lease와 대기 시각 판정·팀당 한 번 실행·GitHub ref 조건부 요청도 그대로입니다.
+
+1. `readHead`는 clone의 `refs/remotes/origin/<브랜치>`가 `ls-remote`가 알려 준 커밋에 있으면 fetch하지 않습니다(`fetchedHead`, `rev-parse --verify --quiet …^{commit}`). ref가 없거나 clone에 없는 커밋을 가리키면 이전처럼 받습니다.
+2. 외부 `syncTeamSlides`는 연결 상태(`mode`·lease)와 GitHub 대기 시각을 읽기 전용 트랜잭션을 여는 왕복(`first`)에서 함께 읽습니다(6회 → 2회).
+3. 두 저장소의 `syncState`는 먼저 읽고 행이 없을 때만 만듭니다. 외부는 5회 → 1회, 사내는 쓰기 잠금(`BEGIN IMMEDIATE`) 없이 SELECT 한 번입니다. 팀의 첫 실행만 읽기 뒤에 기존 트랜잭션을 거칩니다.
+4. 게시할 것이 있는지의 판정에는 두 저장소가 `syncFiles(teamId, { chunks: false })`로 조각 목록(`shared_chunks`)을 읽지도 파싱하지도 않은 같은 목록을 줍니다. 판정 규칙 `slideFileDirty`는 그대로 `syncSlideFiles`에만 있고 SQL로 옮기지 않았습니다.
+
+| 변화 없는 실행 한 번 | 이전 | 이후 |
+| --- | --- | --- |
+| 사내, 슬라이드를 쓰는 팀 | Git 명령 2개(`ls-remote`·`fetch`), 원격 연결 2회. 저장소 쓰기 트랜잭션 1회 | Git 명령 2개(`ls-remote`·clone 안의 `rev-parse`), 원격 연결 1회. 저장소는 SELECT 2회 |
+| 사내, 슬라이드를 쓴 적 없는 팀 | `ls-remote` 1개 | 같음(`ls-remote` 1개, 저장소는 만들지 않음) |
+| 외부, 슬라이드를 쓰는 팀 | DB 왕복 12회, GitHub 요청 1건 | DB 왕복 4회, GitHub 요청 1건 |
+| 외부, 슬라이드를 쓴 적 없는 팀 | DB 왕복 7회, GitHub 요청 1건 | DB 왕복 3회, GitHub 요청 1건 |
+
+DB 왕복은 이미 검사한 연결 기준이며 `client.query` 호출 수입니다. 새 연결의 첫 사용에는 전후 모두 연결 검사 3회(업무 스키마 1회, 슬라이드 저장소 2회)가 더해집니다. 자료가 늘고 삭제된 자료가 있어도 횟수는 같습니다(자료 3개, 그중 삭제 1개로 확인). 변화가 있는 실행도 같은 만큼 줄어, 예를 들어 자료 하나를 받고 하나를 게시하는 실행은 34회 → 26회입니다. 팀의 첫 실행만 상태 행을 읽어 본 뒤 만들기 때문에 그 한 번은 `syncState`가 5회 → 6회입니다. GitHub 요청은 줄지 않습니다. 쓰는 팀의 1건은 조건부 요청이라 바뀌지 않았으면 304로 한도에 들지 않지만, 쓴 적 없는 팀의 1건은 브랜치가 없다는 404여서 조건부로 보낼 수 없고 매번 한도에 듭니다(팀당 시간당 60건).
+
+`readHead`는 업무 동기화(`sync-v1`)와 상태·구성원·설정 키 브랜치도 쓰므로 호출자를 모두 확인한 뒤 전 브랜치에 적용했습니다. `SyncService`의 `receive`·`initialize`·`status`·`peerReachable`·`upgrade`, `publishBranchJson`, `loadCheckpoint`, `MaintenanceService.verifyArchiveHead`, `GitCliTransport.publish`(push 실패 뒤 확인)·`check`, 연결 변경 요청(`node-routes.mjs`의 `PUT …/connection`), `setup-key-issuer.mjs`, `syncSlideFiles`, 운영 스크립트(`scripts/sync`·`scripts/transfer`·`scripts/performance`)는 모두 돌려받은 커밋 ID로 clone을 읽습니다. `FETCH_HEAD`·reflog·`refs/remotes/origin/*` 이름을 읽는 코드는 없고, bare clone이라 reflog도 없습니다. Git 2.50.1에서 같은 head를 다시 fetch하면 clone의 파일은 하나도 바뀌지 않고(`FETCH_HEAD`도 같은 내용) 원격 연결 한 번, clone 안의 연결성 검사(`rev-list`), `git maintenance run --auto`만 실행됐습니다. 접속·인증 실패는 같은 원격과 같은 자격 증명을 쓰는 `ls-remote`에서 그대로 납니다. `peerReachable`이 기대하는 '한 번 더 받기'는 원격 head가 움직였을 때의 fetch이고 이는 그대로입니다. 비교 대상을 커밋의 존재가 아니라 clone의 ref로 둔 이유는 push가 `refs/remotes/origin/*`를 옮기지 않기 때문입니다(실측). 이 사이트가 게시한 커밋은 다음 읽기의 fetch가 ref에 연결해야 Git 정리에서 지워지지 않습니다.
+
+남는 차이는 두 가지입니다. ① Git의 자동 정리 점검은 fetch가 끝날 때만 실행되므로 이제 head가 움직인 뒤에만 실행됩니다. clone에 객체가 늘어나는 때는 상대의 게시를 받을 때와 이 사이트가 후보 커밋을 만들 때이고, 둘 다 다음 읽기에서 head가 달라 fetch가 실행됩니다. 60초가 지나면 다시 게시하는 자기 상태 브랜치도 사내 주기(60초)마다 그렇습니다. 그래서 점검이 끊기지 않습니다. ② 사내 동기화 로그의 `git` 수준에서 변화 없는 주기에는 `fetch` 줄 대신 `rev-parse` 줄이 남습니다. `sync-integration.test.mjs`의 '모든 Git 명령 기록' 확인은 그 주기에 항상 실행되는 `ls-remote`를 보도록 바꿨습니다.
+
+한 실행 안에서 `syncFiles` 결과를 재사용하는 것도 검토했고, 하지 않았습니다. 판정용 읽기(head가 그대로일 때)와 받기 전 읽기(head가 움직였을 때)는 서로 다른 경로라 한 실행에서 함께 일어나지 않습니다. 게시 전 읽기는 받기가 행을 바꾼 뒤(`syncApply`·`syncMarkShared`·충돌 사본)이거나, 판정용 목록에 없는 조각 목록이 필요한 경우(이름·삭제만 바뀐 자료는 공유한 조각 목록을 그대로 게시)입니다. 변화가 있는 실행의 목록 읽기는 전후 모두 2회입니다.
+
+구현하지 않은 절감은 다음과 같습니다.
+
+- 슬라이드를 쓴 적 없는 팀의 확인 주기를 늘리는 것은 상대 사이트에서 올린 첫 자료의 도착을 늦추므로 제품 결정으로 남겼습니다. 그런 팀에 남는 비용은 1분마다 사내 `git ls-remote` 1개(원격 연결 1회), 외부 DB 왕복 3회와 한도에 드는 GitHub 요청 1건입니다.
+- 판정용 목록은 여전히 삭제된 자료를 포함한 팀의 모든 행을 읽습니다. 줄이려면 변경 표시 컬럼·부분 인덱스나 삭제 행 정리가 필요해 [DB 변경 지침](DATABASE_CHANGES.md)의 승인 대상입니다. SQL에서 거르는 방법은 판정 규칙을 SQL에 한 번 더 쓰게 되어 택하지 않았습니다.
+- 커서와 판정용 목록을 한 왕복으로 묶으면 외부가 4회 → 3회가 되지만, 두 저장소에 묶음 메서드를 더해 계약이 넓어지므로 하지 않았습니다.
+- 슬라이드 저장소의 연결 검사 2회는 사용자 요청 경로와 함께 쓰는 검사라 건드리지 않았습니다.
+
+검증: Node.js 22.23.1·PostgreSQL 17.11·Git 2.50.1에서 먼저 관련 검사를 실행했습니다(전체 검증은 아래). 새 검사 5건은 수정 전 소스(340938c)에 그대로 넣으면 모두 실패하고 수정 후 통과합니다.
+
+- `tests/sync/transport/sync-git-read-head.test.mjs`: 없는 브랜치(`ls-remote`만, null), 처음 읽기, 변화 없는 읽기(원격 연결은 `ls-remote`뿐이고 명령은 `ls-remote`·`rev-parse`), 상대의 게시와 자기 게시 뒤의 fetch, 브랜치별 비교, 없는 커밋을 가리키는 ref, 원격 접속 실패. 수정 전에는 변화 없는 읽기에서 `fetch`가 실행돼 실패합니다.
+- `tests/slides/slide-file-sync-external.test.mjs`: 실제 PostgreSQL의 팀 연결에서 보낸 SQL 문장과 GitHub 요청을 셉니다. 쓴 적 없는 팀 3회(`BEGIN`·`COMMIT`·`SELECT`, 상태 행을 만들지 않음), 쓰는 팀 4회(쓰기 없음, 판정용 목록에 `shared_chunks` 없음), 자료 3개(삭제 1개)에서도 같은 4회, 받고 게시하는 실행의 결과(받음 1·게시 1)와 양쪽 내용 일치. 수정 전에는 3회 자리에서 7회로 실패합니다.
+- `tests/slides/slide-file-sync.test.mjs`: 사내 실행의 Git 명령(쓴 적 없는 팀 `ls-remote`, 변화 없음 `ls-remote`·`rev-parse`, 상대의 게시는 fetch 뒤 수신)과, 다른 연결이 저장소 쓰기 잠금을 쥔 동안에도 변화 없는 실행이 끝나는지. 수정 전에는 `syncState`가 잠금을 기다리다 `database is locked`로 실패합니다.
+- `tests/support/slide-sync-fixture.mjs`의 계약 검사(사내끼리, 사내와 외부 PostgreSQL 각 1건): `syncState`가 같은 행을 돌려주는지, 공유·삭제·브랜치에만 있는 자료·게시 전 자료에서 조각 목록 없는 목록이 그 밖의 값은 전체 목록과 같은지.
+
+실행 결과(모두 실패·건너뜀 0): `tests/slides/*.test.mjs` 10개 파일 85건, `tests/sync/transport/*.test.mjs` 10개 파일 29건, `tests/sync/integration/*.test.mjs`와 `sync-v2-transition`·`sync-checkpoint`·`sync-maintenance`·`tests/site/team-site`·`worker-security` 27개 파일 155건, `tests/tooling/*.test.mjs` 6개 파일 28건 통과. `npm run check:structure`(805개 파일, 오류 0), `npm run check:architecture`(482개 모듈, 위반 0), `npm run build:edge`, 바꾼 코드 파일의 `prettier --check`, `git diff --check` 통과. 전후 횟수는 수정 전 소스를 `git archive`로 푼 사본과 작업 트리에서 같은 측정 스크립트로 쟀습니다.
+
+전체 검증(2026-11-26, 커밋 `3efe1af`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 967건 통과(실패·취소·skip 0, 고정 전환 호환 검사 포함), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. 화면 변경이 없어 브라우저 검사는 실행하지 않았습니다.
+## 2026-11-25 — 사내 서버가 슬라이드 자료를 처리하는 동안 다른 요청이 멈추던 문제 (#236)
+
+사내 서버는 Node 프로세스 하나가 모든 요청을 처리합니다. 슬라이드 팀 자료(최대 25MiB)의 읽기·쓰기·fsync와 SHA-256이 모두 동기 호출이어서, 자료 하나를 저장·조회·복사하는 동안 다른 사용자의 요청이 처리되지 않았습니다. 1분 주기 동기화도 같았습니다. 저장소 메서드가 동기라 `syncSlideFiles`의 `await`가 마이크로태스크만 넘겼고, 여러 자료를 게시하는 회차의 읽기·해시가 한 덩어리로 실행됐습니다.
+
+변경:
+
+- `SqliteSlideFileRepository`에서 바이트를 다루는 `read`·`create`·`replace`·`syncReadContent`·`syncApply`·`syncStage`·`syncStaged`·`syncUnstage`를 `node:fs/promises`와 `slideContentHash`(WebCrypto `subtle.digest`, Node에서는 스레드 풀)로 바꿨습니다. 해시는 이 한 가지 방식만 씁니다. `SlideFileService`가 요청 본문의 해시를 구할 때도 같은 함수를 씁니다. 서비스는 사내·외부 공용이지만 해시 값과 계약은 같고, 외부 저장소(`PostgresSlideFileRepository`·R2)와 동기화 코어(`slide-file-branch.mjs`)는 고치지 않았습니다.
+- 그대로인 것: 임시 파일에 쓰고 fsync한 뒤 이름을 바꾸는 순서, 파일이 제자리에 있은 뒤에만 행을 기록하는 순서, 조건부 저장(409)과 재시도 응답, revision 보관·정리, 받는 중인 조각, DB 스키마·파일 배치·파일 이름. migration과 배포 순서 제약은 없습니다.
+- SQLite 트랜잭션은 동기 그대로이고 안에서 `await`하지 않습니다. 바이트를 쓰는 사이에 다른 요청이 끼어들 수 있게 됐으므로, 트랜잭션이 전제하던 조건을 트랜잭션과 같은 동기 구간에서 다시 확인합니다(`#stored`).
+- 저장소 생성자에 `teamExists`를 추가했습니다(`server/app.mjs`가 업무 DB의 `teams`를 조회). 전에는 권한 확인부터 기록까지가 한 번에 실행돼 팀 영구 삭제와 겹칠 수 없었습니다.
+- 실패한 쓰기의 임시 파일은 지웁니다. 이름을 바꾸기 직전에 팀 폴더가 지워지는 경우가 새로 생겼기 때문입니다.
+
+겹칠 수 있게 된 동작과 처리:
+
+| 겹침 | 처리 |
+| --- | --- |
+| 같은 기준 revision의 두 저장 | 트랜잭션 안에서 revision을 다시 읽어 하나만 반영하고 다른 하나는 409. 두 내용의 파일은 모두 남음 |
+| 같은 요청 ID의 생성 두 번 | 쓰기 전 확인을 둘 다 통과할 수 있어 트랜잭션 안에서 다시 확인. 자료는 하나, 응답은 같음 |
+| 쓰는 중의 삭제·이름 변경 | 트랜잭션 안에서 자료를 다시 읽어 404, 제목을 함께 보낸 저장은 409 |
+| 저장과 동기화 수신 반영 | 먼저 기록된 쪽만 반영. 늦은 저장은 409, 늦은 반영은 `expect` 불일치로 반영하지 않고 다음 회차에 다시 판단 |
+| 저장과 동기화 게시 | 게시는 목록을 읽은 시점의 해시와 그 바이트를 함께 올리고, 그 뒤의 저장은 다음 회차에 게시(전송 대기 중 저장과 같은 기존 경로) |
+| 보관 정리와 같은 내용을 쓰는 저장 | 정리(`#prune`)는 참조 확인과 삭제가, 저장(`#stored`)은 파일 확인과 트랜잭션이 각각 한 동기 구간. 저장이 먼저 기록되면 정리가 파일을 남기고, 정리가 먼저면 저장이 파일을 다시 쓴 뒤 기록 |
+| 보관 정리와 읽기 | 읽기는 시작할 때의 revision과 그 바이트를 해시로 확인해 반환. 메타데이터를 읽은 뒤 파일을 열기 전에 그 자료가 11번 더 저장되면 파일이 없어 오류로 끝남(다른 내용을 반환하지 않으며 외부와 같은 동작). 게시 중의 `syncReadContent`도 같고, 그 회차는 실패로 기록된 뒤 다음 회차가 새 상태로 게시 |
+| 쓰는 중의 팀 영구 삭제 | 삭제는 동기 실행이므로 `#stored`의 `teamExists` 확인보다 앞이거나 뒤. 뒤이면 방금 쓴 파일까지 지우고 404 |
+
+로컬 측정(Apple M4 Pro, Node 22.23.1, APFS SSD, 임시 폴더, 25MiB 자료, 5회의 중앙값/최대). 값은 1ms 타이머가 실행되지 못한 가장 긴 간격, 곧 서버가 다른 요청을 처리하지 못한 가장 긴 구간입니다. 이 장비의 동기 SHA-256은 25MiB에 8.3ms로 빠른 편이어서 운영 서버의 절대값은 다를 수 있습니다.
+
+| 동작 | 변경 전 | 변경 후 |
+| --- | --- | --- |
+| 생성 (서비스 호출) | 25.2 / 207.4ms | 2.5 / 3.1ms |
+| 저장 (서비스 호출) | 25.3 / 27.3ms | 1.9 / 2.6ms |
+| 조회 (서비스 호출) | 12.2 / 12.7ms | 1.8 / 2.0ms |
+| 사본 (서비스 호출) | 19.7 / 22.4ms | 2.2 / 3.2ms |
+| 동기화 게시 4건 × 25MiB (3회) | 80.3 / 81.2ms | 11.1 / 11.3ms |
+| 동기화 수신 4건 × 25MiB (3회) | 33.8 / 34.9ms | 11.2 / 12.4ms |
+| 생성 (HTTP, 서버 프로세스) | 25.6 / 30.3ms | 2.1 / 5.6ms |
+| 저장 (HTTP) | 27.8 / 30.4ms | 2.2 / 4.0ms |
+| 조회 (HTTP) | 15.9 / 21.9ms | 3.3 / 4.8ms |
+| 사본 (HTTP) | 21.7 / 22.4ms | 2.5 / 2.6ms |
+
+변경 전 생성의 최대 207.4ms는 저장소를 처음 만드는 첫 회입니다. 동기화는 메모리 전송 대역으로 측정해 Git 실행 시간은 들어 있지 않습니다. 요청 하나의 전체 시간은 거의 같습니다(HTTP 중앙값: 생성 40.0 → 43.3ms, 저장 39.5 → 41.3ms, 조회 79.2 → 81.1ms, 사본 22.5 → 24.4ms). 동기화 회차에 남은 가장 긴 구간은 공용 코어의 동기 해시입니다. 같은 장비에서 게시의 `slideChunks(25MiB)`가 8.5ms, 수신의 조립과 `digest(전체)`가 9.5ms, 조각 하나의 `digest`가 1.4ms였습니다. 자료 하나의 SHA-256 시간에 비례하므로 SHA 명령어가 없는 CPU에서는 50ms를 넘을 수 있습니다. 그때는 두 곳을 `slideContentHash`로 바꾸면 되지만 `slide-file-branch.mjs`는 다른 변경(#234)이 진행 중이라 이번에는 고치지 않았습니다. 보관 정리의 파일 삭제(`rmSync`)는 25MiB 파일 하나에 0.6ms였습니다.
+
+검증: `tests/slides/slide-file-concurrency.test.mjs` 8건을 추가했습니다. 25MiB 생성·저장·조회·사본과 동기화 게시·수신(3건 × 25MiB)이 끝나기 전에 이벤트 루프가 돌고 뒤에 온 목록 요청이 먼저 응답받는지 확인합니다. 시간 기준은 없습니다. 변경 전 코드에서는 이벤트 루프가 한 번도 돌지 않아 두 검사가 실패합니다(변경 전 소스에 이 파일만 넣어 확인, 변경 후 관측은 692~5,092회). 나머지 6건은 위 표의 겹침입니다. `#stored`의 다시 확인을 뺀 구현으로 바꾸면 보관 정리 검사가 5회 중 5회, 팀 삭제 검사가 매번 실패하고, 생성의 트랜잭션 안 확인을 빼면 같은 요청 ID 검사가 UNIQUE 오류로 실패하는 것을 확인했습니다. 이 파일은 15회 반복과 CPU 부하(14개 프로세스) 아래 5회 반복에서 모두 통과했습니다. 기존 검사는 저장소를 동기로 부르던 곳에 `await`만 더했습니다(`slide-file-storage-contract`, `slide-file-backup`).
+
+실행 결과(`TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin`, `node --test --test-concurrency=1`): `tests/slides/*.test.mjs` 11개 파일 89건 통과(실패·건너뜀 0), 문서 링크·백업·팀 삭제·import 경계 8개 파일(`document-storage-contract`, `document-link-paths`, `storage-import-boundaries`, `transfer/backup`, `control-storage-contract`, `edge-calendar-round-trips`, `sync-team-availability`, `site/api`) 77건 통과. `npm run check:structure`(805개 파일, 오류 0), `npm run check:architecture`(482개 모듈, 위반 0), 바뀐 소스의 `prettier --check`, `git diff --check` 통과.
+
+전체 검증(2026-11-26, 커밋 `307ee8e`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 970건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `tests/browser/slides`·`document-links` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 165건 통과.
+
+리뷰 반영(2026-11-26, PR #245):
+
+- 다 쓴 파일을 옮기기 직전에 팀이 삭제되면 폴더가 없어 `rename`이 ENOENT로 실패하고 500으로 끝났습니다. 쓰기가 실패하면 팀 확인을 다시 거치게 해, 삭제된 팀은 같은 정리와 404로 끝나고 팀이 그대로면 쓰기 오류를 그대로 냅니다.
+- 동기화가 받아 두는 조각(`syncStage`)이 팀 삭제 뒤 `staging/<팀>`을 다시 만들어 조각이 남을 수 있었습니다. 조각을 둔 뒤 팀이 없으면 `removeTeam`으로 다시 지웁니다. 조각 폴더만 지우지 않는 것은 그 회차가 동기화 기록 행도 다시 만들었을 수 있기 때문입니다.
+- 동기화 코어(`slide-file-branch.mjs`)에 남아 있던 자료 바이트의 동기 해시 세 곳(게시의 `slideChunks`, 받은 조각의 확인, 조립한 전체의 확인)을 `slideContentHash`로 바꿨습니다. 해시 값과 브랜치 형식은 같고 `slideChunks`는 async가 됐습니다. 바이트가 아닌 값(버전 키, 충돌 사본 ID)은 `digest` 그대로입니다.
+
+같은 장비·같은 방식의 로컬 측정(25MiB 4건, 3회의 중앙값/최대)에서 동기화 한 회차의 가장 긴 구간은 게시 9.0/9.1ms → 2.0/2.2ms, 수신 9.7/10.1ms → 2.3/2.8ms가 됐습니다. 회차 전체 시간은 같습니다(게시 80.2 → 80.3ms, 수신 159.1 → 160.0ms). 검사 2건을 더해 `slide-file-concurrency`는 10건입니다. 폴더를 만든 뒤 옮기기 직전의 순간은 `fs/promises.rename`을 감싸 재현하며, 반영 전 코드에서는 각각 ENOENT와 남은 조각 폴더로 실패합니다. 실행 결과: `tests/slides/*.test.mjs` 11개 파일 91건 통과(실패·건너뜀 0), `tests/tooling/storage-import-boundaries.test.mjs` 2건 통과, `npm run check:structure`(805개 파일, 오류 0), `npm run check:architecture`(482개 모듈, 위반 0), `npm run build:edge`, 바뀐 소스의 `prettier --check`, `git diff --check` 통과. 전체 `npm test`와 브라우저 검사는 이 반영 뒤 다시 실행하지 않았습니다.
+
+리뷰 반영 뒤 전체 검증(2026-11-26, 커밋 `33ac9d7`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 972건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `tests/browser/slides`·`document-links` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 165건 통과.
+## 2026-11-25 — 같은 시각의 캘린더 알림이 열린 탭을 알림 수만큼 다시 읽게 하던 문제 (#237)
+
+원인: 사내 서버의 알림 점검(`server/calendar/calendar-reminder-push.mjs`의 `run()`, 30초 주기)은 알림 한 건을 보내거나 닫을 때마다 `onSent`를 불렀고, `server/app.mjs`가 이를 팀 스트림 `team:<팀>`(`/api/teams/:id/events`) 이벤트로 연결합니다. 이 스트림은 캘린더(`Calendar.tsx`)뿐 아니라 연간 업무(`App.tsx`의 `useResourceSync` → `useTaskData`의 연간 업무 전체·`/bootstrap` 조회)와 사본 목록(`SheetTabs.tsx`)도 듣습니다. 화면은 150ms 안이나 조회 중에 온 이벤트만 묶고(`useResourceSync`), 점검은 알림 사이에 허브 응답을 기다립니다. 그래서 같은 시각(예: 09:00)에 알림이 K건이면 그 팀의 열린 탭마다 최대 K번 다시 읽었습니다. 사내의 업무 조회는 동기 SQLite입니다.
+
+변경: `run()`이 점검 한 번에서 알림을 기록한 팀을 모아 점검이 끝날 때 팀마다 한 번만 `onSent`를 부릅니다. 뒤 알림을 처리하다 오류로 점검이 중간에 끝나도 `finally`에서 그때까지 기록한 팀을 알립니다. 허브가 한 건도 받지 않아 다음 점검에 다시 시도할 알림만 있는 팀은 알리지 않습니다. 발송 대상·10분 유예·재시도·`(일정, 알림 시각)`당 한 번 기록은 그대로이고 DB 스키마·저장 형식·API 변경은 없습니다. 알림 결과가 열린 캘린더에 반영되는 시점은 "알림마다 바로"에서 "그 점검의 마지막 알림을 처리한 뒤"로 바뀝니다. 차이는 같은 점검에 남은 허브 요청 시간(요청당 제한 5초)입니다. 외부(`worker/`)에는 알림 발송이 없고 `src/`·`shared/`·`worker/`를 바꾸지 않았으므로 외부 동작은 그대로입니다.
+
+하지 않은 것: 이슈의 두 번째 요구(알림 결과를 표시하지 않는 연간 업무·사본 목록은 다시 읽지 않기)는 넣지 않았습니다. 캘린더만 듣는 더 좁은 키가 지금 구조에 없기 때문입니다. 사내 `documentEvents`의 키는 `team:<팀>`, `sheet-clone:<사본>`, 문서 목록 `list:<경로>`, 문서 본문(`task:…`·`calendar:<일정>` 등)이고 캘린더·연간 업무·사본 목록은 모두 같은 `/teams/<팀>` 경로를 구독합니다. 일반 일정 수정도 `team:<팀>`만 냅니다(`sqlite-calendar.mjs`의 `committedResources`). 같은 경로의 구독은 탭이 달라도 SharedWorker가 채널 하나로 합치므로(`event-stream-broker.ts`) 서버가 그 스트림에서 캘린더 탭만 골라 보낼 수 없습니다. `calendar:<일정>`은 일정 본문 편집기의 스냅샷 스트림이라 카드의 종에 쓸 수 없습니다.
+
+새 경로(`/api/calendar/teams/:teamId/reminders/events`, 키 `calendar-reminders:<팀>`)를 더하고 캘린더가 사내에서만 하나 더 구독하는 안을 만들어 확인했습니다(커밋하지 않음). 알림 점검 뒤 열린 캘린더의 종이 바뀌고 같은 팀 연간 업무 탭의 사본 목록 재조회는 0회였지만 두 가지가 걸립니다. ① `useResourceSync`는 구독마다 연결 직후 한 번 다시 읽으므로, 캘린더의 구독이 둘이 되면 캘린더를 열 때 다시 읽기가 한 번 더 생깁니다. 로컬 검증 서버에서 캘린더를 5번 열어 2.5초 동안의 일정 조회 요청 수를 셌습니다. 구독 하나(지금)는 Chromium 4·4·4·4·4, Firefox 4·3·4·4·4, WebKit 3·3·4·4·4였고, 구독 둘은 Chromium 4·6·4·4·4(6일 때 2건 취소), Firefox 6·4·6·6·6, WebKit 3·4·3·4·3이었습니다. 알림을 쓰지 않는 팀까지 캘린더를 열 때마다 조회가 느는 변경이라, 조회를 줄이려는 이 수정에는 맞지 않습니다. 이를 없애려면 한 화면이 스트림 둘을 한 번의 다시 읽기로 묶어 듣도록 `useResourceSync`(연간 업무·사본 목록·문서 목록이 함께 쓰는 훅)의 계약을 바꿔야 합니다. ② 외부의 이벤트 경로(`worker/events/events.mjs`)는 등록되지 않은 구독 경로가 하나라도 있으면 묶음 요청 전체를 400으로 거절합니다(사내와 달리 `rejectedIds`가 없어 다른 스트림도 함께 끊김). 그래서 공용 화면 코드가 사이트를 가려 구독하거나 외부에도 같은 경로를 등록해야 합니다. 일정·태그·알림 결과처럼 캘린더만 표시하는 변경을 전용 스트림으로 나누는 일은 두 사이트의 구독 경로와 화면 훅을 함께 정해야 하는 별도 설계로 남깁니다. 이번 수정 뒤 알림 점검 한 번이 내는 팀 이벤트는 일정 수정 한 건과 같은 1회입니다.
+
+검증(기준 `origin/main` `340938c`, Node.js 22.23.1): `node --test --test-concurrency=1`로 `tests/calendar/calendar-reminder-push.test.mjs` 13건(신규 3건), `tests/calendar/calendar.test.mjs` 42건(신규 1건), `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin`으로 `calendar-storage-contract` 2건·`edge-calendar-round-trips` 2건이 모두 통과했습니다(실패·skip 0). 신규 검사는 ① 한 팀의 알림 4건(3건 발송·1건 받을 PC 없음)이 한 점검에 걸리면 알림 1회이고 그때 4건이 모두 기록되어 있음, ② 두 팀의 알림이 번갈아 걸리면 팀마다 1회이고 허브가 받지 않은 점검은 0회, ③ 두 번째 알림의 기록이 실패해 점검이 중간에 끝나도 먼저 기록한 팀은 알림, ④ 사내 HTTP·SSE에서 알림 3건을 닫은 점검 뒤 팀 스트림의 이벤트가 1건임을 확인합니다. 수정 전 코드에서 ①·②는 알림이 4회여서, ④는 두 번째 알림 이벤트가 먼저 와서 실패했습니다. ③은 수정 전(알림마다 바로 알림)에도 통과하며 `finally`를 뺀 구현에서 실패하는 것을 확인했습니다. `npm run check:structure`(804개 파일, 오류 0), `npm run check:architecture`(482개 모듈, 위반 0), 변경 코드의 Prettier, `git diff --check`, `npm run build`를 통과했고 `calendar-reminders.spec.ts`를 Chromium에서 4건 통과했습니다. 실제 다바다허브 발송은 실행하지 않았습니다.
+
+전체 검증(2026-11-26, 커밋 `9176c9b`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 966건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `calendar-reminders`·`calendar-improvements` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 36건 통과.
+## 2026-11-25 — 캘린더 목록의 알림 발송 기록 조회와 슬라이드를 열 때의 바이트 전달 (#242)
+
+서로 무관한 작은 성능 수정 두 건입니다. DB 스키마·인덱스·저장 형식·API 응답은 바뀌지 않았습니다.
+
+**캘린더 목록의 발송 기록 조회(사내).** 사내 캘린더 목록은 시작 시각과 알림이 있는 일정마다 `calendar_reminder_sends`를 한 번씩 따로 조회해 `reminderStatus`를 계산했습니다(`sqlite-calendar.mjs`의 `visibleEntry`). `visibleEntry`를 부르는 곳은 목록 `listEntries`(여러 구성원 조회 `listMemberEntries`는 구성원마다 이를 호출)와 단건 `summary()`(일정 생성·수정·복제·조회 등 11곳) 둘이고, 둘 다 `entryColumns`로 일정 행을 읽습니다. 그래서 태그 목록과 같은 방식으로 발송 기록을 일정 행의 열(`sentReminders`, 알림 시각별 수신자 수의 JSON)로 함께 읽습니다. 시각이나 알림이 없는 행은 `CASE`로 조회를 건너뜁니다. 호출하는 쪽은 바꾸지 않았고, 상태 판정(`calendarReminderStatus`)·응답 필드·정렬은 그대로입니다. 조회는 기존 기본 키 `(entry_id, fire_at)`를 씁니다. 외부는 발송 기록이 없어 항상 `null`이므로 바꾸지 않았습니다.
+
+요청 하나가 실행한 SQL 수(회귀 검사와 같은 구성: 한 구성원의 10월 조회, 일정 7건 중 알림이 있는 5건):
+
+| 요청 | 수정 전 | 수정 후 |
+| --- | --- | --- |
+| `GET /calendar` | 17회(발송 기록 조회 5회) | 12회(발송 기록은 일정 목록 SQL 1회에 포함) |
+| 같은 요청, 알림 일정 5건 추가 | 22회(발송 기록 조회 10회) | 12회 |
+| `GET /calendar/members`(구성원 2명) | 26회 | 21회 |
+
+단건 조회도 알림이 있는 일정에서 발송 기록 조회 1회가 없어집니다. 응답 시간은 거의 같습니다. 사내 SQLite는 같은 프로세스의 동기 호출이라 조회 한 번의 비용이 작기 때문입니다. 임시 메모리 DB에서 일정 2,000건의 목록 SQL과 상태 계산용 자료 구성만 잰 중앙값은 다음과 같습니다(두 번 실행한 범위).
+
+| 알림이 있는 일정 | 수정 전 | 채택(조건부 열) | 조건 없는 열 | `IN (json_each)` 1회 추가 조회 |
+| --- | --- | --- | --- | --- |
+| 2,000건 모두 | 5.6~6.3ms | 4.9~5.4ms | 5.1~5.2ms | 6.2~6.6ms |
+| 400건 | 3.4ms | 3.4~3.5ms | 3.6~3.7ms | 3.6ms |
+| 1건 | 2.7~2.8ms | 2.8~2.9ms | 3.0ms | 2.9ms |
+
+줄어든 것은 SQL 실행 횟수이며, 흔한 경우(알림 일정이 적음)의 시간 차이는 측정 오차 수준입니다. 세 방식 중 흔한 경우에 수정 전과 차이가 가장 작은 조건부 열을 골랐습니다.
+
+**슬라이드를 열 때의 바이트 전달(사내·외부 공통 화면).** 슬라이드 화면(부모)은 자료를 열 때 서버에서 읽은 바이트(최대 25MB)를 편집기 프레임에 `postMessage`로 보내면서 transfer 목록을 주지 않아 전체를 구조화 복제했습니다. 부모가 프레임에 보내는 메시지를 모두 확인했습니다.
+
+- 바이트를 싣는 것은 `SlideEditorFrame.openFile`의 `open` 요청 하나입니다. 처음 열기(`begin`)와 충돌 창의 **내 변경을 버리고 최신 자료 열기**가 이 함수를 씁니다. 열 때마다 `readSlideFile`로 새 버퍼를 읽고, 보낸 뒤에는 응답의 `outcome`만 쓰며, 그 버퍼를 다른 곳에 넘기지 않습니다. 열지 못해 다시 열 때에도 새로 읽습니다.
+- `new`·`state`·`rename`·`save`·`prepare-leave` 요청과, 프레임 요청에 대한 응답(저장 대상, 저장할 이름, 공유 주소, 공유 본문 문자열)에는 바이트가 없습니다.
+- 썸네일용 보관(`thumbnails.remember`)·저장 재시도(`withRetry`)·생성 재시도 비교(`unconfirmedCreate`)·충돌 사본 저장이 쓰는 바이트는 프레임이 저장 때 보낸 다른 버퍼이고, 부모는 이를 프레임에 되돌려 보내지 않습니다.
+
+그래서 `SlideFrameBridge.request`에 transfer 목록 인자를 더하고 `open`만 방금 읽은 버퍼를 옮깁니다. 보낸 뒤 부모의 버퍼는 길이 0입니다.
+
+프레임 안에서 도는 코드(`scripts/canvaslide/frame/`)와 `shared/slides/slide-frame-protocol.js`는 내용이 고정 배포본의 빌드 ID에 들어가므로 바꾸지 않았습니다(빌드 ID `0de6fc3b40a8-60971cea6f49` 그대로). 따라서 다음 두 복사는 남아 있습니다.
+
+- 프레임 → 부모의 저장 바이트(`save`·`create`). 프레임의 `requestHost`는 이미 transfer 인자를 받으므로, 편집기 빌드를 새로 올릴 때 `slide-frame-file-access.ts`의 `storeTeamFile`이 `[bytes.buffer]`를 넘기면 됩니다. 원본 코덱이 인코딩 결과를 따로 보관하지 않는지는 그때 확인해야 합니다. 부모는 받은 바이트를 썸네일·재시도에 계속 쓰지만, 옮겨 받은 버퍼는 부모 소유이므로 영향이 없습니다.
+- 프레임이 받은 바이트를 디코딩 전에 한 번 더 복사하는 `slide-frame-main.ts`의 `new Uint8Array(request.bytes)`.
+
+검증(Node.js 22.23.1, PostgreSQL 17.11):
+
+- `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin node --test --test-concurrency=1 tests/calendar/*.test.mjs` 56건 통과(실패·건너뜀 0). 새 검사는 알림 없음·시각만 있음·대기·일부 전송·모두 전송·받은 사람 없음·보내지 못함의 상태, 응답 필드 목록, 단건·여러 구성원 조회와의 일치, 알림 일정을 더해도 같은 SQL 수를 확인합니다. 수정 전 코드에서는 발송 기록 조회가 5회라 실패합니다(`5 !== 1`).
+- `npm run build` 통과.
+- `npx playwright test tests/browser/slides tests/browser/calendar/calendar-reminders.spec.ts --project=chromium` 31건 통과(슬라이드 27건, 알림 4건). 새 슬라이드 검사는 연 뒤 부모가 읽은 버퍼가 비었는지와, 저장·충돌 뒤 최신 자료 다시 열기·다시 저장·카드 썸네일·다시 열기를 확인합니다. 수정 전 빌드에서는 부모가 17,125바이트 버퍼를 그대로 갖고 있어 실패합니다. Firefox·WebKit에서는 새 검사와 충돌 사본·5.9MB 자료 검사만 실행해 6건 통과했습니다.
+- `npm run check:structure`(804개 파일, 오류 0), `npm run check:architecture`(482개 모듈, 위반 0), 변경 파일 `prettier --check`, `git diff --check` 통과.
+
+전체 검증(2026-11-26, 커밋 `63e8007`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 963건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `tests/browser/slides`·`calendar-reminders`·`calendar-improvements` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 117건 통과.
+## 2026-11-25 — CanvaSlide 목록의 썸네일 조회를 함께 보내고 다시 묻지 않기
+
+이슈 #238의 브라우저 쪽 수정입니다. 카드형 목록은 화면에 보이는 카드마다 `GET /api/teams/:teamId/slides/:fileId/thumbnail`을 보냅니다. 수정 전에는 세 가지가 겹쳐 요청이 많고 느렸습니다. ① 모든 카드가 한 줄로 이어져 앞 카드가 끝나야 다음 카드가 조회했고, 썸네일을 새로 만드는 카드(원본 전체 내려받기와 메인 스레드 렌더링)가 뒤의 카드를 모두 막았습니다. ② 받은 이미지를 `SlidesWorkspace`가 화면에 있는 동안만 보관해, 다른 화면에 다녀오거나 팀을 바꾸거나 슬라이드 링크를 열 때마다 보이는 카드를 모두 다시 조회했습니다. ③ 카드의 조회가 파일 객체에 묶여 있어, 가져오기·저장·목록으로 돌아오기로 목록을 다시 읽으면 내용이 같아도 진행 중인 조회를 취소하고 다시 줄을 섰습니다.
+
+`src/slides/slide-thumbnails.ts`와 `SlideCardThumbnail.tsx`를 고쳤고 `SlidesWorkspace.tsx`는 보관소를 만드는 한 줄에 계정 ID만 넘깁니다.
+
+- **조회는 네 건까지 함께, 생성은 하나씩.** 사내 서버는 HTTP/1.1이라 브라우저가 호스트당 연결을 6개까지 엽니다. 이벤트 스트림 1개와 사용자의 다음 동작(목록·열기·저장) 1개를 남겨 4로 정했습니다. 외부 사이트는 조회마다 Worker 호출과 팀 권한·파일 확인이 있어 같은 값으로 한꺼번에 몰리지 않게 합니다. 서버에 썸네일이 없어 새로 만드는 일은 25MB까지의 내려받기와 렌더링이므로 이전처럼 한 번에 하나이고, 생성을 기다리는 카드는 조회 자리를 내놓습니다.
+- **같은 내용은 한 건.** 같은 팀에서 콘텐츠 해시가 같은 카드(다른 이름으로 저장한 사본 등)는 차례로 처리해 첫 응답을 함께 씁니다. 함께 조회하게 되면서 내용당 한 건이던 이전 요청 수가 늘지 않게 한 것입니다.
+- **이미지 보관은 페이지 단위.** 계정별로 최대 96장을 팀·콘텐츠 해시 키로 보관하고, 최근에 쓴 것을 남깁니다. 조회·생성 한도도 페이지 단위라 화면을 떠나기 전에 시작한 렌더링과 겹치지 않습니다.
+- **목록 갱신에도 조회 유지.** 카드는 팀·파일 ID·콘텐츠 해시·쓰기 권한이 바뀔 때만 조회를 다시 시작합니다. 콘텐츠 해시가 바뀐 카드는 새 이미지를 받습니다.
+- **직전 저장·가져오기의 바이트.** 이전처럼 `SlidesWorkspace` 방문 단위 객체가 가지며, 그 썸네일이 준비되거나(보관한 이미지를 쓴 경우 포함) 다음 저장·가져오기가 오면 버리고, 늦어도 CanvaSlide 화면을 벗어나면 버립니다. 페이지 단위로 남는 것은 이미지 문자열뿐입니다.
+
+보관 범위는 로그아웃 방식을 확인해 정했습니다. 사내 사이트는 `logout()` 뒤 `setBoot(null)`로 로그인 화면만 바꾸고 페이지를 유지하므로, 같은 페이지에서 다른 계정이 로그인할 수 있습니다. 외부 사이트는 `/cdn-cgi/access/logout`으로 이동해 페이지가 바뀝니다. 그래서 보관소는 계정 ID 하나에만 속하고, 다른 계정이 CanvaSlide를 열면 앞 계정의 이미지를 통째로 버립니다. 보관한 이미지는 서버가 그 계정에 방금 내려준 목록의 팀·콘텐츠 해시에만 표시하며, 목록과 썸네일 조회는 서버에서 같은 팀 읽기 권한을 확인합니다. 따라서 팀에서 빠진 계정은 목록을 받지 못해 보관분도 보지 못합니다. 편집기 배포 경로는 키에 넣지 않았습니다. 서버 캐시도 배포본을 구분하지 않고, 경로는 새로 그릴 때만 씁니다. 서버·API·응답 헤더·저장 형식과 화면은 바뀌지 않았습니다. 서버에 썸네일을 영속 저장하는 일은 [DB 변경 지침](DATABASE_CHANGES.md)의 승인이 필요해 이 변경에 넣지 않았습니다.
+
+같은 검사 서버에서 서버에 썸네일이 있는 서로 다른 자료 8장으로 수정 전·후 빌드의 요청 수를 셌습니다(Chromium, 임시 측정 검사).
+
+| 상황 | 수정 전 | 수정 후 |
+| --- | --- | --- |
+| 첫 방문 | 8건, 한 번에 1건 | 8건, 한 번에 4건 |
+| 다른 화면에 다녀옴 | 8건 | 0건 |
+| 이미지를 다 받은 뒤 목록 갱신 | 0건 | 0건 |
+| 조회 중 목록 갱신(카드 10장, 내용 9종) | 10건(진행 중이던 1건을 취소하고 다시 요청) | 9건 |
+
+새로고침하면 보관분이 비워져 첫 방문과 같습니다. 실제 외부 배포에서의 시간은 재지 않았습니다.
+
+검증(Node.js 22.23.1): `tests/browser/slides/slide-team-files.spec.ts`에 검사 9건을 추가했습니다. 다른 화면·편집기·다른 팀에 다녀온 뒤 요청 0건, 조회 중 목록 갱신에 재요청 없음, 동시에 4건(응답을 붙잡아 확인), 조회 중 떠났다 돌아와도 자리가 남음, 생성 중에도 다른 카드 조회·생성은 하나씩, 바뀐 자료의 새 이미지, 같은 내용 한 건, 가져온 자료는 원본을 내려받지 않음, 로그아웃한 페이지의 다른 계정은 서버에서 다시 받음입니다. 수정 전 빌드(Chromium)에서는 당시 있던 7건 중 6건이 실패했고(요청 3건·2건, 동시 1건, 둘째 카드가 조회하지 못해 시간 초과 등) 계정 검사만 통과했습니다. 나중에 더한 두 건(같은 내용, 가져오기)은 수정 전 빌드에서 실행하지 않았습니다. 같은 내용 차례 처리와 계정 범위를 각각 뺀 빌드에서는 해당 검사가 실패했습니다(요청 3건, 다른 계정이 서버에 묻지 않음). 수정 후 `npm run build` 통과, `npx playwright test tests/browser/slides --project=chromium` 35건 통과(기존 26건 포함), 새 검사 9건은 Firefox·WebKit에서 18건 통과했습니다. `npm run check:structure`(804개 파일, 오류 0), `npm run check:architecture`(482개 모듈, 위반 0), 바뀐 소스·검사의 `prettier --check`, `git diff --check`도 통과했습니다.
+
+전체 검증(2026-11-26, 커밋 `4f3eaf0`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 962건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `tests/browser/slides`·`workspace-navigation` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 123건 통과.
+## 2026-11-25 — 슬라이드 화면 코드를 처음 열 때 받기 (#241)
+
+`App.tsx`가 `SlidesWorkspace`를 정적으로 가져오고 `SlidesWorkspace.tsx`가 `slides.css`를 가져와, 슬라이드를 한 번도 열지 않는 사람도 자료 목록·편집기 프레임 코드와 스타일을 첫 화면 묶음으로 받았습니다. 편집기 자체는 이전에도 프레임 안에서 따로 받았고 이 변경과 관계없습니다.
+
+`App`은 `SlidesWorkspaceLoader`를 쓰고, 이 파일이 `lazy`·`<Suspense>`·오류 경계로 `SlidesWorkspace`를 `/slides`를 처음 열 때 불러옵니다(`Panels.tsx`의 `TaskDocumentPanel`, `EmojiPicker.tsx`의 `EmojiPickerPanel`과 같은 방식). 상단 메뉴 아이콘과 가오리 로딩 표시는 앱과 함께 받습니다. 화면 틀 `.slides-board`와 가오리 규칙을 `slides.css`에서 `slide-loading-state.css`로 옮겨(복제 없음) `SlideLoadingState.tsx`가 가져오고, 화면이 준비되기 전의 모습을 `SlidesLoadingBoard`로 묶어 코드를 받는 동안과 화면이 자료 목록을 읽는 동안 같은 마크업을 씁니다.
+
+`useWorkspaceNavigation`은 이동 전에 `slidesRef.current.leave()`를 부르고 `ref`가 없으면 그냥 이동합니다. 코드를 받는 동안 `ref`가 비면 `leave()`가 하던 주소 정리가 빠져, `/slides?file=…`에서 다른 화면으로 가면 `/?file=…`이 남고 나중에 슬라이드로 돌아올 때 그 자료가 다시 열리며, 팀을 바꾸면 새 팀에서 그 자료를 찾습니다. 그래서 `<Suspense>`의 대체 화면과 오류 화면을 같은 `ref`로 `leave()`에 답하는 `SlidesWorkspacePending`으로 두었습니다. 열린 자료가 없을 때의 `SlidesWorkspace.leave()`와 같은 규칙이며, 주소 읽기·쓰기와 다른 팀 공유 링크 판정은 두 곳이 함께 쓰는 `slide-address.ts`로 옮겼습니다. `useWorkspaceNavigation`과 `App`의 이동 코드는 바꾸지 않았습니다.
+
+늦게 받는 `slides.css`는 `styles.css` 뒤에 적용됩니다. 이전 묶음에서는 `slides.css`가 앞이라 선택자 무게가 같으면 `styles.css`가 이겼습니다. 변경 전·후 빌드의 계산 스타일을 비교해 순서에 기대던 곳 두 군데를 찾았습니다. `.slide-editor-bar > .document-link-copy`의 `padding: 5px`와 600px 이하 `.slide-editor-bar > .button`의 `padding: 0`은 `styles.css`의 `.slide-editor-bar > .button`(`padding: 3px 8px`)에 져서 적용된 적이 없었고, 순서가 바뀌면 적용되어 링크 복사 버튼 폭이 32px에서 26px로, 600px 이하 목록·링크 복사 버튼의 여백이 0으로 바뀝니다. 화면을 그대로 두려고 적용된 적 없는 두 선언을 지우고 600px 이하의 `padding: 0`은 실제로 적용되던 파일 버튼(`.slide-editor-bar > .heading-actions > .button`)에만 남겼습니다. 원래 의도로 보이는 여백(5px·0)을 살리는 것은 화면 변경이므로 넣지 않았습니다.
+
+`npm run build`(Vite 8.3.4)가 출력한 크기입니다.
+
+| 파일 | 변경 전 | 변경 후 | 차이 |
+| --- | --- | --- | --- |
+| `index-*.js` (진입) | 1,286.53 kB · gzip 397.53 kB | 1,246.67 kB · gzip 385.65 kB | −39.86 kB · gzip −11.88 kB |
+| `index-*.css` (진입) | 712.83 kB · gzip 203.53 kB | 701.99 kB · gzip 197.34 kB | −10.84 kB · gzip −6.19 kB |
+| `LoadingState-*.js` (앱과 함께, 새 공용 묶음) | 없음 | 9.17 kB · gzip 3.76 kB | |
+| `createLucideIcon-*.js` (앱과 함께, 새 공용 묶음) | 없음 | 3.50 kB · gzip 1.69 kB | |
+| `SlidesWorkspace-*.js` (슬라이드를 처음 열 때) | 없음 | 29.10 kB · gzip 9.97 kB | |
+| `SlidesWorkspace-*.css` (슬라이드를 처음 열 때) | 없음 | 10.86 kB · gzip 5.92 kB | |
+| 앱과 함께 받는 JS 합계 | 1,295.50 kB · gzip 401.15 kB | 1,268.31 kB · gzip 394.72 kB | −27.19 kB · gzip −6.43 kB |
+| 앱과 함께 받는 JS·CSS 합계 | 2,008.33 kB · gzip 604.68 kB | 1,970.30 kB · gzip 592.06 kB | −38.03 kB · gzip −12.62 kB |
+
+JS 합계는 `index`·`react`(7.87 kB)·`rolldown-runtime`(1.10 kB)과 새 공용 묶음 2개입니다. JS 묶음은 98개에서 101개, CSS는 2개에서 3개가 됐습니다. 진입 묶음에서 빠진 39.86 kB 가운데 12.67 kB는 슬라이드 코드가 아니라 Rolldown이 진입 묶음 밖으로 나눈 기존 공용 모듈(`react-dom`·`Brand`·`LoadingState`·`ErrorNote`, JSX 런타임·`createLucideIcon`)이며 `index.html`의 `modulepreload`로 앱과 함께 받습니다. 원래 코드에 `App`의 `lazy(() => import("../slides/SlidesWorkspace"))`만 넣어도 같은 두 묶음이 생기고, `ui/LoadingState` 하나만 가져오는 빈 지연 모듈로도 JSX 런타임 묶음이 생기므로 이 변경의 파일 배치와는 관계없습니다. 묶음 설정(`vite.config.ts`)은 바꾸지 않았습니다.
+
+검증:
+
+- 화면 변화: 저장소에 넣지 않은 일회성 Playwright 스크립트로 변경 전·후 빌드에서 슬라이드 화면 44개 상태(로딩 3종, 빈 목록, 카드형·목록형, 편집 화면과 제목 포커스, 삭제·이동 확인·이름 입력 창, 새 자료, 편집기 배포본 없음, 다른 팀 공유 링크를 320~1366px 폭으로)의 모든 요소와 `::before`·`::after` 계산 스타일 5,531건을 비교했습니다. 같은 빌드를 두 번 잰 차이는 0건, 여백 선언을 지우기 전에는 36건(모두 위 두 규칙), 지운 뒤에는 0건입니다. 날갯짓 애니메이션 값도 같습니다. 이전 묶음에서 `slides.css` 뒤에 있던 선택자 1,413개와 늦게 받는 선택자 72개를 무게·속성으로 맞춰 본 후보 26건은 같은 요소에 걸리지 않거나(`:root`, 체크박스 등), `!important`라 순서와 무관하거나(700px 이하 입력칸 글자 크기), `table-layout: fixed`라 첫 행의 `th`만 폭을 정하는 `.settings-table td:last-child`였습니다.
+- 코드를 받는 동안의 동작: 같은 방식의 일회성 검사 8건(화면을 열기 전에는 묶음을 요청하지 않음, `/slides?file=…`와 `/links/slide/…`가 늦게 온 코드로 그 자료를 엶, 다른 화면 이동·뒤로 가기·팀 변경 뒤 주소에 자료가 남지 않음, 다른 팀 공유 링크는 팀 변경 뒤에도 남음, 받지 못하면 안내를 보이고 이동 가능) 통과.
+- `tests/browser/slides/slide-team-files.spec.ts`에 검사 2건을 더했습니다(코드를 받는 동안의 가오리·화면 틀 스타일과 이동 뒤 주소·링크 주소, 받지 못했을 때의 안내와 이동). 자리 표시의 주소 정리를 뺀 빌드에서는 둘 다 `/?file=…`로 실패합니다.
+- `env -u HTTP_PROXY -u HTTPS_PROXY NO_PROXY=127.0.0.1,localhost E2E_PORT=4342 npx playwright test tests/browser/slides tests/browser/sheet/workspace-navigation.spec.ts --project=chromium`: 34건. 첫 실행은 33건 통과·1건 실패(`상세에서 사본을 삭제할 때 취소와 실패는 편집을 유지하고 확인하면 사본과 복구본만 지운다`가 마지막 카드 클릭에서 60초 제한 초과, 같은 머신에서 다른 작업이 돌아 직후 잰 1분 load average가 104), 그 검사만 다시 실행해 통과(7.6초), 같은 명령을 다시 실행해 34건 통과(57.6초).
+- 같은 환경 변수로 `tests/browser/documents/document-links.spec.ts --project=chromium`(문서·일정 상세의 슬라이드 링크, `/links/slide/…`): 29건 통과.
+- 새 검사 2건과 기존 로딩 검사 1건을 Firefox·WebKit에서 실행: 6건 통과.
+- `npm run build`, `npm run build:edge`, `npm run check:structure`(807개, 오류 0), `npm run check:architecture`(484개 모듈, 위반 0), 변경한 소스·검사 파일의 `npx prettier --check`, `git diff --check` 통과.
+- 실행하지 않은 것: 세 엔진 전체 브라우저 검사, 실제 배포 환경에서의 묶음 요청.
+
+전체 검증(2026-11-26, 커밋 `2b5e987`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 962건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `tests/browser/slides`·`workspace-navigation`·`document-links` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 189건 통과.
+## 2026-11-25 — 슬라이드 백업·복구 도구가 자료를 한 번에 하나씩, 필요한 횟수만 읽기 (#242)
+
+슬라이드 자료는 하나에 25MiB까지이고 저장소는 자료마다 현재 revision과 직전 10개를 보관합니다. 백업·복구 도구는 이 파일들을 필요 이상으로 메모리에 올리고 여러 번 읽었습니다. 외부 복구의 `readSlideBackup`은 백업의 슬라이드 원본 전부를 `Map` 하나에 담은 뒤에야 복구를 시작했고, `S3SlideBlobStore.install`은 버킷에 이미 있는 객체를 통째로 내려받아 백업의 사본 옆에 들고 비교했습니다. 사내 백업은 파일을 복사한 뒤 사본 전체를 다시 읽어 해시를 계산했고, 사내 복구는 같은 전체 확인을 두 번(`restore.mjs`와 `restoreSlideStore`) 한 뒤 복사하고 또 읽었습니다.
+
+백업 형식·파일 배치·manifest 버전·DB 스키마·지원 버전·오류 문구는 바꾸지 않았습니다.
+
+- 외부 복구: `readSlideBackup`은 원본을 조각으로 읽어 크기와 SHA-256만 확인하고 내용 대신 파일 경로를 돌려줍니다. `restoreSlides`가 원본을 하나씩 읽어 `install`에 넘기고, `install`은 지금처럼 넣기 직전에 크기 한도와 SHA-256을 다시 확인합니다. 버킷에 이미 있는 객체는 내려받는 조각을 바로 해시에 넣어 비교하므로 메모리에 쌓이지 않습니다.
+- 사내 백업·복구: 파일을 1MiB 조각으로 한 번 읽으면서 해시를 계산하고, 복사할 때는 같은 조각을 대상 파일에 씁니다. `restoreDatabase`는 쓰기 전 전체 확인(`verifySlideBackup`)을 한 번만 하고 그 결과를 `restoreSlideStore`에 넘깁니다. 확인·거절 순서는 그대로입니다.
+- 외부 백업(`backupSlides`)은 이미 원본을 하나씩 받아 확인하고 쓰므로 바꾸지 않았습니다. 같은 복구의 이미지(`readExternalBackup`의 이미지 `Map`, 하나에 10MiB까지)는 이 작업 범위가 아니어서 그대로입니다.
+
+| 항목(자료 3개인 검사용 저장소에서 센 값) | 이전 | 이후 |
+| --- | --- | --- |
+| 외부 복구: 백업을 읽은 뒤 메모리에 남는 원본 | 3(전부) | 0 |
+| 외부 복구: 넣는 동안 동시에 올라와 있는 원본 | 3(전부) | 1 |
+| 외부 복구: 백업 원본 하나를 읽는 횟수 | 1 | 2(확인 1, 넣기 1) |
+| 외부 복구 재실행: 이미 있는 객체 내려받기 | 3(객체마다 1), 통째로 보관 3 | 3(객체마다 1), 통째로 보관 0 |
+| 사내 백업: 파일 하나를 읽는 횟수 | 2, 통째로 올림 1 | 1, 통째로 올림 0 |
+| 사내 복구: 파일 하나를 읽는 횟수 | 4, 통째로 올림 3 | 2, 통째로 올림 0 |
+
+메모리를 묶는 대신 달라진 점은 두 가지입니다. ① 외부 복구는 백업 원본을 디스크에서 두 번 읽습니다. "원본 하나라도 잘못이면 아무것도 쓰지 않는다"를 지키려면 전체 확인을 먼저 끝내야 하고, 내용을 들고 있지 않으려면 넣을 때 다시 읽어야 하기 때문입니다. ② 이전에는 확인한 바이트를 그대로 넣었으므로 복구 도중 백업 폴더가 바뀌어도 영향이 없었습니다. 이제는 확인 뒤에 바뀐 원본을 넣기 직전 검사가 거절하며, 그 앞의 원본은 이미 버킷에 들어가 있습니다. 들어간 것은 모두 해시가 확인된 내용이고 슬라이드 행은 넣지 않은 상태여서, 백업 폴더를 되돌리고 같은 복구를 다시 실행하면 끝납니다(네트워크 오류로 중간에 멈춘 기존 경우와 같은 상태). 운영 안내에 복구 중 백업 폴더를 바꾸지 않도록 적었습니다. 사내 쪽은 복사한 사본을 다시 읽는 대신 복사하는 바이트로 해시를 계산합니다. 원본에서 읽어 대상에 쓴 바이트가 기록된 해시와 같다는 것은 그대로 확인하지만, 쓴 파일을 되읽어 확인하지는 않습니다.
+
+이미 있는 객체를 내려받지 않고 같은지 판정하는 방법은 조사만 하고 적용하지 않았습니다. 외부 사이트(`R2SlideBlobStore.write`)는 `bucket.put`에 `sha256`을 주지 않고, 복구 도구의 `PutObjectCommand`도 체크섬을 지정하지 않으므로 어떤 객체에도 저장된 SHA-256이 없습니다. HEAD로 얻는 것은 크기와 ETag(한 번에 올린 객체는 올릴 때 계산한 MD5)뿐입니다. 크기와 MD5가 같다는 것은 우연한 차이를 가려낼 수는 있어도, 충돌을 만들 수 있는 MD5여서 SHA-256 비교와 같은 보장이 아니고 지금 저장된 바이트를 읽어 본 결과도 아닙니다. 그래서 내려받기는 유지하고 메모리만 줄였습니다. 내려받기를 없애려면 객체를 올릴 때 SHA-256을 함께 저장해야 하는데(사이트의 `put`과 도구의 PUT 모두), 객체에 남는 정보가 바뀌는 일이어서 [DB 변경 지침](DATABASE_CHANGES.md)의 승인과 실제 R2에서 HEAD 응답을 확인하는 절차가 먼저 필요합니다.
+
+검증(2026-11-26, Node.js 22.23.1·PostgreSQL 17): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin`과 임시 `SLIDE_FILES_DIR`로 `node --test --test-concurrency=1 tests/slides/*.test.mjs tests/transfer/*.test.mjs tests/sync/recovery/sync-backup-compatibility.test.mjs` 15개 파일 100건 통과(실패·skip 0). `check:structure`(오류 0)·`check:architecture`(위반 0) 통과. 추가한 검사 5건 가운데 횟수를 세는 3건은 수정 전 `server/`·`scripts/`에서 실패합니다: 사내 백업·복구의 파일별 읽기 횟수(`fs`의 `openSync`·`copyFileSync`·`readFileSync` 호출을 셈, 이전 2·4), 외부 복구에서 동시에 올라온 원본 수와 통째로 보관한 내려받기(`readFile` 호출과 메모리 버킷으로 셈, 이전 3·3), 확인 뒤 바뀐 원본의 거절(이전에는 거절 없이 끝남). 나머지 2건(현재 revision의 내용이 해시와 다르면 사내·외부 모두 백업을 만들지 않음)은 수정 전에도 통과하는 기존 보장의 검사입니다. 횟수는 호출 수이며 실제 메모리 사용량이나 25MiB 자료·실제 R2에서의 동작은 측정하지 않았습니다. AWS SDK 응답 본문을 조각으로 읽는 것은 로컬 HTTP 서버를 상대로 실제 SDK(3.1156.0)에서 따로 확인했습니다.
+
+전체 검증(2026-11-26, 커밋 `ce1b126`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 967건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. 화면 변경이 없어 브라우저 검사는 실행하지 않았습니다. 실제 R2와 25MB 자료로는 확인하지 않았습니다.
 ## 2026-11-25 — 새 업무 표시 판정을 셀마다 하던 문제(#239)
 
 PR #205가 `Grid.tsx`의 `GridCell`에 `useNewTask(c.key === "title" ? task : null)`을 넣으면서, 훅이 없던 셀 컴포넌트가 작업명이 아닌 셀에서도 `useReducer`·`useEffect`와 `Date.parse(serverNow())`를 실행했습니다. `serverNow()`는 `Date`와 ISO 문자열을 만들고 호출한 쪽이 그 문자열을 다시 숫자로 읽었습니다. 행은 가상 스크롤이지만 열은 모두 그리므로, 표를 한 번 그릴 때마다 셀 수만큼 훅이 돌고 화면에 들어오는 행마다 열 수만큼의 passive effect가 등록됐다가 바로 끝났습니다.

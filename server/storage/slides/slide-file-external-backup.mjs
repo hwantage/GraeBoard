@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { GetObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
@@ -58,6 +60,17 @@ const key = (teamId, contentHash) => {
     throw new Error("Invalid slide content hash");
   return `slides/${teamId}/${contentHash}.${SLIDE_FILE_EXTENSION}`;
 };
+// SHA-256 and length of bytes that arrive in pieces, so a slide file is
+// checked without being held whole.
+async function streamDigest(pieces) {
+  const hash = createHash("sha256");
+  let size = 0;
+  for await (const piece of pieces) {
+    hash.update(piece);
+    size += piece.length;
+  }
+  return { hash: hash.digest("hex"), size };
+}
 
 // Slide objects through the S3 API of the team's R2 bucket.
 export class S3SlideBlobStore {
@@ -66,7 +79,9 @@ export class S3SlideBlobStore {
       throw new Error("S3 client, bucket and teamId are required");
     Object.assign(this, { client, bucket, teamId });
   }
-  async read(contentHash) {
+  // The response of the object, its body not yet read; null when the bucket
+  // has no such object.
+  async #get(contentHash) {
     try {
       const response = await this.client.send(
         new GetObjectCommand({
@@ -76,19 +91,29 @@ export class S3SlideBlobStore {
       );
       if (response.ContentLength > MAX_SLIDE_FILE_BYTES)
         throw new Error("Backup slide file exceeds byte limit");
-      return new Uint8Array(await response.Body.transformToByteArray());
+      return response;
     } catch (error) {
       if (error.$metadata?.httpStatusCode === 404 || error.name === "NoSuchKey")
         return null;
       throw error;
     }
   }
+  async read(contentHash) {
+    const response = await this.#get(contentHash);
+    return (
+      response && new Uint8Array(await response.Body.transformToByteArray())
+    );
+  }
   async install(contentHash, bytes) {
     if (bytes.length > MAX_SLIDE_FILE_BYTES || digest(bytes) !== contentHash)
       throw new Error("Backup slide file checksum mismatch");
-    const existing = await this.read(contentHash);
+    // No object carries a stored SHA-256 (neither the site nor this tool
+    // uploads one), so an object already under this name is still downloaded
+    // to be compared. It is hashed as it arrives instead of being held next to
+    // the backup's copy.
+    const existing = await this.#get(contentHash);
     if (existing) {
-      if (digest(existing) !== contentHash)
+      if ((await streamDigest(existing.Body)).hash !== contentHash)
         throw new Error("Refusing to overwrite mismatched target slide file");
       return;
     }
@@ -199,6 +224,8 @@ export async function backupSlides({ adapter, teamId, blobs, folder }) {
 }
 
 // Reads and verifies the slide part of a backup before anything is restored.
+// Slide files are hashed one at a time and not kept: `blobs` maps each content
+// hash to its file, which restoreSlides reads when it installs it.
 export async function readSlideBackup(directory, teamId, entry) {
   if (entry.path !== `${teamId}/slides.json`)
     throw new Error("Invalid backup slide path");
@@ -215,17 +242,16 @@ export async function readSlideBackup(directory, teamId, entry) {
   const blobs = new Map();
   for (const file of entry.files) {
     key(teamId, file.contentHash);
-    const bytes = await readFile(
-      join(
-        directory,
-        teamId,
-        "slides",
-        `${file.contentHash}.${SLIDE_FILE_EXTENSION}`,
-      ),
+    const path = join(
+      directory,
+      teamId,
+      "slides",
+      `${file.contentHash}.${SLIDE_FILE_EXTENSION}`,
     );
-    if (bytes.length !== file.size || digest(bytes) !== file.contentHash)
+    const { hash, size } = await streamDigest(createReadStream(path));
+    if (size !== file.size || hash !== file.contentHash)
       throw new Error("Backup slide file checksum mismatch");
-    blobs.set(file.contentHash, bytes);
+    blobs.set(file.contentHash, path);
   }
   for (const [contentHash, current] of referenced(tables))
     if (current && !blobs.has(contentHash))
@@ -257,9 +283,11 @@ export async function restoreSlides({ adapter, teamId, blobs, backup }) {
   if (!blobs) throw new Error("Slide file store is required for this restore");
   // Rows that already match say nothing about the bucket. Every object of the
   // backup is compared with the target: a missing one is stored, an equal one
-  // is left as it is, and a different one refuses the restore.
-  for (const [contentHash, bytes] of backup.blobs)
-    await blobs.install(contentHash, bytes);
+  // is left as it is, and a different one refuses the restore. One slide file
+  // is in memory at a time; install hashes it again, so a file that changed
+  // after the backup was read is refused.
+  for (const [contentHash, path] of backup.blobs)
+    await blobs.install(contentHash, await readFile(path));
   if (target === "restored") return;
   await adapter.transaction(
     async (tx) => {
