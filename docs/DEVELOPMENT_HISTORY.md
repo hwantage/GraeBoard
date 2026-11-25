@@ -63,6 +63,8 @@ DB 왕복은 이미 검사한 연결 기준이며 `client.query` 호출 수입�
 
 실행 결과(모두 실패·건너뜀 0): `tests/slides/*.test.mjs` 10개 파일 85건, `tests/sync/transport/*.test.mjs` 10개 파일 29건, `tests/sync/integration/*.test.mjs`와 `sync-v2-transition`·`sync-checkpoint`·`sync-maintenance`·`tests/site/team-site`·`worker-security` 27개 파일 155건, `tests/tooling/*.test.mjs` 6개 파일 28건 통과. `npm run check:structure`(805개 파일, 오류 0), `npm run check:architecture`(482개 모듈, 위반 0), `npm run build:edge`, 바꾼 코드 파일의 `prettier --check`, `git diff --check` 통과. 전후 횟수는 수정 전 소스를 `git archive`로 푼 사본과 작업 트리에서 같은 측정 스크립트로 쟀습니다.
 
+전체 검증(2026-11-26, 커밋 `3efe1af`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 967건 통과(실패·취소·skip 0, 고정 전환 호환 검사 포함), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. 화면 변경이 없어 브라우저 검사는 실행하지 않았습니다.
+
 ## 2026-11-24 — 사내에서 정한 아바타를 외부(팀) 사이트에 그대로 표시
 
 외부 사이트에서 모든 구성원이 기본 초록색·이름 첫 글자로 보이던 원인은 저장 실패가 아니었습니다. 로컬 외부 경로(Pages 진입점 → gateway → Edge 핸들러 → PostgreSQL 17)에서 외부 `PATCH /auth/profile`은 200으로 저장·유지됐습니다. 구성원 동기화가 이름·이메일·역할·활성 상태만 보내 사내 색·글자·이미지가 외부로 전혀 전달되지 않는 것이 원인입니다. 실제 배포 환경(Supabase Edge·Cloudflare)의 외부 저장은 확인하지 않았습니다.
