@@ -299,8 +299,13 @@ export async function adminRoutes(
     return importTeam(ctx, body);
   const connection = /^\/admin\/teams\/([^/]+)\/connection$/.exec(path);
   if (connection) {
-    ctx.admin();
-    const team = await ctx.team(connection[1], { allowUnready: true });
+    // A team lead reads the team's connection, as on the internal server.
+    // Changing it stays with system admins.
+    if (method !== "GET") ctx.admin();
+    const team = await ctx.team(connection[1], {
+      manage: true,
+      allowUnready: true,
+    });
     if (method === "PUT") {
       const p = profileFor(ctx.env, body.profileId, team.id);
       if (

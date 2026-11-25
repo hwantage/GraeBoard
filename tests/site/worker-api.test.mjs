@@ -1293,6 +1293,85 @@ test(
         ).status,
         409,
       );
+      // A team lead reads the team's connection, as on the internal server,
+      // and so sees the running switch that holds back the sync actions.
+      // Changing the connection stays with system admins; a lead of another
+      // team and a member are refused.
+      const otherTeamId = randomUUID(),
+        connectionPath = `/admin/teams/${teamId}/connection`;
+      await control.query(
+        "INSERT INTO graeboard.teams(id,name,status) VALUES($1,'Other team','unconnected')",
+        [otherTeamId],
+      );
+      const identities = {};
+      for (const [name, membership] of [
+        ["lead", { teamId, role: "lead" }],
+        ["other-lead", { teamId: otherTeamId, role: "lead" }],
+      ]) {
+        const created = await request("/admin/users", {
+          username: `${name}@example.com`,
+          name,
+          systemRole: "user",
+          memberships: [membership],
+        });
+        assert.equal(created.status, 200, JSON.stringify(created.body));
+        identities[name] = {
+          "test-email": `${name}@example.com`,
+          "test-subject": `${name}-sub`,
+        };
+      }
+      const adminConnection = (await request(connectionPath)).body,
+        leadConnection = await request(
+          connectionPath,
+          undefined,
+          "GET",
+          identities.lead,
+        );
+      assert.equal(leadConnection.status, 200);
+      assert.deepEqual(leadConnection.body, adminConnection);
+      // Exactly these fields: no token, binding or other secret of a profile.
+      assert.deepEqual(leadConnection.body, {
+        switchJob: {
+          jobId: migration.body.jobId,
+          phase: migration.body.phase,
+          hasMore: true,
+          profileId: "b",
+        },
+        teamId,
+        profileId: "a",
+        revision: adminConnection.revision,
+        profiles: [
+          {
+            profileId: "a",
+            name: "a",
+            teamId,
+            repository: "https://github.com/example/private-data",
+          },
+          {
+            profileId: "b",
+            name: "b",
+            teamId,
+            replaces: "a",
+            repository: "https://github.com/example/private-data",
+          },
+        ],
+      });
+      for (const identity of [identities["other-lead"], member])
+        assert.equal(
+          (await request(connectionPath, undefined, "GET", identity)).status,
+          403,
+        );
+      assert.equal(
+        (
+          await request(
+            connectionPath,
+            { profileId: "a", expectedRevision: adminConnection.revision },
+            "PUT",
+            identities.lead,
+          )
+        ).status,
+        403,
+      );
       for (let count = 0; migration.body.hasMore && count < 50; count++) {
         migration = await request(
           `/admin/teams/${teamId}/connection/switch/${migration.body.jobId}/resume`,

@@ -1295,6 +1295,9 @@ async function insertTogether(tx, inserts) {
     params,
   );
 }
+// `first`: the caller's own statements for the round trip that opens the
+// transaction (see PostgresDatabase.transaction); their results are the last
+// of `s.tx.first`.
 export async function withData(
   database,
   teamId,
@@ -1306,6 +1309,7 @@ export async function withData(
     write = false,
     validateImages,
     limits = capacityLimits(),
+    first = [],
   } = {},
 ) {
   // As text, the way a bound parameter sends it: the opening statement
@@ -1462,6 +1466,7 @@ export async function withData(
               params: [teamId],
             }))
           : []),
+        ...first,
       ],
     },
   );

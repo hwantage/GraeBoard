@@ -5,9 +5,13 @@ import { parseDocumentLinkPath } from "../../../shared/documents/document-links.
 
 // Current titles of linked documents with the reads that open them: a task
 // as /calendar/tasks/:id, an entry as /calendar/entries/:id, memos and copy
-// rows as their document routes (team access, deletion, retention). A target
-// the user cannot open is left out rather than refused.
-export function resolveSqliteDocumentLinks({ db, teamAccess, user }, paths) {
+// rows as their document routes (team access, deletion, retention), a slide
+// file as the team's slide list. A target the user cannot open is left out
+// rather than refused.
+export function resolveSqliteDocumentLinks(
+  { db, slideFiles, teamAccess, user },
+  paths,
+) {
   const readable = new Map();
   const canRead = (teamId) => {
     if (!readable.has(teamId))
@@ -52,11 +56,36 @@ export function resolveSqliteDocumentLinks({ db, teamAccess, user }, paths) {
   const sheetCloneMemoRow = db.prepare(
     "SELECT title FROM sheet_clone_memos WHERE sheet_clone_id=? AND id=?",
   );
+  const wanted = paths.map((path) => ({
+    path,
+    link: parseDocumentLinkPath(path),
+  }));
+  // Slide files are in their own store: one read per linked team.
+  const slideTitles = new Map();
+  const slideTitle = ({ teamId, id }) => {
+    if (!slideTitles.has(teamId))
+      slideTitles.set(
+        teamId,
+        canRead(teamId)
+          ? slideFiles.titles(
+              teamId,
+              wanted
+                .filter(
+                  ({ link }) => link.kind === "slide" && link.teamId === teamId,
+                )
+                .map(({ link }) => link.id),
+            )
+          : new Map(),
+      );
+    return slideTitles.get(teamId).get(id);
+  };
   const links = [];
-  for (const path of paths) {
-    const link = parseDocumentLinkPath(path);
+  for (const { path, link } of wanted) {
     let found = null;
-    if (link.kind === "task") {
+    if (link.kind === "slide") {
+      const title = slideTitle(link);
+      if (title !== undefined) found = { teamId: link.teamId, title };
+    } else if (link.kind === "task") {
       const row = taskRow.get(link.id);
       if (
         row &&

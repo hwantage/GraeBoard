@@ -7,6 +7,7 @@
 //   [업무 제목](/links/sheet-clone-task/<사본 UUID>/<업무 UUID>)
 //   [업무 제목](/links/sheet-clone-task/<사본 UUID>/<업무 UUID>/<문서 ID>)
 //   [메모 제목](/links/sheet-clone-memo/<사본 UUID>/<메모 ID>)
+//   [슬라이드 제목](/links/slide/<팀 UUID>/<자료 UUID>)
 //
 // The path has no origin, so the same body opens on the internal and the
 // external site after synchronization. A copy's task keeps the original's ID,
@@ -16,13 +17,19 @@
 // A task link may end with one of the task's documents (2026-11-23): the
 // detail then opens showing that document instead of the first. It is the
 // link copied from a task with several documents; its title stays the task's.
+//
+// A slide link (2026-11-24) names a team slide file. Slide files live in the
+// team's slide store, apart from the task data, and keep the same ID on both
+// sites; the team is part of the path because the slides screen opens the
+// files of one team.
 
 /**
  * @typedef {{ kind: "task", id: string, documentId?: string }
  *   | { kind: "calendar", id: string }
  *   | { kind: "memo", teamId: string, year: number, id: string }
  *   | { kind: "sheet-clone-task", sheetCloneId: string, id: string, documentId?: string }
- *   | { kind: "sheet-clone-memo", sheetCloneId: string, id: string }} DocumentLink
+ *   | { kind: "sheet-clone-memo", sheetCloneId: string, id: string }
+ *   | { kind: "slide", teamId: string, id: string }} DocumentLink
  */
 
 // Links in one title lookup.
@@ -31,13 +38,14 @@ const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 // Memo and task document IDs: the default `main` or a UUID.
 const DOCUMENT = `main|${UUID}`;
 const LINK_PATH = new RegExp(
-  `^/links/(?:task/(?<task>${UUID})(?:/(?<taskDocument>${DOCUMENT}))?|calendar/(?<calendar>${UUID})|memo/(?<memoTeam>${UUID})/(?<memoYear>\\d{4})/(?<memo>${DOCUMENT})|sheet-clone-task/(?<cloneOfTask>${UUID})/(?<cloneTask>${UUID})(?:/(?<cloneTaskDocument>${DOCUMENT}))?|sheet-clone-memo/(?<cloneOfMemo>${UUID})/(?<cloneMemo>${DOCUMENT}))$`,
+  `^/links/(?:task/(?<task>${UUID})(?:/(?<taskDocument>${DOCUMENT}))?|calendar/(?<calendar>${UUID})|memo/(?<memoTeam>${UUID})/(?<memoYear>\\d{4})/(?<memo>${DOCUMENT})|sheet-clone-task/(?<cloneOfTask>${UUID})/(?<cloneTask>${UUID})(?:/(?<cloneTaskDocument>${DOCUMENT}))?|sheet-clone-memo/(?<cloneOfMemo>${UUID})/(?<cloneMemo>${DOCUMENT})|slide/(?<slideTeam>${UUID})/(?<slide>${UUID}))$`,
 );
 
 /** @param {DocumentLink} link */
 export function documentLinkPath(link) {
   if (link.kind === "memo")
     return `/links/memo/${link.teamId}/${link.year}/${link.id}`;
+  if (link.kind === "slide") return `/links/slide/${link.teamId}/${link.id}`;
   const document =
     (link.kind === "task" || link.kind === "sheet-clone-task") &&
     link.documentId
@@ -88,6 +96,8 @@ export function parseDocumentLinkPath(path) {
         ? { documentId: found.cloneTaskDocument }
         : {}),
     };
+  if (found.slide)
+    return { kind: "slide", teamId: found.slideTeam, id: found.slide };
   return {
     kind: "sheet-clone-memo",
     sheetCloneId: found.cloneOfMemo,
