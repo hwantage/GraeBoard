@@ -59,6 +59,9 @@
 - 겹침 검사의 유효성: 제자리에 둔 뒤의 재확인을 빼면 겹침 3건이, 쓰기 공유를 빼면 동시 `PUT` 2건이 실패하는 것을 확인하고 되돌렸습니다.
 - `npm run check:structure`(806 파일, 오류 0, 기존과 같은 검토 알림 38), `npm run check:architecture`(482 모듈, 위반 0), `npm run build:edge`, 변경한 코드 파일의 `npx prettier --check`, `git diff --check` 통과.
 - 실행하지 않은 것: 전체 `npm test`, `npm run build`, 브라우저 검사, 실제 Cloudflare gateway·R2와 Supabase Edge에서의 확인.
+
+전체 검증(2026-11-26, main `0df7815`를 합친 커밋 `5ab9203`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 1,010건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `tests/browser/slides`·`document-links` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 201건 통과. 실제 Cloudflare gateway·R2·Supabase Edge에서는 확인하지 않았습니다.
+
 ## 2026-11-25 — 슬라이드 게시에서 조각 한도를 다 쓴 뒤의 내용 읽기 제거 (#234)
 
 - 원인: `syncSlideFiles`의 게시 반복문은 한 실행이 올릴 수 있는 조각 수(외부 4개, 사내 64개)를 다 쓴 뒤에도 내용이 바뀐 나머지 자료마다 `syncReadContent`와 `slideChunks`를 실행했다. 한도가 없으면 조각을 하나도 올릴 수 없는데도 외부는 자료 전체를 R2에서 내려받아 전체와 조각별 SHA-256을 다시 계산했다. 25MB 자료 10개가 기다리면 16MiB만 올릴 수 있는 1분 실행마다 약 250MB를 읽고 해시했다. 사내는 같은 읽기와 해시를 요청 스레드에서 실행했다.
