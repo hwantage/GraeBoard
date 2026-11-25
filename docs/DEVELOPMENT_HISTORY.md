@@ -18,6 +18,57 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-25 — 슬라이드 게시에서 조각 한도를 다 쓴 뒤의 내용 읽기 제거 (#234)
+
+- 원인: `syncSlideFiles`의 게시 반복문은 한 실행이 올릴 수 있는 조각 수(외부 4개, 사내 64개)를 다 쓴 뒤에도 내용이 바뀐 나머지 자료마다 `syncReadContent`와 `slideChunks`를 실행했다. 한도가 없으면 조각을 하나도 올릴 수 없는데도 외부는 자료 전체를 R2에서 내려받아 전체와 조각별 SHA-256을 다시 계산했다. 25MB 자료 10개가 기다리면 16MiB만 올릴 수 있는 1분 실행마다 약 250MB를 읽고 해시했다. 사내는 같은 읽기와 해시를 요청 스레드에서 실행했다.
+- 변경: 조각 한도가 남지 않으면 내용을 읽어야 하는 자료는 읽지 않고 `pending`으로 세어 다음 실행으로 넘긴다. 내용이 그대로인 이름 변경·삭제는 전과 같이 한도와 관계없이 그 실행에서 게시한다. 작은 자료부터 게시하는 순서와 브랜치 형식·저장소 계약·DB 스키마는 그대로이며 조각 해시를 저장하지 않는다. 매 실행의 첫 내용 자료는 한도 전체를 가지고 읽으므로 새 저장이 이어지지 않는 한 기다리는 자료는 실행을 거듭하면 모두 게시된다. 조각이 이미 모두 브랜치에 있는 자료는 읽기 전에는 알 수 없어, 앞선 자료가 한도를 다 쓴 실행에서는 게시되지 않고 한도가 남은 실행까지 기다린다.
+- 검증: `tests/support/slide-sync-fixture.mjs`의 계약 검사에 회귀 1건을 추가해 사내 SQLite끼리와 사내 SQLite·외부 PostgreSQL 조합에서 각각 실행한다. 조각 한도 2개로 내용 변경 3건·새 2조각 자료 2건·이름 변경 1건·삭제 1건을 게시하며 실행별 `syncReadContent` 호출이 2·2·2·1·0건인지, 첫 실행에서 이름 변경·삭제가 게시되는지, 다섯 실행 뒤 받는 쪽의 목록과 바이트가 같은지 확인한다. 수정 전 코드에서는 두 조합 모두 첫 실행이 5건을 읽어 실패했다(2건 중 실패 2). 수정 후 `tests/slides/slide-file-sync.test.mjs`·`slide-file-sync-external.test.mjs`·`slide-file-storage-contract.test.mjs`·`slide-file-external-contract.test.mjs`를 실제 PostgreSQL 17로 실행해 53건 통과(실패·취소·skip 0). `check:structure`(804개 파일, 오류 0)·`check:architecture`(482개 모듈, 위반 0)·`build:edge` 통과. 이어 같은 커밋에서 `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 964건 통과(실패·취소·skip 0), `npm run build`·`npm run build:edge` 통과. 화면 변경이 없어 브라우저 검사는 실행하지 않았다.
+## 2026-11-25 — 변화 없는 슬라이드 동기화 실행의 비용 줄이기 (#240)
+
+슬라이드 동기화는 사내 서버와 외부 Cron이 활성 팀마다 1분에 한 번 실행합니다. 대부분은 받을 것도 올릴 것도 없는 실행인데, 그 한 번이 필요 이상으로 비쌌습니다.
+
+- 사내: `GitCliTransport.readHead`가 `git ls-remote`로 head를 읽은 뒤, 사내 clone이 이미 그 커밋에 있어도 항상 `git fetch`를 실행했습니다(원격 연결 2회).
+- 외부: 변화 없는 실행 한 번이 PostgreSQL 왕복 12회(슬라이드를 쓴 적 없는 팀은 7회)였습니다. 연결 상태 읽기 3회(트랜잭션 열기·조회·COMMIT), GitHub 대기 시각 읽기 3회, 이미 있는 행에 매번 쓰기 트랜잭션을 여는 `syncState` 5회(BEGIN·잠금·`INSERT … DO NOTHING`·SELECT·COMMIT), 게시할 것이 있는지 보려고 삭제된 자료까지 팀의 모든 행을 조각 목록과 함께 읽어 파싱하는 `syncFiles` 1회입니다.
+
+사용자가 보는 동작, DB 스키마·인덱스, 저장 형식, 브랜치 형식은 바꾸지 않았습니다. 받기·게시·충돌·분기 검출(`SlideBranchDiverged`)·커서 전진·lease와 대기 시각 판정·팀당 한 번 실행·GitHub ref 조건부 요청도 그대로입니다.
+
+1. `readHead`는 clone의 `refs/remotes/origin/<브랜치>`가 `ls-remote`가 알려 준 커밋에 있으면 fetch하지 않습니다(`fetchedHead`, `rev-parse --verify --quiet …^{commit}`). ref가 없거나 clone에 없는 커밋을 가리키면 이전처럼 받습니다.
+2. 외부 `syncTeamSlides`는 연결 상태(`mode`·lease)와 GitHub 대기 시각을 읽기 전용 트랜잭션을 여는 왕복(`first`)에서 함께 읽습니다(6회 → 2회).
+3. 두 저장소의 `syncState`는 먼저 읽고 행이 없을 때만 만듭니다. 외부는 5회 → 1회, 사내는 쓰기 잠금(`BEGIN IMMEDIATE`) 없이 SELECT 한 번입니다. 팀의 첫 실행만 읽기 뒤에 기존 트랜잭션을 거칩니다.
+4. 게시할 것이 있는지의 판정에는 두 저장소가 `syncFiles(teamId, { chunks: false })`로 조각 목록(`shared_chunks`)을 읽지도 파싱하지도 않은 같은 목록을 줍니다. 판정 규칙 `slideFileDirty`는 그대로 `syncSlideFiles`에만 있고 SQL로 옮기지 않았습니다.
+
+| 변화 없는 실행 한 번 | 이전 | 이후 |
+| --- | --- | --- |
+| 사내, 슬라이드를 쓰는 팀 | Git 명령 2개(`ls-remote`·`fetch`), 원격 연결 2회. 저장소 쓰기 트랜잭션 1회 | Git 명령 2개(`ls-remote`·clone 안의 `rev-parse`), 원격 연결 1회. 저장소는 SELECT 2회 |
+| 사내, 슬라이드를 쓴 적 없는 팀 | `ls-remote` 1개 | 같음(`ls-remote` 1개, 저장소는 만들지 않음) |
+| 외부, 슬라이드를 쓰는 팀 | DB 왕복 12회, GitHub 요청 1건 | DB 왕복 4회, GitHub 요청 1건 |
+| 외부, 슬라이드를 쓴 적 없는 팀 | DB 왕복 7회, GitHub 요청 1건 | DB 왕복 3회, GitHub 요청 1건 |
+
+DB 왕복은 이미 검사한 연결 기준이며 `client.query` 호출 수입니다. 새 연결의 첫 사용에는 전후 모두 연결 검사 3회(업무 스키마 1회, 슬라이드 저장소 2회)가 더해집니다. 자료가 늘고 삭제된 자료가 있어도 횟수는 같습니다(자료 3개, 그중 삭제 1개로 확인). 변화가 있는 실행도 같은 만큼 줄어, 예를 들어 자료 하나를 받고 하나를 게시하는 실행은 34회 → 26회입니다. 팀의 첫 실행만 상태 행을 읽어 본 뒤 만들기 때문에 그 한 번은 `syncState`가 5회 → 6회입니다. GitHub 요청은 줄지 않습니다. 쓰는 팀의 1건은 조건부 요청이라 바뀌지 않았으면 304로 한도에 들지 않지만, 쓴 적 없는 팀의 1건은 브랜치가 없다는 404여서 조건부로 보낼 수 없고 매번 한도에 듭니다(팀당 시간당 60건).
+
+`readHead`는 업무 동기화(`sync-v1`)와 상태·구성원·설정 키 브랜치도 쓰므로 호출자를 모두 확인한 뒤 전 브랜치에 적용했습니다. `SyncService`의 `receive`·`initialize`·`status`·`peerReachable`·`upgrade`, `publishBranchJson`, `loadCheckpoint`, `MaintenanceService.verifyArchiveHead`, `GitCliTransport.publish`(push 실패 뒤 확인)·`check`, 연결 변경 요청(`node-routes.mjs`의 `PUT …/connection`), `setup-key-issuer.mjs`, `syncSlideFiles`, 운영 스크립트(`scripts/sync`·`scripts/transfer`·`scripts/performance`)는 모두 돌려받은 커밋 ID로 clone을 읽습니다. `FETCH_HEAD`·reflog·`refs/remotes/origin/*` 이름을 읽는 코드는 없고, bare clone이라 reflog도 없습니다. Git 2.50.1에서 같은 head를 다시 fetch하면 clone의 파일은 하나도 바뀌지 않고(`FETCH_HEAD`도 같은 내용) 원격 연결 한 번, clone 안의 연결성 검사(`rev-list`), `git maintenance run --auto`만 실행됐습니다. 접속·인증 실패는 같은 원격과 같은 자격 증명을 쓰는 `ls-remote`에서 그대로 납니다. `peerReachable`이 기대하는 '한 번 더 받기'는 원격 head가 움직였을 때의 fetch이고 이는 그대로입니다. 비교 대상을 커밋의 존재가 아니라 clone의 ref로 둔 이유는 push가 `refs/remotes/origin/*`를 옮기지 않기 때문입니다(실측). 이 사이트가 게시한 커밋은 다음 읽기의 fetch가 ref에 연결해야 Git 정리에서 지워지지 않습니다.
+
+남는 차이는 두 가지입니다. ① Git의 자동 정리 점검은 fetch가 끝날 때만 실행되므로 이제 head가 움직인 뒤에만 실행됩니다. clone에 객체가 늘어나는 때는 상대의 게시를 받을 때와 이 사이트가 후보 커밋을 만들 때이고, 둘 다 다음 읽기에서 head가 달라 fetch가 실행됩니다. 60초가 지나면 다시 게시하는 자기 상태 브랜치도 사내 주기(60초)마다 그렇습니다. 그래서 점검이 끊기지 않습니다. ② 사내 동기화 로그의 `git` 수준에서 변화 없는 주기에는 `fetch` 줄 대신 `rev-parse` 줄이 남습니다. `sync-integration.test.mjs`의 '모든 Git 명령 기록' 확인은 그 주기에 항상 실행되는 `ls-remote`를 보도록 바꿨습니다.
+
+한 실행 안에서 `syncFiles` 결과를 재사용하는 것도 검토했고, 하지 않았습니다. 판정용 읽기(head가 그대로일 때)와 받기 전 읽기(head가 움직였을 때)는 서로 다른 경로라 한 실행에서 함께 일어나지 않습니다. 게시 전 읽기는 받기가 행을 바꾼 뒤(`syncApply`·`syncMarkShared`·충돌 사본)이거나, 판정용 목록에 없는 조각 목록이 필요한 경우(이름·삭제만 바뀐 자료는 공유한 조각 목록을 그대로 게시)입니다. 변화가 있는 실행의 목록 읽기는 전후 모두 2회입니다.
+
+구현하지 않은 절감은 다음과 같습니다.
+
+- 슬라이드를 쓴 적 없는 팀의 확인 주기를 늘리는 것은 상대 사이트에서 올린 첫 자료의 도착을 늦추므로 제품 결정으로 남겼습니다. 그런 팀에 남는 비용은 1분마다 사내 `git ls-remote` 1개(원격 연결 1회), 외부 DB 왕복 3회와 한도에 드는 GitHub 요청 1건입니다.
+- 판정용 목록은 여전히 삭제된 자료를 포함한 팀의 모든 행을 읽습니다. 줄이려면 변경 표시 컬럼·부분 인덱스나 삭제 행 정리가 필요해 [DB 변경 지침](DATABASE_CHANGES.md)의 승인 대상입니다. SQL에서 거르는 방법은 판정 규칙을 SQL에 한 번 더 쓰게 되어 택하지 않았습니다.
+- 커서와 판정용 목록을 한 왕복으로 묶으면 외부가 4회 → 3회가 되지만, 두 저장소에 묶음 메서드를 더해 계약이 넓어지므로 하지 않았습니다.
+- 슬라이드 저장소의 연결 검사 2회는 사용자 요청 경로와 함께 쓰는 검사라 건드리지 않았습니다.
+
+검증: Node.js 22.23.1·PostgreSQL 17.11·Git 2.50.1에서 먼저 관련 검사를 실행했습니다(전체 검증은 아래). 새 검사 5건은 수정 전 소스(340938c)에 그대로 넣으면 모두 실패하고 수정 후 통과합니다.
+
+- `tests/sync/transport/sync-git-read-head.test.mjs`: 없는 브랜치(`ls-remote`만, null), 처음 읽기, 변화 없는 읽기(원격 연결은 `ls-remote`뿐이고 명령은 `ls-remote`·`rev-parse`), 상대의 게시와 자기 게시 뒤의 fetch, 브랜치별 비교, 없는 커밋을 가리키는 ref, 원격 접속 실패. 수정 전에는 변화 없는 읽기에서 `fetch`가 실행돼 실패합니다.
+- `tests/slides/slide-file-sync-external.test.mjs`: 실제 PostgreSQL의 팀 연결에서 보낸 SQL 문장과 GitHub 요청을 셉니다. 쓴 적 없는 팀 3회(`BEGIN`·`COMMIT`·`SELECT`, 상태 행을 만들지 않음), 쓰는 팀 4회(쓰기 없음, 판정용 목록에 `shared_chunks` 없음), 자료 3개(삭제 1개)에서도 같은 4회, 받고 게시하는 실행의 결과(받음 1·게시 1)와 양쪽 내용 일치. 수정 전에는 3회 자리에서 7회로 실패합니다.
+- `tests/slides/slide-file-sync.test.mjs`: 사내 실행의 Git 명령(쓴 적 없는 팀 `ls-remote`, 변화 없음 `ls-remote`·`rev-parse`, 상대의 게시는 fetch 뒤 수신)과, 다른 연결이 저장소 쓰기 잠금을 쥔 동안에도 변화 없는 실행이 끝나는지. 수정 전에는 `syncState`가 잠금을 기다리다 `database is locked`로 실패합니다.
+- `tests/support/slide-sync-fixture.mjs`의 계약 검사(사내끼리, 사내와 외부 PostgreSQL 각 1건): `syncState`가 같은 행을 돌려주는지, 공유·삭제·브랜치에만 있는 자료·게시 전 자료에서 조각 목록 없는 목록이 그 밖의 값은 전체 목록과 같은지.
+
+실행 결과(모두 실패·건너뜀 0): `tests/slides/*.test.mjs` 10개 파일 85건, `tests/sync/transport/*.test.mjs` 10개 파일 29건, `tests/sync/integration/*.test.mjs`와 `sync-v2-transition`·`sync-checkpoint`·`sync-maintenance`·`tests/site/team-site`·`worker-security` 27개 파일 155건, `tests/tooling/*.test.mjs` 6개 파일 28건 통과. `npm run check:structure`(805개 파일, 오류 0), `npm run check:architecture`(482개 모듈, 위반 0), `npm run build:edge`, 바꾼 코드 파일의 `prettier --check`, `git diff --check` 통과. 전후 횟수는 수정 전 소스를 `git archive`로 푼 사본과 작업 트리에서 같은 측정 스크립트로 쟀습니다.
+
+전체 검증(2026-11-26, 커밋 `3efe1af`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 967건 통과(실패·취소·skip 0, 고정 전환 호환 검사 포함), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. 화면 변경이 없어 브라우저 검사는 실행하지 않았습니다.
 ## 2026-11-25 — 사내 서버가 슬라이드 자료를 처리하는 동안 다른 요청이 멈추던 문제 (#236)
 
 사내 서버는 Node 프로세스 하나가 모든 요청을 처리합니다. 슬라이드 팀 자료(최대 25MiB)의 읽기·쓰기·fsync와 SHA-256이 모두 동기 호출이어서, 자료 하나를 저장·조회·복사하는 동안 다른 사용자의 요청이 처리되지 않았습니다. 1분 주기 동기화도 같았습니다. 저장소 메서드가 동기라 `syncSlideFiles`의 `await`가 마이크로태스크만 넘겼고, 여러 자료를 게시하는 회차의 읽기·해시가 한 덩어리로 실행됐습니다.

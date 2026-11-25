@@ -198,7 +198,9 @@ const syncFile = (row) => ({
         hash: row.shared_hash,
         title: row.shared_title,
         deletedAt: row.shared_deleted_at,
-        chunks: JSON.parse(row.shared_chunks),
+        ...(row.shared_chunks !== undefined && {
+          chunks: JSON.parse(row.shared_chunks),
+        }),
         metaOid: row.meta_oid,
       }
     : null,
@@ -540,17 +542,21 @@ export class SqliteSlideFileRepository {
   // --- Synchronization with the other site (server/sync/core/slide-file-branch.mjs).
   // The repository only keeps state; the rules live in the sync core.
   syncState(teamId) {
+    const read = (db) =>
+      db
+        .prepare("SELECT head,epoch FROM slide_sync_state WHERE team_id=?")
+        .get(teamId);
+    // The row is there after the team's first pass, so a pass only reads it
+    // and takes no write lock.
+    const stored = read(this.#open());
+    if (stored) return { ...stored };
     return this.#transaction((db) => {
-      const read = () =>
-        db
-          .prepare("SELECT head,epoch FROM slide_sync_state WHERE team_id=?")
-          .get(teamId);
-      if (!read())
+      if (!read(db))
         db.prepare("INSERT INTO slide_sync_state VALUES(?,NULL,?,1)").run(
           teamId,
           randomUUID(),
         );
-      return { ...read() };
+      return { ...read(db) };
     });
   }
   // Whether this team has anything to synchronize; never creates the store.
@@ -587,16 +593,19 @@ export class SqliteSlideFileRepository {
       "UPDATE slide_sync_files SET pending_version=NULL,pending_key=NULL",
     );
   }
-  syncFiles(teamId) {
+  // Every file of the team with what the two sites last agreed on.
+  // `chunks: false` leaves out the shared chunk lists, which only a
+  // publication reads: a pass asks first whether there is anything to do.
+  syncFiles(teamId, { chunks = true } = {}) {
+    const shared = `s.shared_version, s.shared_hash, s.shared_title, s.shared_deleted_at,
+                ${chunks ? "s.shared_chunks, " : ""}s.meta_oid, s.pending_version, s.pending_key`;
     return this.#open()
       .prepare(
-        `SELECT f.*, s.file_id AS sync_id, s.shared_version, s.shared_hash, s.shared_title,
-                s.shared_deleted_at, s.shared_chunks, s.meta_oid, s.pending_version, s.pending_key
+        `SELECT f.*, s.file_id AS sync_id, ${shared}
          FROM slide_files f LEFT JOIN slide_sync_files s ON s.team_id=f.team_id AND s.file_id=f.id
          WHERE f.team_id=?
          UNION ALL
-         SELECT f.*, s.file_id, s.shared_version, s.shared_hash, s.shared_title,
-                s.shared_deleted_at, s.shared_chunks, s.meta_oid, s.pending_version, s.pending_key
+         SELECT f.*, s.file_id, ${shared}
          FROM slide_sync_files s LEFT JOIN slide_files f ON f.id=s.file_id
          WHERE s.team_id=? AND f.id IS NULL`,
       )

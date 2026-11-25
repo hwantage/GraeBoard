@@ -3,7 +3,7 @@
 # TEAM_SITE_DEPLOY); repositories without either never deploy anything. A
 # development fork sets "branch": "main" in TEAM_SITE_CONFIG to follow main
 # instead, so changes are tried there before they go to release.
-name: main 브랜치를 외부 테스트 환경인 graeboarddev.pages.dev 에 배포
+name: 팀 외부 사이트 배포 (운영=release, 개발 Fork=main)
 
 on:
   push:
