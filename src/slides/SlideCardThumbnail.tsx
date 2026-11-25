@@ -13,6 +13,9 @@ export default function SlideCardThumbnail({
 }) {
   const host = useRef<HTMLSpanElement>(null);
   const [image, setImage] = useState("");
+  // A refreshed list hands over new objects for unchanged files: only what
+  // identifies the picture restarts the request.
+  const { teamId, id, contentHash } = file;
   useEffect(() => {
     if (!host.current || !thumbnails) return;
     const controller = new AbortController();
@@ -20,7 +23,7 @@ export default function SlideCardThumbnail({
       if (!entry?.isIntersecting) return;
       observer.disconnect();
       void thumbnails
-        .load(file, canWrite, controller.signal)
+        .load({ teamId, id, contentHash }, canWrite, controller.signal)
         .then((src) => {
           if (!controller.signal.aborted) setImage(src);
         })
@@ -31,7 +34,7 @@ export default function SlideCardThumbnail({
       controller.abort();
       observer.disconnect();
     };
-  }, [file, thumbnails, canWrite]);
+  }, [teamId, id, contentHash, thumbnails, canWrite]);
   return (
     <span ref={host} className="slide-card-thumbnail" aria-hidden="true">
       {image && <img src={image} alt="" onError={() => setImage("")} />}
