@@ -139,6 +139,51 @@ DB 왕복은 이미 검사한 연결 기준이며 `client.query` 호출 수입�
 검증(기준 `origin/main` `340938c`, Node.js 22.23.1): `node --test --test-concurrency=1`로 `tests/calendar/calendar-reminder-push.test.mjs` 13건(신규 3건), `tests/calendar/calendar.test.mjs` 42건(신규 1건), `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin`으로 `calendar-storage-contract` 2건·`edge-calendar-round-trips` 2건이 모두 통과했습니다(실패·skip 0). 신규 검사는 ① 한 팀의 알림 4건(3건 발송·1건 받을 PC 없음)이 한 점검에 걸리면 알림 1회이고 그때 4건이 모두 기록되어 있음, ② 두 팀의 알림이 번갈아 걸리면 팀마다 1회이고 허브가 받지 않은 점검은 0회, ③ 두 번째 알림의 기록이 실패해 점검이 중간에 끝나도 먼저 기록한 팀은 알림, ④ 사내 HTTP·SSE에서 알림 3건을 닫은 점검 뒤 팀 스트림의 이벤트가 1건임을 확인합니다. 수정 전 코드에서 ①·②는 알림이 4회여서, ④는 두 번째 알림 이벤트가 먼저 와서 실패했습니다. ③은 수정 전(알림마다 바로 알림)에도 통과하며 `finally`를 뺀 구현에서 실패하는 것을 확인했습니다. `npm run check:structure`(804개 파일, 오류 0), `npm run check:architecture`(482개 모듈, 위반 0), 변경 코드의 Prettier, `git diff --check`, `npm run build`를 통과했고 `calendar-reminders.spec.ts`를 Chromium에서 4건 통과했습니다. 실제 다바다허브 발송은 실행하지 않았습니다.
 
 전체 검증(2026-11-26, 커밋 `9176c9b`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 966건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `calendar-reminders`·`calendar-improvements` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 36건 통과.
+## 2026-11-25 — 캘린더 목록의 알림 발송 기록 조회와 슬라이드를 열 때의 바이트 전달 (#242)
+
+서로 무관한 작은 성능 수정 두 건입니다. DB 스키마·인덱스·저장 형식·API 응답은 바뀌지 않았습니다.
+
+**캘린더 목록의 발송 기록 조회(사내).** 사내 캘린더 목록은 시작 시각과 알림이 있는 일정마다 `calendar_reminder_sends`를 한 번씩 따로 조회해 `reminderStatus`를 계산했습니다(`sqlite-calendar.mjs`의 `visibleEntry`). `visibleEntry`를 부르는 곳은 목록 `listEntries`(여러 구성원 조회 `listMemberEntries`는 구성원마다 이를 호출)와 단건 `summary()`(일정 생성·수정·복제·조회 등 11곳) 둘이고, 둘 다 `entryColumns`로 일정 행을 읽습니다. 그래서 태그 목록과 같은 방식으로 발송 기록을 일정 행의 열(`sentReminders`, 알림 시각별 수신자 수의 JSON)로 함께 읽습니다. 시각이나 알림이 없는 행은 `CASE`로 조회를 건너뜁니다. 호출하는 쪽은 바꾸지 않았고, 상태 판정(`calendarReminderStatus`)·응답 필드·정렬은 그대로입니다. 조회는 기존 기본 키 `(entry_id, fire_at)`를 씁니다. 외부는 발송 기록이 없어 항상 `null`이므로 바꾸지 않았습니다.
+
+요청 하나가 실행한 SQL 수(회귀 검사와 같은 구성: 한 구성원의 10월 조회, 일정 7건 중 알림이 있는 5건):
+
+| 요청 | 수정 전 | 수정 후 |
+| --- | --- | --- |
+| `GET /calendar` | 17회(발송 기록 조회 5회) | 12회(발송 기록은 일정 목록 SQL 1회에 포함) |
+| 같은 요청, 알림 일정 5건 추가 | 22회(발송 기록 조회 10회) | 12회 |
+| `GET /calendar/members`(구성원 2명) | 26회 | 21회 |
+
+단건 조회도 알림이 있는 일정에서 발송 기록 조회 1회가 없어집니다. 응답 시간은 거의 같습니다. 사내 SQLite는 같은 프로세스의 동기 호출이라 조회 한 번의 비용이 작기 때문입니다. 임시 메모리 DB에서 일정 2,000건의 목록 SQL과 상태 계산용 자료 구성만 잰 중앙값은 다음과 같습니다(두 번 실행한 범위).
+
+| 알림이 있는 일정 | 수정 전 | 채택(조건부 열) | 조건 없는 열 | `IN (json_each)` 1회 추가 조회 |
+| --- | --- | --- | --- | --- |
+| 2,000건 모두 | 5.6~6.3ms | 4.9~5.4ms | 5.1~5.2ms | 6.2~6.6ms |
+| 400건 | 3.4ms | 3.4~3.5ms | 3.6~3.7ms | 3.6ms |
+| 1건 | 2.7~2.8ms | 2.8~2.9ms | 3.0ms | 2.9ms |
+
+줄어든 것은 SQL 실행 횟수이며, 흔한 경우(알림 일정이 적음)의 시간 차이는 측정 오차 수준입니다. 세 방식 중 흔한 경우에 수정 전과 차이가 가장 작은 조건부 열을 골랐습니다.
+
+**슬라이드를 열 때의 바이트 전달(사내·외부 공통 화면).** 슬라이드 화면(부모)은 자료를 열 때 서버에서 읽은 바이트(최대 25MB)를 편집기 프레임에 `postMessage`로 보내면서 transfer 목록을 주지 않아 전체를 구조화 복제했습니다. 부모가 프레임에 보내는 메시지를 모두 확인했습니다.
+
+- 바이트를 싣는 것은 `SlideEditorFrame.openFile`의 `open` 요청 하나입니다. 처음 열기(`begin`)와 충돌 창의 **내 변경을 버리고 최신 자료 열기**가 이 함수를 씁니다. 열 때마다 `readSlideFile`로 새 버퍼를 읽고, 보낸 뒤에는 응답의 `outcome`만 쓰며, 그 버퍼를 다른 곳에 넘기지 않습니다. 열지 못해 다시 열 때에도 새로 읽습니다.
+- `new`·`state`·`rename`·`save`·`prepare-leave` 요청과, 프레임 요청에 대한 응답(저장 대상, 저장할 이름, 공유 주소, 공유 본문 문자열)에는 바이트가 없습니다.
+- 썸네일용 보관(`thumbnails.remember`)·저장 재시도(`withRetry`)·생성 재시도 비교(`unconfirmedCreate`)·충돌 사본 저장이 쓰는 바이트는 프레임이 저장 때 보낸 다른 버퍼이고, 부모는 이를 프레임에 되돌려 보내지 않습니다.
+
+그래서 `SlideFrameBridge.request`에 transfer 목록 인자를 더하고 `open`만 방금 읽은 버퍼를 옮깁니다. 보낸 뒤 부모의 버퍼는 길이 0입니다.
+
+프레임 안에서 도는 코드(`scripts/canvaslide/frame/`)와 `shared/slides/slide-frame-protocol.js`는 내용이 고정 배포본의 빌드 ID에 들어가므로 바꾸지 않았습니다(빌드 ID `0de6fc3b40a8-60971cea6f49` 그대로). 따라서 다음 두 복사는 남아 있습니다.
+
+- 프레임 → 부모의 저장 바이트(`save`·`create`). 프레임의 `requestHost`는 이미 transfer 인자를 받으므로, 편집기 빌드를 새로 올릴 때 `slide-frame-file-access.ts`의 `storeTeamFile`이 `[bytes.buffer]`를 넘기면 됩니다. 원본 코덱이 인코딩 결과를 따로 보관하지 않는지는 그때 확인해야 합니다. 부모는 받은 바이트를 썸네일·재시도에 계속 쓰지만, 옮겨 받은 버퍼는 부모 소유이므로 영향이 없습니다.
+- 프레임이 받은 바이트를 디코딩 전에 한 번 더 복사하는 `slide-frame-main.ts`의 `new Uint8Array(request.bytes)`.
+
+검증(Node.js 22.23.1, PostgreSQL 17.11):
+
+- `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin node --test --test-concurrency=1 tests/calendar/*.test.mjs` 56건 통과(실패·건너뜀 0). 새 검사는 알림 없음·시각만 있음·대기·일부 전송·모두 전송·받은 사람 없음·보내지 못함의 상태, 응답 필드 목록, 단건·여러 구성원 조회와의 일치, 알림 일정을 더해도 같은 SQL 수를 확인합니다. 수정 전 코드에서는 발송 기록 조회가 5회라 실패합니다(`5 !== 1`).
+- `npm run build` 통과.
+- `npx playwright test tests/browser/slides tests/browser/calendar/calendar-reminders.spec.ts --project=chromium` 31건 통과(슬라이드 27건, 알림 4건). 새 슬라이드 검사는 연 뒤 부모가 읽은 버퍼가 비었는지와, 저장·충돌 뒤 최신 자료 다시 열기·다시 저장·카드 썸네일·다시 열기를 확인합니다. 수정 전 빌드에서는 부모가 17,125바이트 버퍼를 그대로 갖고 있어 실패합니다. Firefox·WebKit에서는 새 검사와 충돌 사본·5.9MB 자료 검사만 실행해 6건 통과했습니다.
+- `npm run check:structure`(804개 파일, 오류 0), `npm run check:architecture`(482개 모듈, 위반 0), 변경 파일 `prettier --check`, `git diff --check` 통과.
+
+전체 검증(2026-11-26, 커밋 `63e8007`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 963건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `tests/browser/slides`·`calendar-reminders`·`calendar-improvements` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 117건 통과.
 
 ## 2026-11-24 — 사내에서 정한 아바타를 외부(팀) 사이트에 그대로 표시
 
