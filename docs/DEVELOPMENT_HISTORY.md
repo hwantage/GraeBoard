@@ -80,7 +80,7 @@
 - 새 검사 `tests/slides/slide-file-prune-contract.test.mjs`: 한 벌의 계약 4건을 사내·외부 저장소에 각각 실행합니다. 저장과 받은 버전의 작업량이 revision 15와 60에서 같음(삭제 호출 6), 보관 범위를 벗어난 내용과 썸네일 삭제 및 다른 자료·같은 자료의 보관 중인 revision이 쓰는 내용 유지, 받은 버전만으로 밀려난 내용의 삭제, 삭제가 한 번 실패한 정리를 다음 저장이 마침과 연속 3번 실패한 내용이 남는 한계.
 - 변경 전 코드에 새 검사를 실행(`SLIDE_PRUNE_LOOKBACK`만 검사 파일 안에 정의): 두 저장소 모두 작업량·받은 버전·실패한 정리 3건이 실패하고(상위 포함 8건), 동작이 바뀌지 않은 내용 유지·삭제 1건은 통과했습니다.
 - `node --test tests/tooling/storage-import-boundaries.test.mjs` 2건 통과, `npm run check:structure`(811 파일, 오류 0, 검토 알림 38), `npm run check:architecture`(484 모듈, 위반 0), `npm run build:edge`, 변경한 코드 파일의 `npx prettier --check`, `git diff --check` 통과.
-- 실행하지 않은 것: `npm test` 전체, `npm run build`, 브라우저 검사, 실제 Cloudflare gateway·R2와 Supabase Edge에서의 확인.
+- 실행하지 않은 것: 실제 Cloudflare gateway·R2와 Supabase Edge에서의 확인.
 
 전체 검증(2026-11-26, 커밋 `cb79f00`, #254 브랜치 위): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 1,020건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `tests/browser/slides` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 114건 통과. 실제 Cloudflare gateway·R2·Supabase Edge에서는 확인하지 않았다.
 
