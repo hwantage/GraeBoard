@@ -179,7 +179,7 @@ export function slideSyncContract(name, makeStores) {
     if (!peers) return;
     const { inside, outside, teamId, remote } = peers;
     const large = slide("large", MAX_SLIDE_FILE_BYTES);
-    assert.equal(slideChunks(large).length, 7);
+    assert.equal((await slideChunks(large)).length, 7);
     assert.equal(SLIDE_CHUNK_BYTES, 4 * 1024 * 1024);
     const file = await inside.create("큰 자료", large);
     const small = await inside.create("작은 자료", slide("작은 자료"));
