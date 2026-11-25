@@ -295,6 +295,79 @@ export function slideSyncContract(name, makeStores) {
     );
   });
 
+  test(`${name}: 조각 한도를 다 쓴 회차는 기다리는 자료의 내용을 읽지 않고, 이름 변경·삭제는 그 회차에도 게시한다`, async (t) => {
+    const peers = await twoPeers(t, makeStores);
+    if (!peers) return;
+    const { inside, outside, teamId } = peers;
+    // Publication goes smallest first, so the sizes fix the order below.
+    const sizes = [200, 300, 400];
+    const edited = [];
+    for (const size of sizes)
+      edited.push(
+        await outside.create(`자료 ${size}`, slide(`before ${size}`, size)),
+      );
+    const renamed = await outside.create("이름 바꿀 자료", slide("r", 1000));
+    const removed = await outside.create("지울 자료", slide("d", 1100));
+    await settle(outside, inside);
+
+    const contents = sizes.map((size) => slide(`after ${size}`, size));
+    for (const [index, file] of edited.entries())
+      await outside.save(file.id, contents[index]);
+    await outside.rename(renamed.id, "바꾼 이름");
+    await outside.remove(removed.id);
+    // Two chunks each.
+    const larger = [1000, 2000].map((extra) =>
+      slide(`large ${extra}`, SLIDE_CHUNK_BYTES + extra),
+    );
+    const large = [];
+    for (const [index, bytes] of larger.entries())
+      large.push(await outside.create(`큰 자료 ${index + 1}`, bytes));
+
+    // What one pass read to publish, by content hash, with its outcome.
+    const readContent = outside.store.syncReadContent.bind(outside.store);
+    let reads = [];
+    outside.store.syncReadContent = (team, hash) => {
+      reads.push(hash);
+      return readContent(team, hash);
+    };
+    const pass = async () => {
+      reads = [];
+      const result = await outside.sync({ chunks: 2, files: 50 });
+      return [reads, result.published, result.pending];
+    };
+    const [a, b, c] = contents.map(sha);
+    const [x, y] = larger.map(sha);
+
+    // Two small files use the budget. The third and both large files wait
+    // unread; the rename and the delete need no content and are published.
+    assert.deepEqual(await pass(), [[a, b], 4, 3]);
+    await inside.sync();
+    const listed = (title, bytes) => `${title}=${sha(bytes).slice(0, 8)}`;
+    assert.deepEqual(
+      await inside.list(),
+      [
+        listed("자료 200", contents[0]),
+        listed("자료 300", contents[1]),
+        listed("자료 400", slide("before 400", 400)),
+        listed("바꾼 이름", slide("r", 1000)),
+      ].sort(),
+    );
+    // The budget ends inside the first large file: the second is not read.
+    assert.deepEqual(await pass(), [[c, x], 1, 2]);
+    assert.deepEqual(await pass(), [[x, y], 1, 1]);
+    assert.deepEqual(await pass(), [[y], 1, 0]);
+    assert.deepEqual(await pass(), [[], 0, 0]);
+
+    await settle(inside, outside);
+    assert.deepEqual(await inside.list(), await outside.list());
+    assert.equal((await inside.list()).length, 6);
+    for (const [index, file] of edited.entries())
+      assert.equal((await inside.read(file.id)).equals(contents[index]), true);
+    for (const [index, file] of large.entries())
+      assert.equal(sha(await inside.read(file.id)), sha(larger[index]));
+    assert.equal(await inside.store.get(teamId, removed.id), null);
+  });
+
   test(`${name}: 양쪽이 같은 자료를 고치면 먼저 게시된 쪽이 원본으로 남고 늦은 쪽은 사본으로 보존된다`, async (t) => {
     const peers = await twoPeers(t, makeStores);
     if (!peers) return;
