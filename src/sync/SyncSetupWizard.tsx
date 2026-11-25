@@ -1436,8 +1436,9 @@ export default function SyncSetupWizard({
                 </li>
                 <li>
                   <b>Actions</b> 탭에서 워크플로 사용을 허용합니다(Fork는 처음에
-                  꺼져 있습니다). 왼쪽 <b>팀 사이트 release 배포</b>를 고르고{" "}
-                  <b>Run workflow → Run workflow</b>를 누릅니다.
+                  꺼져 있습니다). 왼쪽{" "}
+                  <b>팀 외부 사이트 배포 (운영=release, 개발 Fork=main)</b>를
+                  고르고 <b>Run workflow → Run workflow</b>를 누릅니다.
                 </li>
                 <li>
                   몇 분 뒤 초록 체크가 표시되면 끝입니다. Supabase Edge 함수{" "}
