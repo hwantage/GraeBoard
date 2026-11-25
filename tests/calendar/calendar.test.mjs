@@ -3775,3 +3775,144 @@ test("일정 시작 시각·알림은 함께 저장하고 충돌 시 최신 값�
   );
   assert.equal((await f.req("/push-address/test", "POST", {})).status, 409);
 });
+
+// The statements the fixture's database runs while `work` waits for its
+// requests.
+async function statementsDuring(db, work) {
+  const statement = Object.getPrototypeOf(db.prepare("SELECT 1")),
+    original = {
+      all: statement.all,
+      get: statement.get,
+      run: statement.run,
+    },
+    sql = [];
+  for (const [name, method] of Object.entries(original))
+    statement[name] = function (...args) {
+      sql.push(this.sourceSQL);
+      return method.apply(this, args);
+    };
+  try {
+    return { result: await work(), sql };
+  } finally {
+    Object.assign(statement, original);
+  }
+}
+
+test("캘린더 목록은 알림이 있는 일정이 늘어도 같은 수의 SQL로 알림 상태를 돌려준다", async (t) => {
+  // The test clock is 2026-10-17 12:00 in Korea.
+  const f = await fixture(t);
+  const fireAt = (date, time, minutes) =>
+    new Date(
+      Date.parse(`${date}T${time}:00+09:00`) - minutes * 60000,
+    ).toISOString();
+  const add = async (title, date, time, reminders, sent) => {
+    const created = await f.req("/calendar/entries", "POST", {
+      id: randomUUID(),
+      teamId: f.teamId,
+      userId: f.people.member.id,
+      date,
+      title,
+      time,
+      reminders,
+    });
+    assert.equal(created.status, 201);
+    for (const [minutes, recipients] of sent)
+      f.db
+        .prepare("INSERT INTO calendar_reminder_sends VALUES(?,?,?,?)")
+        .run(created.data.id, fireAt(date, time, minutes), now(), recipients);
+    return created.data.id;
+  };
+  // Title, date, time, reminders, [minutes before, recipients] of each
+  // reminder already sent, and the status to expect.
+  const sentBoth = [
+    [10, 2],
+    [0, 1],
+  ];
+  const cases = [
+    ["시각 없음", "2026-10-20", null, [], [], null],
+    ["알림 없음", "2026-10-20", "09:30", [], [], null],
+    ["보내기 전", "2026-10-20", "09:30", [0, 10], [], "pending"],
+    ["하나만 보냄", "2026-10-20", "09:30", [0, 10], [[10, 1]], "pending"],
+    ["모두 보냄", "2026-10-16", "09:30", [0, 10], sentBoth, "sent"],
+    ["받은 사람 없음", "2026-10-20", "09:30", [0, 10], [[10, 0]], "failed"],
+    // Its only reminder is more than the grace time overdue.
+    ["보내지 못함", "2026-10-16", "09:30", [0], [], "failed"],
+  ];
+  const ids = {},
+    expected = {};
+  for (const [title, date, time, reminders, sent, status] of cases) {
+    ids[title] = await add(title, date, time, reminders, sent);
+    expected[title] = status;
+  }
+  const statuses = (entries) =>
+    Object.fromEntries(
+      entries.map((entry) => [entry.title, entry.reminderStatus]),
+    );
+  const sendReads = (sql) =>
+    sql.filter((text) => text.includes("calendar_reminder_sends")).length;
+
+  const first = await statementsDuring(f.db, () => f.list());
+  assert.equal(first.result.status, 200);
+  const listed = first.result.data.entries;
+  assert.deepEqual(statuses(listed), expected);
+  // The response carries nothing of the send log but the status.
+  for (const entry of listed)
+    assert.deepEqual(Object.keys(entry).sort(), [
+      "checkedTagIds",
+      "date",
+      "endDate",
+      "hasDocument",
+      "id",
+      "lane",
+      "preview",
+      "reminderStatus",
+      "reminders",
+      "revision",
+      "tagIds",
+      "teamId",
+      "time",
+      "title",
+      "updatedAt",
+      "userId",
+    ]);
+  // Five entries have reminders; the statement that lists the entries is the
+  // only one that reads the send log.
+  assert.equal(sendReads(first.sql), 1);
+
+  // The same entries read one at a time, and in the several-member request
+  // that lists each member's entries with one statement.
+  for (const entry of listed)
+    assert.deepEqual(
+      (await f.req(`/calendar/entries/${ids[entry.title]}`)).data,
+      entry,
+    );
+  const members = await statementsDuring(f.db, () =>
+    f.req(
+      `/calendar/members?${new URLSearchParams({
+        teamId: f.teamId,
+        userIds: [f.people.member.id, f.people.second.id].join(","),
+        from: "2026-10-01",
+        to: "2026-10-31",
+      })}`,
+    ),
+  );
+  assert.deepEqual(members.result.data.members, {
+    [f.people.member.id]: first.result.data,
+    [f.people.second.id]: { entries: [], weekly: [], layout: [] },
+  });
+  assert.equal(sendReads(members.sql), 2);
+
+  // Five more entries with reminders cost no further statement.
+  for (let index = 0; index < 5; index++)
+    await add(`추가 ${index}`, "2026-10-21", "14:00", [0, 5], [[5, index % 2]]);
+  const second = await statementsDuring(f.db, () => f.list());
+  assert.deepEqual(statuses(second.result.data.entries), {
+    ...expected,
+    "추가 0": "failed",
+    "추가 1": "pending",
+    "추가 2": "failed",
+    "추가 3": "pending",
+    "추가 4": "failed",
+  });
+  assert.equal(second.sql.length, first.sql.length);
+});

@@ -32,10 +32,14 @@ import {
 } from "../../documents/document-storage.mjs";
 import { resolveSqliteDocumentLinks } from "../documents/sqlite-document-links.mjs";
 
+// sentReminders is the send log of an entry that has reminders: recipients by
+// reminder time. It comes with the row, so a list does not run a statement
+// per entry for it, and an entry without reminders does not look it up.
 const entryColumns = `id,team_id AS teamId,user_id AS userId,date,end_date AS endDate,lane,title,start_time AS time,reminders,preview,revision,updated_at AS updatedAt,
   COALESCE((SELECT has_content FROM document_versions WHERE id=calendar_entries.version_id),0) AS hasDocument,
   (SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM calendar_entry_tags WHERE entry_id=calendar_entries.id ORDER BY position)) AS tagIds,
-  (SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM calendar_entry_tags WHERE entry_id=calendar_entries.id AND checked=1 ORDER BY position)) AS checkedTagIds`;
+  (SELECT json_group_array(tag_id) FROM (SELECT tag_id FROM calendar_entry_tags WHERE entry_id=calendar_entries.id AND checked=1 ORDER BY position)) AS checkedTagIds,
+  CASE WHEN start_time IS NOT NULL AND reminders IS NOT NULL THEN (SELECT json_group_object(fire_at,recipients) FROM calendar_reminder_sends WHERE entry_id=calendar_entries.id) END AS sentReminders`;
 const tagColumns = `id,team_id AS teamId,user_id AS userId,name,color,kind,revision,
   (SELECT count(*) FROM calendar_entry_tags et JOIN calendar_entries e ON e.id=et.entry_id WHERE et.tag_id=calendar_tags.id AND e.deleted_at IS NULL) AS usageCount`;
 const entryJson = (row) => ({
@@ -133,20 +137,16 @@ function calendarOperations({
       : { propertyId: "", values: [], mode: "include", revision: 0 };
   }
   // This site sends the reminders, so it also knows how each one went.
-  const sentReminders = db.prepare(
-    "SELECT fire_at,recipients FROM calendar_reminder_sends WHERE entry_id=?",
-  );
-  function visibleEntry(row, visibility = retentionView(db, row.teamId)) {
+  function visibleEntry(
+    { sentReminders, ...row },
+    visibility = retentionView(db, row.teamId),
+  ) {
     const entry = entryJson(row);
     entry.reminderStatus =
       entry.time && entry.reminders.length
         ? calendarReminderStatus(
             entry,
-            new Map(
-              sentReminders
-                .all(entry.id)
-                .map((sent) => [sent.fire_at, sent.recipients]),
-            ),
+            new Map(Object.entries(JSON.parse(sentReminders))),
             Date.now(),
           )
         : null;
