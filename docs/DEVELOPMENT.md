@@ -277,6 +277,15 @@ CanvaSlide 주소에서 기록을 불러올 때와 자료 목록·편집기를 �
 
 서버는 `SlideFileService`(권한·검증·조건부 저장·임시 공유)와 저장소로 나눕니다. 사내는 `SqliteSlideFileRepository`(독립 SQLite와 파일), 외부는 `PostgresSlideFileRepository`(`graeboard_slides` 스키마와 R2)이며 두 저장소는 같은 계약과 같은 동기화 메서드(`sync*`)를 구현합니다. 동기화 규칙은 `syncSlideFiles`(`server/sync/core/slide-file-branch.mjs`)에만 있고 전송 수단(Git CLI·GitHub API)과 저장소를 인자로 받습니다. 저장 요청은 사이트 저장소에 즉시 기록합니다. 사내 타이머와 외부 gateway Cron은 각각 1분마다 활성 팀의 변경을 확인하며, 자료별 현재 상태를 읽으므로 한 주기 안의 연속 저장은 최신본 한 건으로 게시됩니다. 이름 길이는 입력값과 NFC로 정규화한 저장값 모두 120자까지 허용합니다. 저장 형식·API·브랜치 형식은 [데이터 형식](DATA_FORMAT.md#슬라이드-팀-자료), 빌드·버전 갱신·migration·백업은 [운영 안내](OPERATIONS.md#슬라이드-편집기와-팀-자료)에 있습니다.
 
+사내 서버는 프로세스 하나가 모든 요청을 처리하므로 `SqliteSlideFileRepository`는 자료 바이트의 읽기·쓰기·fsync를 `node:fs/promises`로, SHA-256을 `slideContentHash`(WebCrypto, Node에서는 스레드 풀에서 계산)로 처리합니다. 25MiB 자료를 저장·조회·복사하거나 동기화가 큰 자료 여러 개를 옮기는 동안에도 다른 요청에 응답합니다. 서비스가 요청 본문의 해시를 구할 때도 같은 함수를 씁니다. SQLite 트랜잭션은 동기 그대로이고 안에서 `await`하지 않습니다. 바이트를 쓰는 사이에는 다른 요청이 끼어들 수 있으므로 트랜잭션이 전제하는 조건은 `await` 앞이 아니라 트랜잭션과 같은 동기 구간에서 확인합니다.
+
+- `#stored`가 그 지점입니다. 내용 파일이 제자리에 있는지(없으면 다시 씀)와 팀이 아직 있는지(`teamExists`, `server/app.mjs`가 업무 DB의 `teams`를 조회)를 확인하고 곧바로 트랜잭션을 실행합니다. 영구 삭제된 팀이면 방금 쓴 파일까지 지우고 404로 끝냅니다.
+- 기준 revision·제목·삭제 여부(`replace`), 같은 생성 요청 ID의 중복(`create`), 받은 버전을 정할 때의 로컬 상태(`syncApply`의 `expect`)는 트랜잭션 안에서 다시 읽습니다.
+- 보관 범위를 벗어난 파일의 정리(`#prune`)는 참조 확인과 삭제가 한 동기 구간이어야 `#stored`의 확인과 순서가 정해지므로 비동기로 바꾸지 않습니다. 파일 삭제는 내용을 읽지 않습니다.
+- 목록·메타데이터·이름 변경·삭제·`titles`·`removeTeam`·동기화 기록처럼 바이트를 다루지 않는 메서드는 동기 그대로입니다. 호출부는 외부 저장소와 같은 계약으로 모두 `await`합니다.
+
+`syncSlideFiles`가 게시할 때의 조각 해시(`slideChunks`)와 수신한 자료의 전체 해시(`digest`)는 사내·외부 공용 코드에서 동기로 계산합니다. 그래서 동기화 한 회차에서 다른 요청이 기다리는 가장 긴 구간은 자료 하나(최대 25MiB)의 SHA-256 계산 시간입니다. 겹치는 동작과 처리 중 응답은 `tests/slides/slide-file-concurrency.test.mjs`가 확인합니다.
+
 `npm run build`는 편집기 배포본을 준비·검증해 `dist/tools/canvaslide/`에 설치하며 실패하면 빌드가 실패합니다. 어댑터를 고쳤으면 `npm run build:canvaslide && npm run build:canvaslide:pack`으로 다시 조립·묶어 고정 파일을 갱신합니다(`tests/slides/canvaslide-dist-pipeline.test.mjs`가 불일치를 잡습니다). `scripts/canvaslide/frame/`의 파일은 내용이 빌드 ID에 들어가므로 포맷만 바꿔도 새 빌드가 됩니다.
 
 ### 접속 토큰과 클라이언트 시각
