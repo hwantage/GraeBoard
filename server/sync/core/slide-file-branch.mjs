@@ -155,10 +155,11 @@ export async function syncSlideFiles({
     raced: false,
   };
   // Nothing new on the branch and nothing to publish: the pass ends after the
-  // one request that read the head.
+  // one request that read the head. Whether a file is unpublished does not
+  // depend on its chunk list, so this read leaves the lists out.
   if (
     head === (state.head || null) &&
-    !(await store.syncFiles(teamId)).some(slideFileDirty)
+    !(await store.syncFiles(teamId, { chunks: false })).some(slideFileDirty)
   )
     return result;
   const tree = new Map();
