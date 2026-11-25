@@ -74,6 +74,8 @@
 
 같은 장비·같은 방식의 로컬 측정(25MiB 4건, 3회의 중앙값/최대)에서 동기화 한 회차의 가장 긴 구간은 게시 9.0/9.1ms → 2.0/2.2ms, 수신 9.7/10.1ms → 2.3/2.8ms가 됐습니다. 회차 전체 시간은 같습니다(게시 80.2 → 80.3ms, 수신 159.1 → 160.0ms). 검사 2건을 더해 `slide-file-concurrency`는 10건입니다. 폴더를 만든 뒤 옮기기 직전의 순간은 `fs/promises.rename`을 감싸 재현하며, 반영 전 코드에서는 각각 ENOENT와 남은 조각 폴더로 실패합니다. 실행 결과: `tests/slides/*.test.mjs` 11개 파일 91건 통과(실패·건너뜀 0), `tests/tooling/storage-import-boundaries.test.mjs` 2건 통과, `npm run check:structure`(805개 파일, 오류 0), `npm run check:architecture`(482개 모듈, 위반 0), `npm run build:edge`, 바뀐 소스의 `prettier --check`, `git diff --check` 통과. 전체 `npm test`와 브라우저 검사는 이 반영 뒤 다시 실행하지 않았습니다.
 
+리뷰 반영 뒤 전체 검증(2026-11-26, 커밋 `33ac9d7`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 972건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `tests/browser/slides`·`document-links` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 165건 통과.
+
 ## 2026-11-24 — 사내에서 정한 아바타를 외부(팀) 사이트에 그대로 표시
 
 외부 사이트에서 모든 구성원이 기본 초록색·이름 첫 글자로 보이던 원인은 저장 실패가 아니었습니다. 로컬 외부 경로(Pages 진입점 → gateway → Edge 핸들러 → PostgreSQL 17)에서 외부 `PATCH /auth/profile`은 200으로 저장·유지됐습니다. 구성원 동기화가 이름·이메일·역할·활성 상태만 보내 사내 색·글자·이미지가 외부로 전혀 전달되지 않는 것이 원인입니다. 실제 배포 환경(Supabase Edge·Cloudflare)의 외부 저장은 확인하지 않았습니다.
