@@ -71,7 +71,7 @@ export default function SlidesWorkspace({
 }) {
   const [editor, setEditor] = useState<SlideEditorBuild | null | undefined>();
   const thumbnails = useMemo(
-    () => (editor ? new SlideThumbnails(editor.path) : null),
+    () => (editor ? new SlideThumbnails(editor.path, user.id) : null),
     [editor, teamId, user.id],
   );
   const [list, setList] = useState<SlideFiles | null>(null);
