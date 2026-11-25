@@ -298,8 +298,8 @@ test("현재 revision의 파일이 없으면 백업을 만들지 않는다", asy
   assert.equal(existsSync(backup + ".slides.partial"), false);
 });
 
-test("현재 revision의 파일 내용이 해시와 다르면 백업을 만들지 않는다", (t) => {
-  const state = fixture(t);
+test("현재 revision의 파일 내용이 해시와 다르면 백업을 만들지 않는다", async (t) => {
+  const state = await fixture(t);
   writeFileSync(
     slideBlobPath(state.slideFilesDir, state.teamId, sha(state.current)),
     "{}",
@@ -318,8 +318,8 @@ test("현재 revision의 파일 내용이 해시와 다르면 백업을 만들�
   assert.equal(existsSync(backup + ".slides.partial"), false);
 });
 
-test("백업은 슬라이드 파일을 한 번, 복원은 두 번만 읽고 통째로 올리지 않는다", (t) => {
-  const state = fixture(t);
+test("백업은 슬라이드 파일을 한 번, 복원은 두 번만 읽고 통째로 올리지 않는다", async (t) => {
+  const state = await fixture(t);
   const each = (times) =>
     [state.first, state.current, slide("삭제한 자료")]
       .map((bytes) => [`${sha(bytes)}.canvaslide`, times])
