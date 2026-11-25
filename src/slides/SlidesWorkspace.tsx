@@ -13,7 +13,7 @@ import { Button } from "../ui/Button";
 import { Empty } from "../ui/Empty";
 import { ErrorNote } from "../ui/ErrorNote";
 import CopyDocumentLinkButton from "../documents/CopyDocumentLinkButton";
-import SlideLoadingState from "./SlideLoadingState";
+import { SlidesLoadingBoard } from "./SlideLoadingState";
 import { isSlideShareId } from "../../shared/slides/slide-file-rules.js";
 import {
   listSlideFiles,
@@ -28,29 +28,17 @@ import SlideEditorFrame, {
 import { SlideThumbnails } from "./slide-thumbnails";
 import SlideFileActions from "./SlideFileActions";
 import SlideFileList, { type SlideListView } from "./SlideFileList";
+import {
+  readSlideAddress,
+  slideShareOtherTeam,
+  writeSlideAddress,
+} from "./slide-address";
 import "./slides.css";
 
 export type SlidesWorkspaceHandle = {
   // Resolves false when the author keeps editing unsaved work.
   leave: () => Promise<boolean>;
 };
-
-// The slide address inside `/slides`: `file` opens a team file, `share` a
-// temporary snapshot (with the `team` it belongs to).
-function readAddress() {
-  const params = new URLSearchParams(location.search);
-  return {
-    file: params.get("file"),
-    share: params.get("share"),
-    team: params.get("team"),
-  };
-}
-function writeAddress(values: { file?: string } = {}) {
-  const url = new URL(location.href);
-  for (const key of ["file", "share", "team"]) url.searchParams.delete(key);
-  if (values.file) url.searchParams.set("file", values.file);
-  history.replaceState(history.state, "", url);
-}
 
 export default function SlidesWorkspace({
   ref,
@@ -94,18 +82,13 @@ export default function SlidesWorkspace({
     }
   }
   const [start, setStart] = useState<SlideEditorStart | null>(() => {
-    const { team, share, file } = readAddress();
+    const { team, share, file } = readSlideAddress();
     if (team && team !== teamId) return null;
     if (share && isSlideShareId(share))
       return { kind: "share", shareId: share };
     return file ? { kind: "file", fileId: file } : null;
   });
-  const [otherTeam] = useState(() => {
-    const address = readAddress();
-    return address.team && address.team !== teamId && address.share
-      ? address.team
-      : null;
-  });
+  const [otherTeam] = useState(() => slideShareOtherTeam(teamId));
   const frame = useRef<SlideEditorHandle>(null);
   const refresh = useCallback(() => setReload((value) => value + 1), []);
 
@@ -134,7 +117,7 @@ export default function SlidesWorkspace({
       if (start && frame.current && !(await frame.current.leave()))
         return false;
       // A share link for another team is opened after the team changes.
-      if (!otherTeam) writeAddress();
+      if (!otherTeam) writeSlideAddress();
       return true;
     },
   }));
@@ -144,7 +127,7 @@ export default function SlidesWorkspace({
   function open(next: SlideEditorStart) {
     setError("");
     setStart(next);
-    writeAddress(next.kind === "file" ? { file: next.fileId } : {});
+    writeSlideAddress(next.kind === "file" ? { file: next.fileId } : {});
   }
   async function close() {
     if (frame.current && !(await frame.current.leave())) return;
@@ -153,7 +136,7 @@ export default function SlidesWorkspace({
   function showList() {
     setStart(null);
     setError("");
-    writeAddress();
+    writeSlideAddress();
     refresh();
   }
   function deleted(fileId: string) {
@@ -191,14 +174,7 @@ export default function SlidesWorkspace({
     );
   }
   if (editor === undefined || !list)
-    return (
-      <section className="board slides-board">
-        <ErrorNote error={error} />
-        {!error && (
-          <SlideLoadingState label="CanvaSlide를 불러오는 중입니다." />
-        )}
-      </section>
-    );
+    return <SlidesLoadingBoard error={error} />;
   const initialFile =
     start?.kind === "file"
       ? list.files.find((file) => file.id === start.fileId)
@@ -251,7 +227,7 @@ export default function SlidesWorkspace({
           onNew={openNew}
           onSaved={(file, bytes) => {
             thumbnails?.remember(file, bytes);
-            writeAddress({ file: file.id });
+            writeSlideAddress({ file: file.id });
             refresh();
           }}
         />

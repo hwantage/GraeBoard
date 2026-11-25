@@ -23,7 +23,7 @@ import Insights from "../insights/Insights";
 import canvaSlideIcon from "../../assets/icon/canvaslide-wing-smile-64.png";
 import { currentRoute } from "./useWorkspaceRoute";
 import SlideLoadingState from "../slides/SlideLoadingState";
-import SlidesWorkspace from "../slides/SlidesWorkspace";
+import SlidesWorkspaceLoader from "../slides/SlidesWorkspaceLoader";
 import type { TaskMetrics } from "../insights/insights-types";
 import DocumentLinkPanel, {
   loadDocumentLink,
@@ -2458,7 +2458,7 @@ function Workspace({
             }}
           />
         ) : screen === "slides" ? (
-          <SlidesWorkspace
+          <SlidesWorkspaceLoader
             key={`${teamId}:${slideLinkOpens}`}
             ref={slidesRef}
             teamId={teamId}

@@ -254,6 +254,12 @@ Milkdown 진입 전 AST 왕복 검사를 하고 안전한 `<br>`만 줄바꿈으
 
 CanvaSlide 주소에서 기록을 불러올 때와 자료 목록·편집기를 준비할 때는 기존 가오리 원화의 날개 부분만 CSS로 움직입니다. 기기의 동작 줄이기 설정에서는 같은 그림을 정지 상태로 표시합니다. 카드에는 첫 프레임 썸네일이 준비될 때까지 상단 메뉴와 같은 원형 아이콘을 표시합니다.
 
+슬라이드 화면의 코드와 스타일은 첫 화면 묶음에 넣지 않고 `/slides`를 처음 열 때 받습니다. `App`은 `SlidesWorkspaceLoader`를 쓰고, 이 파일이 `lazy(() => import("./SlidesWorkspace"))`·`<Suspense>`로 `SlidesWorkspace`와 그 화면만 쓰는 목록·편집기 프레임·파일 도구·`slides.css`를 한 묶음으로 불러옵니다(업무 문서의 `TaskDocumentPanel`, 이모지의 `EmojiPickerPanel`과 같은 방식). 상단 메뉴 아이콘과 로딩 표시는 앱과 함께 받습니다. `SlideLoadingState.tsx`가 가오리와, 화면이 준비되기 전의 모습(`SlidesLoadingBoard`: 화면 틀 안의 가오리 또는 오류 안내)을 맡고, 그 스타일인 화면 틀 `.slides-board`와 가오리 규칙만 `slide-loading-state.css`에 둡니다. 그래서 코드를 받는 동안에도 화면이 스스로 자료 목록을 읽을 때와 같은 가오리가 같은 자리에 보입니다.
+
+코드를 받는 동안과 받지 못했을 때는 같은 파일의 `SlidesWorkspacePending`이 화면 자리에서 같은 `ref`로 `leave()`에 답합니다. 열린 자료가 없을 때의 `SlidesWorkspace.leave()`처럼 주소의 `file`·`share`·`team`을 지우고 이동을 허용하며, 다른 팀의 공유 링크는 팀을 바꾼 뒤 열리도록 남깁니다. 그 사이 다른 화면·팀으로 옮겨도 자료 주소가 남지 않아, 나중에 슬라이드 화면으로 돌아왔을 때 떠난 자료가 다시 열리거나 다른 팀에서 그 자료를 찾지 않습니다. 주소 읽기·쓰기와 이 규칙은 두 곳이 함께 쓰는 `slide-address.ts`에 있습니다. `/slides?file=…`·`/slides?team=…&share=…`·`/links/slide/…`로 들어온 주소와 문서의 슬라이드 링크가 정한 주소는 `SlidesWorkspace`가 마운트될 때 읽으므로 코드가 늦게 와도 같은 자료가 열립니다. 파일을 받지 못하면(서버 재빌드로 옛 파일이 지워졌거나 오프라인) `SlidesLoadBoundary`가 화면 틀 안에 **CanvaSlide 화면을 불러오지 못했습니다. 화면을 새로고침한 뒤 다시 열어 주세요.**(`role="alert"`)를 보이고 상단 메뉴로 다른 화면에 갈 수 있습니다. `lazy`가 실패를 기억하므로 다시 시도하지 않고 새로고침을 안내합니다(`Panels.tsx`의 `DocumentLoadBoundary`와 같은 방식).
+
+늦게 받는 `slides.css`는 `styles.css`보다 뒤에 적용됩니다. 선택자 무게가 같으면 뒤의 규칙이 이기므로, `styles.css`가 정하는 값을 `slides.css`에서 같은 무게로 다시 정하지 않습니다. 편집 화면 머리줄의 바로 아래 버튼(목록·링크 복사)은 `styles.css`의 `.slide-editor-bar > .button` 여백을 그대로 쓰고, `slides.css`는 600px 이하에서 파일 버튼(`.slide-editor-bar > .heading-actions > .button`)의 여백만 없앱니다. 앱과 함께 받는 `slide-loading-state.css`는 이전의 `slides.css`처럼 `styles.css`보다 앞에 놓입니다.
+
 카드가 화면에 들어오면 팀 권한을 확인하는 `GET /api/teams/:teamId/slides/:fileId/thumbnail`에서 JPEG를 조회합니다. 캐시에 없으면 목록이 자료를 한 번에 하나씩 읽어 고정 배포본의 읽기 전용 `thumbnail.js`를 호출합니다. 직전 편집·가져오기의 바이트가 있으면 재사용합니다. 원본 코덱과 발표 순서·도형 렌더러를 사용하며, 프레임이 없으면 콘텐츠 경계를 맞춥니다. 사진은 디코딩을 마친 뒤 문서의 겹침 순서대로 캔버스에 그립니다. 열람자는 화면에서 생성한 이미지를 볼 수 있고 기여자는 `PUT`으로 현재 해시의 JPEG를 사이트에 캐시합니다. 이 메모리 캐시는 팀과 콘텐츠 해시를 키로 쓰며 용량 한도·프로세스 재시작·Edge 인스턴스 교체로 비워지면 다시 생성됩니다.
 
 편집기의 `dirty` 상태로 이동 확인과 브라우저 종료 경고를 판단합니다. 무편집 초안은 즉시 목록으로 이동합니다. 정상 저장 뒤에는 프레임의 복구 저장 큐가 자기 세션의 IndexedDB 사본을 지울 때까지 기다립니다. 정리 도중 문서가 다시 바뀌면 편집 화면을 유지합니다.
@@ -265,7 +271,7 @@ CanvaSlide 주소에서 기록을 불러올 때와 자료 목록·편집기를 �
 | 저장 대상 | 편집기 문서 상태의 `filePath`에 `graeboard-slides://<팀>/<자료>?revision=…` 형태로 둡니다(`slide-frame-binding.ts`). 새 문서·파일 열기·예제·공유 링크·복구 등 편집기의 모든 문서 교체가 이 값을 함께 바꾸므로, 팀 자료가 아닌 문서가 직전 팀 자료의 저장 대상을 물려받지 않고 복구본은 편집을 시작한 revision을 유지합니다. |
 | 저장 | 편집기의 메뉴·단축키가 쓰는 같은 저장 큐(`saveCurrentDocument → saveDocumentFile → completeSave`)에서 어댑터가 원본 코덱으로 만든 바이트를 부모에 넘기고, 서버가 저장을 확정한 뒤에만 반환합니다. 실패·취소·충돌에서는 반환하지 않거나 `null`을 돌려 편집기가 저장 완료로 처리하지 않습니다. |
 | 부모↔프레임 메시지 | `shared/slides/slide-frame-protocol.js`의 채널. 양쪽 모두 보낸 창·같은 출처·편집 세션 값을 확인합니다. 로그인 자격 증명은 프레임에 주지 않고 부모(`SlideEditorFrame`)가 기존 `api()`로 호출합니다. |
-| 화면 이동 | `useWorkspaceNavigation`이 메뉴·뒤로 가기·팀 변경 전에 `SlidesWorkspace.leave()`를 호출합니다. 변경이 있으면 계속 편집하거나 변경을 버릴 수 있습니다. 쓰기 권한이 있으면 현재 자료에 저장하거나 다른 이름으로 팀 사본을 만든 뒤 이동할 수 있습니다. 저장을 취소하거나 실패하면 편집을 계속합니다. 버리고 이동하면 그 세션의 복구본도 지웁니다. |
+| 화면 이동 | `useWorkspaceNavigation`이 메뉴·뒤로 가기·팀 변경 전에 `SlidesWorkspace.leave()`를 호출합니다. 화면 코드를 받는 동안에는 자리를 지키는 `SlidesWorkspacePending`의 `leave()`가 답합니다. 변경이 있으면 계속 편집하거나 변경을 버릴 수 있습니다. 쓰기 권한이 있으면 현재 자료에 저장하거나 다른 이름으로 팀 사본을 만든 뒤 이동할 수 있습니다. 저장을 취소하거나 실패하면 편집을 계속합니다. 버리고 이동하면 그 세션의 복구본도 지웁니다. |
 | 공유 | 편집기의 공유 대화상자는 그대로 쓰고 생성·조회만 그래보드의 임시 스냅샷 API로 보냅니다. 링크는 `/slides?team=…&share=…`이며 팀 자료가 다른 출처로 전송되지 않습니다. |
 | 화면 정책 | 편집기 문서는 편집기 자체 정책에 `frame-ancestors 'self'`만 바꿔 제공하고(`shared/slides/slide-editor-policy.js`), 앱 화면은 `frame-src 'self' blob:`을 허용합니다. `blob:`은 Firefox·WebKit이 프레임 안의 파일 내려받기를 프레임 이동으로 다루기 때문에 필요합니다. |
 

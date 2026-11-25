@@ -18,6 +18,42 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-25 — 슬라이드 화면 코드를 처음 열 때 받기 (#241)
+
+`App.tsx`가 `SlidesWorkspace`를 정적으로 가져오고 `SlidesWorkspace.tsx`가 `slides.css`를 가져와, 슬라이드를 한 번도 열지 않는 사람도 자료 목록·편집기 프레임 코드와 스타일을 첫 화면 묶음으로 받았습니다. 편집기 자체는 이전에도 프레임 안에서 따로 받았고 이 변경과 관계없습니다.
+
+`App`은 `SlidesWorkspaceLoader`를 쓰고, 이 파일이 `lazy`·`<Suspense>`·오류 경계로 `SlidesWorkspace`를 `/slides`를 처음 열 때 불러옵니다(`Panels.tsx`의 `TaskDocumentPanel`, `EmojiPicker.tsx`의 `EmojiPickerPanel`과 같은 방식). 상단 메뉴 아이콘과 가오리 로딩 표시는 앱과 함께 받습니다. 화면 틀 `.slides-board`와 가오리 규칙을 `slides.css`에서 `slide-loading-state.css`로 옮겨(복제 없음) `SlideLoadingState.tsx`가 가져오고, 화면이 준비되기 전의 모습을 `SlidesLoadingBoard`로 묶어 코드를 받는 동안과 화면이 자료 목록을 읽는 동안 같은 마크업을 씁니다.
+
+`useWorkspaceNavigation`은 이동 전에 `slidesRef.current.leave()`를 부르고 `ref`가 없으면 그냥 이동합니다. 코드를 받는 동안 `ref`가 비면 `leave()`가 하던 주소 정리가 빠져, `/slides?file=…`에서 다른 화면으로 가면 `/?file=…`이 남고 나중에 슬라이드로 돌아올 때 그 자료가 다시 열리며, 팀을 바꾸면 새 팀에서 그 자료를 찾습니다. 그래서 `<Suspense>`의 대체 화면과 오류 화면을 같은 `ref`로 `leave()`에 답하는 `SlidesWorkspacePending`으로 두었습니다. 열린 자료가 없을 때의 `SlidesWorkspace.leave()`와 같은 규칙이며, 주소 읽기·쓰기와 다른 팀 공유 링크 판정은 두 곳이 함께 쓰는 `slide-address.ts`로 옮겼습니다. `useWorkspaceNavigation`과 `App`의 이동 코드는 바꾸지 않았습니다.
+
+늦게 받는 `slides.css`는 `styles.css` 뒤에 적용됩니다. 이전 묶음에서는 `slides.css`가 앞이라 선택자 무게가 같으면 `styles.css`가 이겼습니다. 변경 전·후 빌드의 계산 스타일을 비교해 순서에 기대던 곳 두 군데를 찾았습니다. `.slide-editor-bar > .document-link-copy`의 `padding: 5px`와 600px 이하 `.slide-editor-bar > .button`의 `padding: 0`은 `styles.css`의 `.slide-editor-bar > .button`(`padding: 3px 8px`)에 져서 적용된 적이 없었고, 순서가 바뀌면 적용되어 링크 복사 버튼 폭이 32px에서 26px로, 600px 이하 목록·링크 복사 버튼의 여백이 0으로 바뀝니다. 화면을 그대로 두려고 적용된 적 없는 두 선언을 지우고 600px 이하의 `padding: 0`은 실제로 적용되던 파일 버튼(`.slide-editor-bar > .heading-actions > .button`)에만 남겼습니다. 원래 의도로 보이는 여백(5px·0)을 살리는 것은 화면 변경이므로 넣지 않았습니다.
+
+`npm run build`(Vite 8.3.4)가 출력한 크기입니다.
+
+| 파일 | 변경 전 | 변경 후 | 차이 |
+| --- | --- | --- | --- |
+| `index-*.js` (진입) | 1,286.53 kB · gzip 397.53 kB | 1,246.67 kB · gzip 385.65 kB | −39.86 kB · gzip −11.88 kB |
+| `index-*.css` (진입) | 712.83 kB · gzip 203.53 kB | 701.99 kB · gzip 197.34 kB | −10.84 kB · gzip −6.19 kB |
+| `LoadingState-*.js` (앱과 함께, 새 공용 묶음) | 없음 | 9.17 kB · gzip 3.76 kB | |
+| `createLucideIcon-*.js` (앱과 함께, 새 공용 묶음) | 없음 | 3.50 kB · gzip 1.69 kB | |
+| `SlidesWorkspace-*.js` (슬라이드를 처음 열 때) | 없음 | 29.10 kB · gzip 9.97 kB | |
+| `SlidesWorkspace-*.css` (슬라이드를 처음 열 때) | 없음 | 10.86 kB · gzip 5.92 kB | |
+| 앱과 함께 받는 JS 합계 | 1,295.50 kB · gzip 401.15 kB | 1,268.31 kB · gzip 394.72 kB | −27.19 kB · gzip −6.43 kB |
+| 앱과 함께 받는 JS·CSS 합계 | 2,008.33 kB · gzip 604.68 kB | 1,970.30 kB · gzip 592.06 kB | −38.03 kB · gzip −12.62 kB |
+
+JS 합계는 `index`·`react`(7.87 kB)·`rolldown-runtime`(1.10 kB)과 새 공용 묶음 2개입니다. JS 묶음은 98개에서 101개, CSS는 2개에서 3개가 됐습니다. 진입 묶음에서 빠진 39.86 kB 가운데 12.67 kB는 슬라이드 코드가 아니라 Rolldown이 진입 묶음 밖으로 나눈 기존 공용 모듈(`react-dom`·`Brand`·`LoadingState`·`ErrorNote`, JSX 런타임·`createLucideIcon`)이며 `index.html`의 `modulepreload`로 앱과 함께 받습니다. 원래 코드에 `App`의 `lazy(() => import("../slides/SlidesWorkspace"))`만 넣어도 같은 두 묶음이 생기고, `ui/LoadingState` 하나만 가져오는 빈 지연 모듈로도 JSX 런타임 묶음이 생기므로 이 변경의 파일 배치와는 관계없습니다. 묶음 설정(`vite.config.ts`)은 바꾸지 않았습니다.
+
+검증:
+
+- 화면 변화: 저장소에 넣지 않은 일회성 Playwright 스크립트로 변경 전·후 빌드에서 슬라이드 화면 44개 상태(로딩 3종, 빈 목록, 카드형·목록형, 편집 화면과 제목 포커스, 삭제·이동 확인·이름 입력 창, 새 자료, 편집기 배포본 없음, 다른 팀 공유 링크를 320~1366px 폭으로)의 모든 요소와 `::before`·`::after` 계산 스타일 5,531건을 비교했습니다. 같은 빌드를 두 번 잰 차이는 0건, 여백 선언을 지우기 전에는 36건(모두 위 두 규칙), 지운 뒤에는 0건입니다. 날갯짓 애니메이션 값도 같습니다. 이전 묶음에서 `slides.css` 뒤에 있던 선택자 1,413개와 늦게 받는 선택자 72개를 무게·속성으로 맞춰 본 후보 26건은 같은 요소에 걸리지 않거나(`:root`, 체크박스 등), `!important`라 순서와 무관하거나(700px 이하 입력칸 글자 크기), `table-layout: fixed`라 첫 행의 `th`만 폭을 정하는 `.settings-table td:last-child`였습니다.
+- 코드를 받는 동안의 동작: 같은 방식의 일회성 검사 8건(화면을 열기 전에는 묶음을 요청하지 않음, `/slides?file=…`와 `/links/slide/…`가 늦게 온 코드로 그 자료를 엶, 다른 화면 이동·뒤로 가기·팀 변경 뒤 주소에 자료가 남지 않음, 다른 팀 공유 링크는 팀 변경 뒤에도 남음, 받지 못하면 안내를 보이고 이동 가능) 통과.
+- `tests/browser/slides/slide-team-files.spec.ts`에 검사 2건을 더했습니다(코드를 받는 동안의 가오리·화면 틀 스타일과 이동 뒤 주소·링크 주소, 받지 못했을 때의 안내와 이동). 자리 표시의 주소 정리를 뺀 빌드에서는 둘 다 `/?file=…`로 실패합니다.
+- `env -u HTTP_PROXY -u HTTPS_PROXY NO_PROXY=127.0.0.1,localhost E2E_PORT=4342 npx playwright test tests/browser/slides tests/browser/sheet/workspace-navigation.spec.ts --project=chromium`: 34건. 첫 실행은 33건 통과·1건 실패(`상세에서 사본을 삭제할 때 취소와 실패는 편집을 유지하고 확인하면 사본과 복구본만 지운다`가 마지막 카드 클릭에서 60초 제한 초과, 같은 머신에서 다른 작업이 돌아 직후 잰 1분 load average가 104), 그 검사만 다시 실행해 통과(7.6초), 같은 명령을 다시 실행해 34건 통과(57.6초).
+- 같은 환경 변수로 `tests/browser/documents/document-links.spec.ts --project=chromium`(문서·일정 상세의 슬라이드 링크, `/links/slide/…`): 29건 통과.
+- 새 검사 2건과 기존 로딩 검사 1건을 Firefox·WebKit에서 실행: 6건 통과.
+- `npm run build`, `npm run build:edge`, `npm run check:structure`(807개, 오류 0), `npm run check:architecture`(484개 모듈, 위반 0), 변경한 소스·검사 파일의 `npx prettier --check`, `git diff --check` 통과.
+- 실행하지 않은 것: `npm test`(Node·PostgreSQL), 세 엔진 전체 브라우저 검사, 실제 배포 환경에서의 묶음 요청.
+
 ## 2026-11-24 — 사내에서 정한 아바타를 외부(팀) 사이트에 그대로 표시
 
 외부 사이트에서 모든 구성원이 기본 초록색·이름 첫 글자로 보이던 원인은 저장 실패가 아니었습니다. 로컬 외부 경로(Pages 진입점 → gateway → Edge 핸들러 → PostgreSQL 17)에서 외부 `PATCH /auth/profile`은 200으로 저장·유지됐습니다. 구성원 동기화가 이름·이메일·역할·활성 상태만 보내 사내 색·글자·이미지가 외부로 전혀 전달되지 않는 것이 원인입니다. 실제 배포 환경(Supabase Edge·Cloudflare)의 외부 저장은 확인하지 않았습니다.
