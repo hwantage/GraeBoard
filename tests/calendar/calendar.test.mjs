@@ -558,6 +558,7 @@ async function fixture(t, date = Date.UTC(2026, 9, 17, 3)) {
     });
   return {
     baseURL: `http://127.0.0.1:${server.address().port}/api`,
+    app,
     dir,
     path,
     db,
@@ -3774,6 +3775,73 @@ test("일정 시작 시각·알림은 함께 저장하고 충돌 시 최신 값�
     404,
   );
   assert.equal((await f.req("/push-address/test", "POST", {})).status, 409);
+});
+
+test("한 번의 알림 점검에서 닫은 여러 알림은 팀 스트림에 한 번만 알린다", async (t) => {
+  const { documentStream } =
+    await import("../support/document-events-helper.mjs");
+  // A hub address turns the reminder check on. Nobody in this test has a PC to
+  // push to, so the reminders are closed without a request to the hub.
+  const previous = process.env.DABADA_PUSH_URL;
+  process.env.DABADA_PUSH_URL = "http://hub.example.test:7500";
+  t.after(() => {
+    if (previous === undefined) delete process.env.DABADA_PUSH_URL;
+    else process.env.DABADA_PUSH_URL = previous;
+  });
+  const f = await fixture(t);
+  const push = f.app.locals.calendarReminderPush;
+  t.after(() => push.close());
+  // The test clock stands at 12:00 in Korea: all three reminders are due now.
+  const entries = [];
+  for (const title of ["점심 약속", "주간 보고", "배포 점검"])
+    entries.push(
+      (
+        await f.req("/calendar/entries", "POST", {
+          id: randomUUID(),
+          teamId: f.teamId,
+          userId: f.people.member.id,
+          date: "2026-10-17",
+          title,
+          time: "12:00",
+          reminders: [0],
+        })
+      ).data,
+    );
+  assert.deepEqual(
+    entries.map((entry) => entry.reminderStatus),
+    ["pending", "pending", "pending"],
+  );
+  const team = await documentStream(
+    t,
+    f.baseURL,
+    `/teams/${f.teamId}`,
+    f.people.viewer.token,
+  );
+  const opened = (await team.next()).data;
+
+  await push.tick();
+  const told = await team.next();
+  assert.equal(told.event, "document");
+  assert.ok(told.data.revision > opened.revision);
+  // What an open calendar reads on that event tells how all three went.
+  for (const entry of entries)
+    assert.equal(
+      (await f.req(`/calendar/entries/${entry.id}`)).data.reminderStatus,
+      "failed",
+    );
+  // The next thing the stream carries is this edit, not another reminder.
+  const edited = await fetch(`${f.baseURL}/calendar/entries/${entries[0].id}`, {
+    method: "PATCH",
+    headers: {
+      Cookie: `weekly_session=${f.people.member.token}`,
+      "X-Requested-With": "WeeklyPlan",
+      "X-Client-ID": "edit-after-reminders",
+      "Content-Type": "application/json",
+    },
+    body: json({ title: "점심 약속 변경", expectedTitle: "점심 약속" }),
+  });
+  assert.equal(edited.status, 200);
+  assert.equal((await team.next()).data.clientId, "edit-after-reminders");
 });
 
 // The statements the fixture's database runs while `work` waits for its
