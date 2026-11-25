@@ -30,6 +30,8 @@
 
 검증(기준 `origin/main` `340938c`, Node.js 22.23.1): `node --test --test-concurrency=1`로 `tests/calendar/calendar-reminder-push.test.mjs` 13건(신규 3건), `tests/calendar/calendar.test.mjs` 42건(신규 1건), `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin`으로 `calendar-storage-contract` 2건·`edge-calendar-round-trips` 2건이 모두 통과했습니다(실패·skip 0). 신규 검사는 ① 한 팀의 알림 4건(3건 발송·1건 받을 PC 없음)이 한 점검에 걸리면 알림 1회이고 그때 4건이 모두 기록되어 있음, ② 두 팀의 알림이 번갈아 걸리면 팀마다 1회이고 허브가 받지 않은 점검은 0회, ③ 두 번째 알림의 기록이 실패해 점검이 중간에 끝나도 먼저 기록한 팀은 알림, ④ 사내 HTTP·SSE에서 알림 3건을 닫은 점검 뒤 팀 스트림의 이벤트가 1건임을 확인합니다. 수정 전 코드에서 ①·②는 알림이 4회여서, ④는 두 번째 알림 이벤트가 먼저 와서 실패했습니다. ③은 수정 전(알림마다 바로 알림)에도 통과하며 `finally`를 뺀 구현에서 실패하는 것을 확인했습니다. `npm run check:structure`(804개 파일, 오류 0), `npm run check:architecture`(482개 모듈, 위반 0), 변경 코드의 Prettier, `git diff --check`, `npm run build`를 통과했고 `calendar-reminders.spec.ts`를 Chromium에서 4건 통과했습니다. 전체 `npm test`, `npm run build:edge`, 전체 브라우저 검사(Firefox·WebKit 포함), 실제 다바다허브 발송은 실행하지 않았습니다.
 
+전체 검증(2026-11-26, 커밋 `9176c9b`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 966건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `calendar-reminders`·`calendar-improvements` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 36건 통과.
+
 ## 2026-11-24 — 사내에서 정한 아바타를 외부(팀) 사이트에 그대로 표시
 
 외부 사이트에서 모든 구성원이 기본 초록색·이름 첫 글자로 보이던 원인은 저장 실패가 아니었습니다. 로컬 외부 경로(Pages 진입점 → gateway → Edge 핸들러 → PostgreSQL 17)에서 외부 `PATCH /auth/profile`은 200으로 저장·유지됐습니다. 구성원 동기화가 이름·이메일·역할·활성 상태만 보내 사내 색·글자·이미지가 외부로 전혀 전달되지 않는 것이 원인입니다. 실제 배포 환경(Supabase Edge·Cloudflare)의 외부 저장은 확인하지 않았습니다.
