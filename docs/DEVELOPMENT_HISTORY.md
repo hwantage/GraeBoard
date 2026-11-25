@@ -18,6 +18,16 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-25 — 새 업무 표시 판정을 셀마다 하던 문제(#239)
+
+PR #205가 `Grid.tsx`의 `GridCell`에 `useNewTask(c.key === "title" ? task : null)`을 넣으면서, 훅이 없던 셀 컴포넌트가 작업명이 아닌 셀에서도 `useReducer`·`useEffect`와 `Date.parse(serverNow())`를 실행했습니다. `serverNow()`는 `Date`와 ISO 문자열을 만들고 호출한 쪽이 그 문자열을 다시 숫자로 읽었습니다. 행은 가상 스크롤이지만 열은 모두 그리므로, 표를 한 번 그릴 때마다 셀 수만큼 훅이 돌고 화면에 들어오는 행마다 열 수만큼의 passive effect가 등록됐다가 바로 끝났습니다.
+
+`RowBody`가 행마다 한 번 `useNewTask(task)`로 판정해 작업명 셀에만 `newTask`(boolean)로 넘깁니다. `GridCell`은 다시 훅이 없는 컴포넌트이며, 원시값만 추가로 받으므로 `memo` 비교는 그대로 동작합니다. 12시간이 지나면 그 행의 `RowBody`만 다시 그려지고 값이 바뀐 작업명 셀만 갱신됩니다. 편집 중 숨김은 전과 같이 셀이 정합니다. `api.ts`에 같은 서버 시계의 밀리초 값을 주는 `serverNowMs()`를 추가했고 `serverNow()`는 이 값을 ISO 문자열로 바꿉니다. `NewTaskMark.tsx`의 판정과 만료 타이머는 `serverNowMs()`로 비교합니다. 셀 호출만 쓰던 `null` 인자는 없앴습니다. 표시 위치·글자·스타일, 편집 중 숨김, 생성 12시간 후 열린 화면에서의 해제, 엑셀로 가져온 업무 제외와 업무 상세·주간 할 일·사본·휴대폰·슬라이드 `NEW`의 동작은 바뀌지 않았습니다. 서버·저장 형식·CSS 변경은 없습니다.
+
+측정: 커밋하지 않은 임시 계수기를 `useNewUntil`에 넣고 수정 전·후 빌드를 Chromium 1366×900에서 비교했습니다. 새 업무 120건인 팀을 열면 28행×56열(1,568셀)이 그려집니다. 이때 훅 실행과 passive effect는 각각 1,568회에서 28회로 줄었고, 맨 아래로 스크롤해 28행이 모두 바뀔 때도 1,568회에서 28회로 줄었습니다. 같은 브라우저에서 시각을 2,600번 구하는 데 문자열 왕복은 약 1.2ms, 숫자 계산은 약 0.2ms였습니다. 이 수치는 로컬 측정값입니다.
+
+검증: `npm run build` 통과, `npm run check:structure` 804개 파일 오류 0, `npm run check:architecture` 482개 모듈 위반 0, 바꾼 소스 4개의 `prettier --check`와 `git diff --check` 통과. `tests/browser/sheet/new-task-mark.spec.ts`에 열어 둔 표에서 작업명 편집 중 표시가 숨었다가 돌아오고, 화면을 떠나지 않은 채 11시간 59분에는 남고 12시간이 지나면 사라지는 검사를 추가했습니다. 이 검사는 수정 전 빌드에서도 통과합니다. Chromium에서 표시를 확인하는 `new-task-mark`·`sheet-presence`·`calendar-weekly-tasks`·`detail-emoji-copy` 16건이 통과했고, `new-task-mark`는 세 브라우저 12건이 통과했습니다. Chromium의 `workspace`·`workspace-navigation`·`row-menu`·`selection-copy-undo`·`sheet-clone-editing`·`slide-team-files` 212건은 211건 통과·1건 실패였습니다. 실패한 `workspace-navigation.spec.ts:123`(캘린더 편집 중 뒤로가기)은 단독 3회와 20회 반복에서 모두 통과했고, 수정 전 소스(`340938c`)의 빌드에서는 20회 반복 중 1회가 같은 오류로 실패해 이번 변경과 무관한 간헐 실패로 봅니다. `npm test`, `npm run build:edge`, 브라우저 전체 검사는 이 작업에서 실행하지 않았습니다.
+
 ## 2026-11-24 — 사내에서 정한 아바타를 외부(팀) 사이트에 그대로 표시
 
 외부 사이트에서 모든 구성원이 기본 초록색·이름 첫 글자로 보이던 원인은 저장 실패가 아니었습니다. 로컬 외부 경로(Pages 진입점 → gateway → Edge 핸들러 → PostgreSQL 17)에서 외부 `PATCH /auth/profile`은 200으로 저장·유지됐습니다. 구성원 동기화가 이름·이메일·역할·활성 상태만 보내 사내 색·글자·이미지가 외부로 전혀 전달되지 않는 것이 원인입니다. 실제 배포 환경(Supabase Edge·Cloudflare)의 외부 저장은 확인하지 않았습니다.
@@ -1675,13 +1685,3 @@ CodeRabbit 통합 리뷰 반영(11-08, 4505202004): 수신은 문서 본문 버�
 - 이미 로컬 화면에 반영한 해결 선택의 정확한 선두 묶음은 C로 이동해도 C+P가 같다. ID 순서·원문 해시를 수신과 커밋 트랜잭션에서 확인한 경우에만 기존 화면 투영을 유지한다. 해시 불일치 롤백, 순서 불일치의 기존 경로, 대기 용량 검사를 유지한다.
 - 저장 대기 명령의 canonical 바이트를 예산·해시 계산에 재사용하며 본문 검증 성공으로 간주하지 않는다. 두 큰 명령의 합계가 8MiB를 넘는 경우를 위해 파싱 캐시를 16MiB·128개, 문자열 캐시를 48MiB로 제한한다. 저장 JSON 캐시는 16MiB로 유지한다. DB·Git·사내 저장 형식 변경은 없다.
 - 관련 회귀 30건 통과(해시 불일치 검사의 오류 문구 정정 후 해당 통합 검사 재통과), 앱·Edge 빌드와 구조·의존 경계 검사 통과. 운영 선택 37건과 첫 게시 응답 유실 상태를 복제한 Supabase Edge Runtime에서 CPU 500ms·메모리 256MiB 제한으로 수신·후속 게시를 모두 HTTP 200, 대기 0·열린 충돌 0까지 확인했다. API로 선택을 저장한 통합 검사에서는 화면 payload·revision 보존 및 잘못된 승인 해시의 전체 롤백을 확인했다. 운영 복구 여부는 배포 뒤 별도로 확인한다.
-
-## 2026-11-25 — 새 업무 표시 판정을 셀마다 하던 문제(#239)
-
-PR #205가 `Grid.tsx`의 `GridCell`에 `useNewTask(c.key === "title" ? task : null)`을 넣으면서, 훅이 없던 셀 컴포넌트가 작업명이 아닌 셀에서도 `useReducer`·`useEffect`와 `Date.parse(serverNow())`를 실행했습니다. `serverNow()`는 `Date`와 ISO 문자열을 만들고 호출한 쪽이 그 문자열을 다시 숫자로 읽었습니다. 행은 가상 스크롤이지만 열은 모두 그리므로, 표를 한 번 그릴 때마다 셀 수만큼 훅이 돌고 화면에 들어오는 행마다 열 수만큼의 passive effect가 등록됐다가 바로 끝났습니다.
-
-`RowBody`가 행마다 한 번 `useNewTask(task)`로 판정해 작업명 셀에만 `newTask`(boolean)로 넘깁니다. `GridCell`은 다시 훅이 없는 컴포넌트이며, 원시값만 추가로 받으므로 `memo` 비교는 그대로 동작합니다. 12시간이 지나면 그 행의 `RowBody`만 다시 그려지고 값이 바뀐 작업명 셀만 갱신됩니다. 편집 중 숨김은 전과 같이 셀이 정합니다. `api.ts`에 같은 서버 시계의 밀리초 값을 주는 `serverNowMs()`를 추가했고 `serverNow()`는 이 값을 ISO 문자열로 바꿉니다. `NewTaskMark.tsx`의 판정과 만료 타이머는 `serverNowMs()`로 비교합니다. 셀 호출만 쓰던 `null` 인자는 없앴습니다. 표시 위치·글자·스타일, 편집 중 숨김, 생성 12시간 후 열린 화면에서의 해제, 엑셀로 가져온 업무 제외와 업무 상세·주간 할 일·사본·휴대폰·슬라이드 `NEW`의 동작은 바뀌지 않았습니다. 서버·저장 형식·CSS 변경은 없습니다.
-
-측정: 커밋하지 않은 임시 계수기를 `useNewUntil`에 넣고 수정 전·후 빌드를 Chromium 1366×900에서 비교했습니다. 새 업무 120건인 팀을 열면 28행×56열(1,568셀)이 그려집니다. 이때 훅 실행과 passive effect는 각각 1,568회에서 28회로 줄었고, 맨 아래로 스크롤해 28행이 모두 바뀔 때도 1,568회에서 28회로 줄었습니다. 같은 브라우저에서 시각을 2,600번 구하는 데 문자열 왕복은 약 1.2ms, 숫자 계산은 약 0.2ms였습니다. 이 수치는 로컬 측정값입니다.
-
-검증: `npm run build` 통과, `npm run check:structure` 804개 파일 오류 0, `npm run check:architecture` 482개 모듈 위반 0, 바꾼 소스 4개의 `prettier --check`와 `git diff --check` 통과. `tests/browser/sheet/new-task-mark.spec.ts`에 열어 둔 표에서 작업명 편집 중 표시가 숨었다가 돌아오고, 화면을 떠나지 않은 채 11시간 59분에는 남고 12시간이 지나면 사라지는 검사를 추가했습니다. 이 검사는 수정 전 빌드에서도 통과합니다. Chromium에서 표시를 확인하는 `new-task-mark`·`sheet-presence`·`calendar-weekly-tasks`·`detail-emoji-copy` 16건이 통과했고, `new-task-mark`는 세 브라우저 12건이 통과했습니다. Chromium의 `workspace`·`workspace-navigation`·`row-menu`·`selection-copy-undo`·`sheet-clone-editing`·`slide-team-files` 212건은 211건 통과·1건 실패였습니다. 실패한 `workspace-navigation.spec.ts:123`(캘린더 편집 중 뒤로가기)은 단독 3회와 20회 반복에서 모두 통과했고, 수정 전 소스(`340938c`)의 빌드에서는 20회 반복 중 1회가 같은 오류로 실패해 이번 변경과 무관한 간헐 실패로 봅니다. `npm test`, `npm run build:edge`, 브라우저 전체 검사는 이 작업에서 실행하지 않았습니다.
