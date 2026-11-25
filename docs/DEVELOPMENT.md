@@ -301,7 +301,7 @@ CanvaSlide 주소에서 기록을 불러올 때와 자료 목록·편집기를 �
 
 `AccountMenu` → `AccessTokens` → `/api/access-tokens`는 본인 토큰의 생성·목록·재조회·삭제를 처리합니다. 내부 `server/auth/access-tokens.mjs`는 SQLite 트랜잭션을, 외부 `worker/control/access-tokens.mjs`는 기존 `controlTransaction`을 사용하며 입력 검증·난수·해시·AES-GCM은 `server/storage/control/access-token-service.mjs`를 공유합니다. 신규 토큰에는 만료일이 없으며 원문은 암호화해 저장하고 눈 아이콘을 눌렀을 때 본인에게만 복호화해 반환합니다. 내부 키는 `access-token-key.mjs`에서 DB 밖의 파일 또는 환경 변수로 관리합니다. 브라우저 영속 저장소와 감사 로그에는 토큰을 넣지 않으며, 조회용 Bearer 인증은 아직 연결하지 않습니다. 미배포 신규 기능의 스키마 변경을 v33/site v3/control v2 마이그레이션 하나에 포함합니다. 배포·키 관리·백업 취급은 [운영 안내](OPERATIONS.md#접속-토큰-도입-업데이트)를 따릅니다.
 
-`api.ts`는 내부·외부 JSON 응답의 `X-Server-Time`을 받아 monotonic clock에 고정합니다. 표 저장·명시적 덮어쓰기·상세 속성 저장은 `serverNow()`로 새 작업의 시각을 만들고, 재시도는 기존 ID와 시각을 유지합니다. 서버의 7일 재시도 유효기간과 미래 시각 검증은 유지합니다. `tests/browser/sheet/workspace-improvements.spec.ts`는 빠른/느린 PC 및 로그인 후 시각 변경, 숨긴 일정 목록, 검색 위치 보존, 마지막 문서 삭제, 꼬리 메모 편집·전체 화면·스크롤, 토큰 메뉴를 검사합니다. `tests/auth/access-tokens.test.mjs`는 두 실제 DB의 소유권·해시·동시 발급 상한·migration 롤백·복구 폐기를 확인합니다.
+`api.ts`는 내부·외부 JSON 응답의 `X-Server-Time`을 받아 monotonic clock에 고정합니다. 표 저장·명시적 덮어쓰기·상세 속성 저장은 `serverNow()`로 새 작업의 시각을 만들고, 재시도는 기존 ID와 시각을 유지합니다. 서버의 7일 재시도 유효기간과 미래 시각 검증은 유지합니다. 새 업무·새 자료 표시처럼 화면에서 시각을 비교만 하는 곳은 같은 시계의 밀리초 값인 `serverNowMs()`를 사용합니다. `tests/browser/sheet/workspace-improvements.spec.ts`는 빠른/느린 PC 및 로그인 후 시각 변경, 숨긴 일정 목록, 검색 위치 보존, 마지막 문서 삭제, 꼬리 메모 편집·전체 화면·스크롤, 토큰 메뉴를 검사합니다. `tests/auth/access-tokens.test.mjs`는 두 실제 DB의 소유권·해시·동시 발급 상한·migration 롤백·복구 폐기를 확인합니다.
 
 ### 속성과 상태 통계
 
@@ -353,7 +353,7 @@ XLSX 분석·생성은 내부 SQLite와 외부 PostgreSQL에서 `shared/transfer
 
 ### Grid 입력 책임
 
-`Grid.tsx`는 행·열 렌더링과 메뉴 조합을 담당합니다. 선택·포커스·IME 준비는 `useGridSelection`, 행 이동은 `useGridRowDrag`, 크기 조절은 `useGridResize`, 가상 스크롤·이동은 `useGridViewport`가 소유합니다. 범위 계산은 `grid-selection.ts`, 호출 타입은 `grid-types.ts`를 직접 참조합니다. 새 제스처는 공용 `trackPointerDrag`를 재사용하고 취소·화면 전환·해제 시 정리합니다. `scopeKey`는 팀·연도·사본을 식별하며 바뀌면 진행 중인 드래그를 취소합니다. 크기 조절 미리보기는 훅 내부 상태이며 정상 종료할 때만 기존 `onView` 저장 경로를 호출합니다.
+`Grid.tsx`는 행·열 렌더링과 메뉴 조합을 담당합니다. 선택·포커스·IME 준비는 `useGridSelection`, 행 이동은 `useGridRowDrag`, 크기 조절은 `useGridResize`, 가상 스크롤·이동은 `useGridViewport`가 소유합니다. 범위 계산은 `grid-selection.ts`, 호출 타입은 `grid-types.ts`를 직접 참조합니다. 새 제스처는 공용 `trackPointerDrag`를 재사용하고 취소·화면 전환·해제 시 정리합니다. `scopeKey`는 팀·연도·사본을 식별하며 바뀌면 진행 중인 드래그를 취소합니다. 크기 조절 미리보기는 훅 내부 상태이며 정상 종료할 때만 기존 `onView` 저장 경로를 호출합니다. 새 업무 표시는 `RowBody`가 행마다 한 번 판정해 작업명 셀에만 전달합니다. 열 수만큼 그려지는 `GridCell`에는 훅을 두지 않습니다.
 
 ### 캘린더 명령 책임
 

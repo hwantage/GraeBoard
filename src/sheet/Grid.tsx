@@ -1311,6 +1311,8 @@ const RowBody = memo(function RowBody({
         .map((span) => span.split("-").map(Number))
     : [];
   const editable = !readOnly && (copyEditable || canEdit(user, task));
+  // Read once per row, not in every cell: only the title cell shows the mark.
+  const newTask = useNewTask(task);
   const presenceCells = useMemo(
     () => new Map<string, CellPresence>(presence ? JSON.parse(presence) : []),
     [presence],
@@ -1482,6 +1484,7 @@ const RowBody = memo(function RowBody({
             selection={selectionEdges(selectedSpans, ci)}
             presence={presenceCells.get(c.key)}
             focused={focusKey === c.key}
+            newTask={newTask && c.key === "title"}
             touchInput={touchInput}
             editor={editing ? editor : null}
             editable={editable}
@@ -1528,6 +1531,7 @@ const GridCell = memo(function GridCell({
   selection,
   presence,
   focused,
+  newTask,
   touchInput,
   editor,
   editable,
@@ -1551,6 +1555,7 @@ const GridCell = memo(function GridCell({
   selection: string | null;
   presence: CellPresence | undefined;
   focused: boolean;
+  newTask: boolean;
   touchInput: boolean;
   editor: EditorState | null;
   editable: boolean;
@@ -1579,7 +1584,6 @@ const GridCell = memo(function GridCell({
   const editing = !!editor;
   const showDetailAction =
     c.key === "title" && !editing && (!presentation || task.hasDocument);
-  const newTask = useNewTask(c.key === "title" ? task : null);
   const showNewTask = newTask && !editing;
   const prepareText =
     !touchInput &&

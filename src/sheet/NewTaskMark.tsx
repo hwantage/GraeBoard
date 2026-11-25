@@ -1,5 +1,5 @@
 import { useEffect, useReducer, type ReactNode } from "react";
-import { serverNow } from "../platform/api";
+import { serverNowMs } from "../platform/api";
 
 // A task stays marked as new for 12 hours after it was created.
 export const NEW_TASK_PERIOD_MS = 12 * 60 * 60 * 1000;
@@ -13,15 +13,15 @@ export const isImportedTaskId = (id: string) => id.charAt(14) === "5";
 type NewTaskSource = { id: string; createdAt?: string | null };
 
 // When the new mark ends, or null if the task is not a new app-added task.
-export function newTaskUntil(task: NewTaskSource | null | undefined) {
-  if (!task?.createdAt || isImportedTaskId(task.id)) return null;
+export function newTaskUntil(task: NewTaskSource) {
+  if (!task.createdAt || isImportedTaskId(task.id)) return null;
   const created = Date.parse(task.createdAt);
   return Number.isFinite(created) ? created + NEW_TASK_PERIOD_MS : null;
 }
 
 // Uses the server clock, so a wrong device clock neither keeps nor hides the
 // mark. Only new tasks hold a timer, which drops the mark when it expires.
-export function useNewTask(task: NewTaskSource | null | undefined) {
+export function useNewTask(task: NewTaskSource) {
   return useNewUntil(newTaskUntil(task));
 }
 
@@ -35,7 +35,7 @@ export function useRecentCreation(createdAt: string) {
 
 function useNewUntil(until: number | null) {
   const [, update] = useReducer((count: number) => count + 1, 0);
-  const now = Date.parse(serverNow());
+  const now = serverNowMs();
   const starts = until === null ? null : until - NEW_TASK_PERIOD_MS;
   const active =
     starts !== null && until !== null && starts <= now && now < until;
@@ -44,7 +44,7 @@ function useNewUntil(until: number | null) {
     if (next === null) return;
     let timer: ReturnType<typeof setTimeout>;
     const check = () => {
-      const left = next - Date.parse(serverNow());
+      const left = next - serverNowMs();
       if (left > 0) timer = setTimeout(check, Math.min(left, 60_000) + 50);
       else update();
     };
