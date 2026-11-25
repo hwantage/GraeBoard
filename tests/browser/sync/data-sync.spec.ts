@@ -15,6 +15,7 @@ import { GitCliTransport } from "../../../server/sync/node/git-cli.mjs";
 import { createApp } from "../../../server/app.mjs";
 import { openDatabase } from "../../../server/db.mjs";
 import { pack, unpack } from "../../../shared/formatting/compact.js";
+import sharp from "sharp";
 
 let db: ReturnType<typeof openDatabase>;
 let app: ReturnType<typeof createApp>;
@@ -2505,6 +2506,108 @@ test("외부 팀장은 연결 신청을 승인하고 구성원 정보는 읽기�
     path: info.outputPath("account-approved.png"),
     fullPage: true,
   });
+});
+
+// The member directory brings intranet avatars to the team site; Node tests
+// (team-site) cover the transfer, this covers what the external screens show.
+test("팀 사이트는 사내에서 정한 아바타를 그대로 보여 주고 프로필 창은 읽기 전용이다", async ({
+  page,
+}, info) => {
+  // A gradient, so the picture is told apart from a plain avatar colour.
+  const pixels = Buffer.alloc(160 * 160 * 3);
+  for (let i = 0; i < 160 * 160; i++)
+    pixels.set([224, 60 + (i % 160), 40 + Math.floor(i / 160)], i * 3);
+  const image =
+    "data:image/png;base64," +
+    (
+      await sharp(pixels, { raw: { width: 160, height: 160, channels: 3 } })
+        .png()
+        .toBuffer()
+    ).toString("base64");
+  const saved = await page.request.patch(`${base}/api/auth/profile`, {
+    headers: { "X-Requested-With": "WeeklyPlan" },
+    data: { color: "#3a6ea5", avatarImage: image },
+  });
+  expect(saved.ok(), await saved.text()).toBeTruthy();
+  await post(page, "/admin/users", {
+    username: "avatar-initials@example.com",
+    password: "local-sync-test-password",
+    name: "김민서",
+    color: "#8e44ad",
+    avatarInitials: "MS",
+    memberships: [{ teamId, role: "member" }],
+  });
+  await post(page, "/admin/users", {
+    username: "avatar-color@example.com",
+    password: "local-sync-test-password",
+    name: "박하늘",
+    color: "#d35400",
+    memberships: [{ teamId, role: "viewer" }],
+  });
+  const bootstrap = unpack(
+    await (await page.request.get(`${base}/api/bootstrap`)).json(),
+  );
+  const profileRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/api/auth/profile"))
+      profileRequests.push(request.method());
+  });
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({
+      json: {
+        ...bootstrap,
+        site: "external",
+        authMode: "access",
+        accountLinking: true,
+      },
+    }),
+  );
+  await page.reload();
+  await page.getByRole("button", { name: "설정", exact: true }).click();
+  const settings = panel(page);
+  await settings.getByRole("tab", { name: "구성원", exact: true }).click();
+  const rows = settings.locator(".team-members-table tbody tr");
+  await expect(
+    rows.filter({ hasText: "동기화 관리자" }).locator(".avatar img"),
+  ).toHaveAttribute("src", image);
+  const initials = rows.filter({ hasText: "김민서" }).locator(".avatar");
+  await expect(initials).toHaveText("MS");
+  await expect(initials).toHaveCSS("background-color", "rgb(142, 68, 173)");
+  const colour = rows.filter({ hasText: "박하늘" }).locator(".avatar");
+  await expect(colour).toHaveText("박");
+  await expect(colour).toHaveCSS("background-color", "rgb(211, 84, 0)");
+  await page.screenshot({
+    path: info.outputPath("team-site-avatars.png"),
+    fullPage: true,
+  });
+  await page.keyboard.press("Escape");
+  await expect(settings).toHaveCount(0);
+  const account = page.getByRole("button", { name: "내 계정", exact: true });
+  await expect(account.locator(".avatar img")).toHaveAttribute("src", image);
+  await account.click();
+  await page
+    .getByRole("menu", { name: "내 계정 메뉴" })
+    .getByRole("menuitem", { name: "프로필", exact: true })
+    .click();
+  const profile = page.getByRole("dialog", { name: "프로필", exact: true });
+  await expect(profile.getByLabel("이름", { exact: true })).toHaveAttribute(
+    "readonly",
+    "",
+  );
+  await expect(profile.locator(".avatar-preview img")).toHaveAttribute(
+    "src",
+    image,
+  );
+  await expect(profile).toContainText(
+    "이름과 아바타는 사내 계정에서 변경합니다. 사내에서 바꾸면 1~2분 뒤 이곳에도 반영됩니다.",
+  );
+  await expect(profile.getByRole("radio")).toHaveCount(0);
+  const actions = profile.locator(".form-actions").getByRole("button");
+  await expect(actions).toHaveText(["닫기"]);
+  await page.screenshot({ path: info.outputPath("team-site-profile.png") });
+  await actions.click();
+  await expect(profile).toHaveCount(0);
+  expect(profileRequests).toEqual([]);
 });
 
 test("팀 사이트 최초 팀장은 사내 계정과 설정 키로 연결한다", async ({

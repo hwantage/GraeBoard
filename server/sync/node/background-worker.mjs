@@ -38,7 +38,11 @@ import {
 } from "../core/errors.mjs";
 import { pendingEntityKeys, canRetireProjection } from "../core/projection.mjs";
 import { SyncService } from "../core/service.mjs";
-import { publishDirectory } from "../core/directory.mjs";
+import {
+  avatarFile,
+  publishDirectory,
+  teamAvatars,
+} from "../core/directory.mjs";
 import { existsSync } from "node:fs";
 import {
   documentImagePath,
@@ -757,6 +761,8 @@ function serviceFor(config) {
     progress();
     return result;
   };
+  // Logged once per worker: the list is rebuilt every synchronization run.
+  const skippedAvatars = new Set();
   const skippedImage = (path, reason) => {
     console.warn("GraeBoard image skipped", JSON.stringify({ path, reason }));
     syncLog.write(teamId, { kind: "image", path, reason });
@@ -845,20 +851,32 @@ function serviceFor(config) {
     const link = raw.readLink();
     if (!link?.canonical_head || !["active", "paused"].includes(link.mode))
       return;
-    const members = db
+    const rows = db
       .prepare(
-        "SELECT u.id,u.name,u.username AS email,u.active,m.role FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.team_id=? ORDER BY u.id",
+        "SELECT u.id,u.name,u.username AS email,u.active,m.role,u.color,u.avatar_initials AS avatarInitials,u.avatar_image AS avatarImage FROM users u JOIN memberships m ON m.user_id=u.id WHERE m.team_id=? ORDER BY u.id",
       )
-      .all(teamId)
-      .map((row) => ({ ...row, active: !!row.active }));
-    await publishDirectory(transport, {
+      .all(teamId);
+    const directory = {
       format: "graeboard-team-directory",
       version: 1,
       teamId,
       installationId: link.installation_id,
       repoId: link.repo_id,
-      members,
-    });
+      members: rows.map(({ id, name, email, active, role }) => ({
+        id,
+        name,
+        email,
+        active: !!active,
+        role,
+      })),
+    };
+    const avatars = teamAvatars(directory, rows);
+    for (const id of avatars.skipped)
+      if (!skippedAvatars.has(id)) {
+        skippedAvatars.add(id);
+        skippedImage(avatarFile(id), "invalid profile");
+      }
+    await publishDirectory(transport, directory, avatars);
   };
   services.set(config.serviceKey, service);
   return service;
