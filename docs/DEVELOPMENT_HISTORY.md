@@ -61,7 +61,8 @@
 - `npm run build` 통과.
 - `npx playwright test tests/browser/slides tests/browser/calendar/calendar-reminders.spec.ts --project=chromium` 31건 통과(슬라이드 27건, 알림 4건). 새 슬라이드 검사는 연 뒤 부모가 읽은 버퍼가 비었는지와, 저장·충돌 뒤 최신 자료 다시 열기·다시 저장·카드 썸네일·다시 열기를 확인합니다. 수정 전 빌드에서는 부모가 17,125바이트 버퍼를 그대로 갖고 있어 실패합니다. Firefox·WebKit에서는 새 검사와 충돌 사본·5.9MB 자료 검사만 실행해 6건 통과했습니다.
 - `npm run check:structure`(804개 파일, 오류 0), `npm run check:architecture`(482개 모듈, 위반 0), 변경 파일 `prettier --check`, `git diff --check` 통과.
-- 전체 `npm test`, `npm run build:edge`, 세 브라우저 전체 검사는 이 작업에서 실행하지 않았습니다.
+
+전체 검증(2026-11-26, 커밋 `63e8007`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 963건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `tests/browser/slides`·`calendar-reminders`·`calendar-improvements` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 117건 통과.
 
 ## 2026-11-24 — 사내에서 정한 아바타를 외부(팀) 사이트에 그대로 표시
 
