@@ -52,7 +52,7 @@ JS 합계는 `index`·`react`(7.87 kB)·`rolldown-runtime`(1.10 kB)과 새 공�
 - 같은 환경 변수로 `tests/browser/documents/document-links.spec.ts --project=chromium`(문서·일정 상세의 슬라이드 링크, `/links/slide/…`): 29건 통과.
 - 새 검사 2건과 기존 로딩 검사 1건을 Firefox·WebKit에서 실행: 6건 통과.
 - `npm run build`, `npm run build:edge`, `npm run check:structure`(807개, 오류 0), `npm run check:architecture`(484개 모듈, 위반 0), 변경한 소스·검사 파일의 `npx prettier --check`, `git diff --check` 통과.
-- 실행하지 않은 것: `npm test`(Node·PostgreSQL), 세 엔진 전체 브라우저 검사, 실제 배포 환경에서의 묶음 요청.
+- 실행하지 않은 것: 세 엔진 전체 브라우저 검사, 실제 배포 환경에서의 묶음 요청.
 
 전체 검증(2026-11-26, 커밋 `2b5e987`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 962건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `tests/browser/slides`·`workspace-navigation`·`document-links` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 189건 통과.
 
