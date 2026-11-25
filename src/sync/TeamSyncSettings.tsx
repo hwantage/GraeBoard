@@ -686,19 +686,21 @@ export default function TeamSyncSettings({
               <p>
                 팀 연결 자료 이관이 진행 중입니다. 작업 ID: {switchJob.jobId}
               </p>
-              {busy ? (
-                <Button
-                  onClick={() => {
-                    switchStop.current = true;
-                  }}
-                >
-                  중단
-                </Button>
-              ) : (
-                <Button onClick={() => void migrateConnection(true)}>
-                  이어서 연결 이관
-                </Button>
-              )}
+              {/* The switch API is a system admin's; a lead only sees it run. */}
+              {user.systemRole === "admin" &&
+                (busy ? (
+                  <Button
+                    onClick={() => {
+                      switchStop.current = true;
+                    }}
+                  >
+                    중단
+                  </Button>
+                ) : (
+                  <Button onClick={() => void migrateConnection(true)}>
+                    이어서 연결 이관
+                  </Button>
+                ))}
               <SyncErrorNote
                 error={
                   errorTarget === "connection" && error

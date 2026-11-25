@@ -572,6 +572,188 @@ test("로그인·상단 메뉴·설정은 휴대폰 너비 안에 보인다", as
   await screenshot(page, info, "login");
 });
 
+// The external site with this team connected, its connection answered as the
+// external server does for a system admin and a team lead alike.
+async function externalSyncTeam(
+  page: Page,
+  systemRole: "admin" | "user",
+  switchJob: object | null = null,
+) {
+  const configured = (team: { id: string }) =>
+    team.id === teamId
+      ? { ...team, sync: { available: true, configured: true } }
+      : team;
+  const boot = await request(page, "/bootstrap");
+  const admin = await request(page, "/admin/users");
+  await page.route("**/api/bootstrap", (route) =>
+    route.fulfill({
+      json: {
+        ...boot,
+        user: { ...boot.user, systemRole },
+        site: "external",
+        authMode: "access",
+        teams: boot.teams.map(configured),
+      },
+    }),
+  );
+  await page.route("**/api/admin/users", (route) =>
+    route.fulfill({ json: { ...admin, teams: admin.teams.map(configured) } }),
+  );
+  const status = {
+    mode: "active",
+    profileId: "team",
+    canonicalHead: "head-1",
+    pending: 0,
+    conflicts: 0,
+  };
+  const calls: string[] = [];
+  await page.route(`**/api/teams/${teamId}/sync`, (route) =>
+    route.fulfill({ json: status }),
+  );
+  await page.route(`**/api/teams/${teamId}/sync/run`, (route) => {
+    calls.push("run");
+    return route.fulfill({ json: status });
+  });
+  await page.route(`**/api/admin/teams/${teamId}/connection`, (route) => {
+    calls.push("connection");
+    return route.fulfill({
+      json: {
+        switchJob,
+        teamId,
+        profileId: "team",
+        revision: 1,
+        profiles: [
+          {
+            profileId: "team",
+            teamId,
+            name: "팀 자원",
+            repository: "https://github.com/example/data",
+          },
+        ],
+      },
+    });
+  });
+  await page.reload();
+  await page.getByLabel("팀 선택", { exact: true }).selectOption(teamId);
+  await expect(titleCell(page)).toBeVisible();
+  // Settings open on the team being viewed.
+  await page.getByRole("button", { name: "설정", exact: true }).tap();
+  const settings = page.getByRole("dialog", { name: "설정", exact: true });
+  await expect(settings.getByRole("tab", { name: "일반" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  return { settings, calls };
+}
+async function runTeamSync(settings: Locator) {
+  const tab = settings.getByRole("tab", { name: "외부 동기화", exact: true });
+  const tabs = settings.getByRole("tablist");
+  // All five team tabs fit: the team's own 외부 동기화 is not cut off.
+  expect(
+    await tabs.evaluate((el) => el.scrollWidth - el.clientWidth),
+  ).toBeLessThanOrEqual(0);
+  await tab.tap();
+  const run = settings.getByRole("button", {
+    name: "지금 동기화",
+    exact: true,
+  });
+  await run.tap();
+  await expect(
+    settings
+      .getByRole("status")
+      .filter({ hasText: /^동기화를 완료했습니다\./ }),
+  ).toBeVisible();
+  await expect(settings.getByRole("alert")).toHaveCount(0);
+}
+
+test("외부 사이트 휴대폰 설정은 팀·시스템 묶음을 구분하고 팀 외부 동기화 탭에서 지금 동기화를 실행한다", async ({
+  page,
+}, info) => {
+  const { settings, calls } = await externalSyncTeam(page, "admin");
+  const nav = settings.getByRole("navigation", { name: "설정 메뉴" });
+  const system = nav.getByRole("heading", { name: "시스템", exact: true });
+  const systemSync = nav.getByRole("button", {
+    name: "외부 동기화",
+    exact: true,
+  });
+  await expect(
+    nav.getByRole("heading", { name: "팀", exact: true }),
+  ).toBeVisible();
+  for (const width of [360, 390, 430]) {
+    await page.setViewportSize({ width, height: 844 });
+    await fits(page);
+    // Scrolled to the system 외부 동기화, its row still shows 시스템 beside it.
+    await systemSync.evaluate((el) =>
+      el.scrollIntoView({ block: "nearest", inline: "nearest" }),
+    );
+    const name = (await system.boundingBox())!;
+    const item = (await systemSync.boundingBox())!;
+    expect(name.x).toBeGreaterThanOrEqual(0);
+    expect(name.x + name.width).toBeLessThan(item.x);
+    expect(
+      Math.abs(name.y + name.height / 2 - (item.y + item.height / 2)),
+    ).toBeLessThan(4);
+    expect(item.x + item.width).toBeLessThanOrEqual(width);
+  }
+  await page.setViewportSize(mobile);
+  await screenshot(page, info, "settings-external-nav");
+  await runTeamSync(settings);
+  await settings
+    .getByRole("button", { name: "지금 동기화", exact: true })
+    .scrollIntoViewIfNeeded();
+  await screenshot(page, info, "settings-external-sync-now");
+  expect(calls).toContain("run");
+  // Desktop keeps the column with the group name above its items.
+  await page.setViewportSize(desktop);
+  const users = nav.getByRole("button", { name: "사용자 계정", exact: true });
+  const name = (await system.boundingBox())!;
+  const first = (await users.boundingBox())!;
+  expect(name.y + name.height).toBeLessThanOrEqual(first.y);
+  expect(Math.abs(name.x - first.x)).toBeLessThan(16);
+  await screenshot(page, info, "settings-external-desktop");
+});
+
+test("외부 사이트 팀장도 휴대폰에서 연결 설정을 보고 지금 동기화를 실행한다", async ({
+  page,
+}) => {
+  const { settings, calls } = await externalSyncTeam(page, "user");
+  const nav = settings.getByRole("navigation", { name: "설정 메뉴" });
+  await expect(
+    nav.getByRole("heading", { name: "팀", exact: true }),
+  ).toBeVisible();
+  await expect(nav.getByRole("heading", { name: "시스템" })).toHaveCount(0);
+  await runTeamSync(settings);
+  await expect(
+    settings.getByLabel("연결 프로필", { exact: true }),
+  ).toContainText("팀 자원");
+  expect(calls).toContain("connection");
+  expect(calls).toContain("run");
+});
+
+test("외부 사이트 팀장은 연결 이관 중 안내만 보고 이어서 이관·실행 버튼은 보지 않는다", async ({
+  page,
+}, info) => {
+  const { settings } = await externalSyncTeam(page, "user", {
+    jobId: "switch-job-1",
+    phase: "copying",
+    hasMore: true,
+    profileId: "team-2",
+  });
+  await settings.getByRole("tab", { name: "외부 동기화", exact: true }).tap();
+  const notice = settings.getByText(
+    "팀 연결 자료 이관이 진행 중입니다. 작업 ID: switch-job-1",
+  );
+  await expect(notice).toBeVisible();
+  await settings
+    .locator(".settings-content")
+    .evaluate((el) => el.scrollTo(0, el.scrollHeight));
+  await screenshot(page, info, "settings-external-lead-switch");
+  for (const name of ["이어서 연결 이관", "중단", "지금 동기화", "일시정지"])
+    await expect(
+      settings.getByRole("button", { name, exact: true }),
+    ).toHaveCount(0);
+});
+
 test("데스크톱 마우스 선택·더블클릭과 서식 도구는 그대로 동작한다", async ({
   page,
 }) => {
