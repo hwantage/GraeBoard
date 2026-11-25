@@ -533,6 +533,68 @@ test("CanvaSlide 진입과 편집기 로딩은 가오리 날갯짓을 표시하�
   }
 });
 
+// The slides screen's code is a file of its own, fetched when the screen opens.
+const slidesCode = "**/assets/SlidesWorkspace-*.js";
+
+test("화면 코드를 받는 동안 가오리를 표시하고 그 사이 화면을 옮겨도 자료 주소를 남기지 않는다", async ({
+  page,
+}) => {
+  const file = await upload(
+    page.request,
+    teamId,
+    `늦게 받는 화면 ${randomUUID()}`,
+    example("flowchart.canvaslide"),
+  );
+  const code = Promise.withResolvers<void>();
+  let requested = false;
+  await page.route(slidesCode, async (route) => {
+    requested = true;
+    await code.promise;
+    await route.continue();
+  });
+  try {
+    await page.goto(`/slides?file=${file.id}`);
+    const loading = page.getByRole("status", {
+      name: "CanvaSlide를 불러오는 중입니다.",
+    });
+    // The frame and the ray are styled before the screen's own styles arrive.
+    await expect(loading.locator(".slide-loading-ray")).toHaveCSS(
+      "width",
+      "96px",
+    );
+    await expect(page.locator(".slides-board")).toHaveCSS(
+      "padding",
+      "18px 22px",
+    );
+    expect(requested).toBe(true);
+    await page.getByRole("button", { name: "연간 업무", exact: true }).click();
+    await expect(page.locator(".sheet-scroll")).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
+
+    // A link address waits for the code, then opens its file.
+    await page.goto(`/links/slide/${teamId}/${file.id}`);
+    await expect(loading).toBeVisible();
+    code.resolve();
+    await expect(titleInput(page)).toHaveValue(file.title);
+    await expect(page).toHaveURL(new RegExp(`/slides\\?file=${file.id}$`));
+  } finally {
+    code.resolve();
+  }
+});
+
+test("화면 코드를 받지 못하면 새로고침을 안내하고 다른 화면으로 옮길 수 있다", async ({
+  page,
+}) => {
+  await page.route(slidesCode, (route) => route.abort());
+  await page.goto("/slides?file=unloaded");
+  await expect(page.locator(".slides-board").getByRole("alert")).toHaveText(
+    "CanvaSlide 화면을 불러오지 못했습니다. 화면을 새로고침한 뒤 다시 열어 주세요.",
+  );
+  await page.getByRole("button", { name: "연간 업무", exact: true }).click();
+  await expect(page.locator(".sheet-scroll")).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+});
+
 test("카드를 누르는 동안 썸네일이 표시돼도 원래 누른 자료를 연다", async ({
   page,
 }) => {
