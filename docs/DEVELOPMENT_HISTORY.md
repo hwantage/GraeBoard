@@ -82,6 +82,8 @@
 - `node --test tests/tooling/storage-import-boundaries.test.mjs` 2건 통과, `npm run check:structure`(811 파일, 오류 0, 검토 알림 38), `npm run check:architecture`(484 모듈, 위반 0), `npm run build:edge`, 변경한 코드 파일의 `npx prettier --check`, `git diff --check` 통과.
 - 실행하지 않은 것: `npm test` 전체, `npm run build`, 브라우저 검사, 실제 Cloudflare gateway·R2와 Supabase Edge에서의 확인.
 
+전체 검증(2026-11-26, 커밋 `cb79f00`, #254 브랜치 위): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 1,020건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `tests/browser/slides` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 114건 통과. 실제 Cloudflare gateway·R2·Supabase Edge에서는 확인하지 않았다.
+
 ## 2026-11-26 — 슬라이드 카드 썸네일을 사이트 저장소에 보관 (#238)
 
 목록 카드의 썸네일은 서버 프로세스의 메모리(256개·6MB)에만 있었습니다. 사내 서버를 재시작하거나 외부 Edge 인스턴스가 바뀌면 모든 카드가 `image: null`을 받아, 브라우저가 카드마다 자료 전체(최대 25MiB)를 내려받아 다시 그렸습니다.
