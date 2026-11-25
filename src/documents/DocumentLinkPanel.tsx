@@ -55,9 +55,10 @@ async function findDocumentLink(target: DocumentLinkTarget) {
 // Reads what a link opens with the routes its own screen uses: the calendar's
 // task and entry reads with the team's settings and members, a memo through
 // its document route, a copy's task from the copy. Missing or forbidden
-// targets share one message.
+// targets share one message. A slide opens in the slides screen instead of a
+// window (App.tsx).
 export async function loadDocumentLink(
-  target: DocumentLinkTarget,
+  target: Exclude<DocumentLinkTarget, { kind: "slide" }>,
 ): Promise<OpenedDocumentLink> {
   try {
     if (target.kind === "task") {

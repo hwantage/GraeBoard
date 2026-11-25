@@ -7,6 +7,7 @@ import {
   type Ref,
 } from "react";
 import { ArrowLeft, Copy, Save } from "lucide-react";
+import CopyDocumentLinkButton from "../documents/CopyDocumentLinkButton";
 import SlideFileActions from "./SlideFileActions";
 import SlideTitleDialog from "./SlideTitleDialog";
 import { ApiError } from "../platform/api";
@@ -454,6 +455,10 @@ export default function SlideEditorFrame({
       : openFailed
         ? initialFile
         : undefined;
+  const title =
+    titleDraft && titleDraft.session === state?.documentSession
+      ? titleDraft.name
+      : (state?.name ?? "");
   async function finishDeletion(fileId: string) {
     if (binding?.fileId === fileId && state) {
       const cleared = await bridge.current?.request<boolean>("prepare-leave", {
@@ -533,38 +538,45 @@ export default function SlideEditorFrame({
           <span>목록</span>
         </Button>
         {ready && state && binding && canWrite ? (
-          <input
-            key={state.documentSession}
-            className="slide-editor-title"
-            aria-label="자료 제목"
-            placeholder="자료 제목"
-            value={
-              titleDraft?.session === state.documentSession
-                ? titleDraft.name
-                : state.name
-            }
-            onBlur={() => setTitleDraft(null)}
-            maxLength={MAX_SLIDE_TITLE_LENGTH}
-            onChange={(event) => {
-              setTitleDraft({
-                session: state.documentSession,
-                name: event.currentTarget.value,
-              });
-              if (!(event.nativeEvent as InputEvent).isComposing)
-                rename(event.currentTarget.value);
-            }}
-            onCompositionEnd={(event) => rename(event.currentTarget.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.nativeEvent.isComposing)
-                event.currentTarget.blur();
-            }}
-          />
+          <span className="slide-editor-title-field">
+            <span className="slide-editor-title-measure" aria-hidden="true">
+              {title || "자료 제목"}
+            </span>
+            <input
+              key={state.documentSession}
+              className="slide-editor-title"
+              aria-label="자료 제목"
+              placeholder="자료 제목"
+              value={title}
+              onBlur={() => setTitleDraft(null)}
+              maxLength={MAX_SLIDE_TITLE_LENGTH}
+              onChange={(event) => {
+                setTitleDraft({
+                  session: state.documentSession,
+                  name: event.currentTarget.value,
+                });
+                if (!(event.nativeEvent as InputEvent).isComposing)
+                  rename(event.currentTarget.value);
+              }}
+              onCompositionEnd={(event) => rename(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.nativeEvent.isComposing)
+                  event.currentTarget.blur();
+              }}
+            />
+          </span>
         ) : (
           <strong className="slide-editor-title">
             {(openFailed && !binding && initialFile?.title) ||
               state?.name ||
               "CanvaSlide"}
           </strong>
+        )}
+        {teamFile && (
+          <CopyDocumentLinkButton
+            target={{ kind: "slide", teamId, id: teamFile.id }}
+            title={teamFile.title}
+          />
         )}
         <div className="heading-actions">
           <Button

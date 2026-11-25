@@ -68,6 +68,24 @@ const replay = (file, revision, contentHash) => {
   };
 };
 
+// Whether the team database has the slide store. Its own migration creates
+// it, possibly after a release is deployed, and reading a missing table would
+// abort the transaction; so a task transaction that reads slide titles asks
+// this in the round trip that opens it (withData's `first`).
+export const SLIDE_STORE_READY_SQL = `SELECT to_regclass('${S}.slide_files') IS NOT NULL AS ready`;
+// Titles of the team's live files among `fileIds`, read in the caller's team
+// transaction, for document links.
+export async function slideFileTitles(tx, teamId, fileIds) {
+  return new Map(
+    (
+      await tx.query(
+        `SELECT id,title FROM ${S}.slide_files WHERE team_id=$1 AND deleted_at IS NULL AND id=ANY($2::text[])`,
+        [teamId, fileIds],
+      )
+    ).rows.map((row) => [row.id, row.title]),
+  );
+}
+
 // Slide files of the external site: metadata in the graeboard_slides schema of
 // the team database and immutable bytes in the team's R2 bucket. Bytes are
 // uploaded before the transaction; inside it only an existence check and, when

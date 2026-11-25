@@ -102,7 +102,12 @@ export function documentEditorInput(
       if (text === undefined || latest.current.readOnly) return false;
       if (!view.state.selection.$from.parent.type.spec.code) {
         if (
-          pasteDocumentLink(view, text, linkTitles) ||
+          pasteDocumentLink(
+            view,
+            text,
+            linkTitles,
+            links.linkOpener.current?.teamId(),
+          ) ||
           pasteExternalLink(view, text, latest.current.linkTitles !== false)
         ) {
           event.preventDefault();

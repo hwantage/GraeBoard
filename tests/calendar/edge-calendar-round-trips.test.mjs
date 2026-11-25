@@ -9,6 +9,7 @@ import { PostgresTaskRepository } from "../../worker/storage/tasks/postgres-task
 import { calendarWeek } from "../../shared/calendar/calendar.js";
 import { entityId } from "../../server/sync/core/protocol.mjs";
 import { unpack } from "../../shared/formatting/compact.js";
+import { migrateSlideSchema } from "../../server/migrations/postgres-slides.mjs";
 
 // Edge reaches PostgreSQL over a link where each statement is a network round
 // trip, so loading the calendar or the task list must cost a fixed number of
@@ -201,5 +202,77 @@ test("calendar and task list reads cost the same statements for 3 or 30 records"
         task.documentCount === 1 &&
         task.hasDocument === Number(task.cells.title.value.slice(3)) % 2 > 0,
     ),
+  );
+});
+
+// Slide files are in their own schema. A title lookup reads them only for
+// slide links, in the transaction it already opens for the team, with one
+// statement for any number of them; whether the schema exists is asked in the
+// round trip that opens the transaction.
+test("document link titles read linked slide files in one statement", async (t) => {
+  const f = await postgresFixture(t);
+  if (!f) return;
+  await migrateSlideSchema(f.pool);
+  const slides = [randomUUID(), randomUUID(), randomUUID()];
+  for (const [index, id] of slides.entries())
+    await f.pool.query(
+      `INSERT INTO graeboard_slides.slide_files(id,team_id,title,revision,byte_length,content_hash,created_by,created_at,updated_by,updated_at,create_request_id)
+      VALUES($1,$2,$3,1,2,$4,$5,$6,$5,$6,$1)`,
+      [
+        id,
+        f.teamId,
+        "자료 " + index,
+        "0".repeat(64),
+        f.user.id,
+        new Date().toISOString(),
+      ],
+    );
+  const measured = { opens: 0, statements: 0, first: 0 },
+    context = f.makeContext(),
+    data = context.data.bind(context);
+  context.data = (teamId, work, options) => {
+    measured.opens++;
+    measured.first += options?.first?.length || 0;
+    return data(
+      teamId,
+      (s) => {
+        const query = s.tx.query.bind(s.tx);
+        s.tx.query = (...args) => {
+          measured.statements++;
+          return query(...args);
+        };
+        return work(s);
+      },
+      options,
+    );
+  };
+  const service = new CalendarBusinessService(
+    new PostgresCalendarRepository({ context }),
+    f.user,
+  );
+  const measure = async (paths) => {
+    Object.assign(measured, { opens: 0, statements: 0, first: 0 });
+    const { links } = await service.resolveLinks({
+      query: { links: paths.join(",") },
+    });
+    return { ...measured, titles: links.map((link) => link.title).sort() };
+  };
+  const task = `/links/task/${f.taskId}`,
+    slide = (id) => `/links/slide/${f.teamId}/${id}`;
+  const without = await measure([task]),
+    one = await measure([task, slide(slides[0])]),
+    three = await measure([task, ...slides.map(slide)]);
+  assert.equal(without.first, 0, "no slide link, no slide store question");
+  assert.deepEqual(
+    [one.opens, one.statements, one.first],
+    [without.opens, without.statements + 1, 1],
+  );
+  assert.deepEqual(
+    [three.opens, three.statements, three.first],
+    [one.opens, one.statements, one.first],
+  );
+  assert.deepEqual(
+    three.titles,
+    [...without.titles, "자료 0", "자료 1", "자료 2"].sort(),
   );
 });

@@ -1,6 +1,10 @@
 import { DEFAULT_DOCUMENT_TITLE } from "../../../shared/documents/task-documents.js";
 import { parseDocumentLinkPath } from "../../../shared/documents/document-links.js";
 import { excludedYears } from "../../sheet/task-view.mjs";
+import {
+  SLIDE_STORE_READY_SQL,
+  slideFileTitles,
+} from "../slides/postgres-slide-files.mjs";
 
 // Titles of stored documents by key, read in SQL so their bodies are not
 // loaded.
@@ -19,7 +23,9 @@ async function documentTitles(s, keys) {
 
 // Same targets as SQLite's resolveSqliteDocumentLinks, as the external
 // routes open them. Each readable team is read once for all links; copy rows
-// are read in SQL, without decoding whole copies in this runtime.
+// are read in SQL, without decoding whole copies in this runtime. Slide files
+// of a linked team are read in the same transaction, one statement for all;
+// whether the slide store exists comes with the round trip that opens it.
 export async function resolvePostgresDocumentLinks(ctx, paths) {
   const wanted = paths.map((path) => ({
     path,
@@ -31,7 +37,8 @@ export async function resolvePostgresDocumentLinks(ctx, paths) {
     wanted.filter(({ link }) => kinds.includes(link.kind));
   for (const team of await ctx.teams()) {
     if (team.status !== "active") continue;
-    const found = await ctx.data(team.id, async (s) => {
+    const slides = of("slide").filter(({ link }) => link.teamId === team.id);
+    const read = async (s) => {
       const result = [],
         add = (path, title) => result.push({ path, teamId: team.id, title }),
         live = (row) => row && !row.deleted && !row.payload.deletedAt,
@@ -197,8 +204,24 @@ export async function resolvePostgresDocumentLinks(ctx, paths) {
           if (title !== null) add(copyMemos[index].path, title);
         });
       }
+      if (slides.length && s.tx.first.at(-1).rows[0].ready) {
+        const titles = await slideFileTitles(
+          s.tx,
+          team.id,
+          slides.map(({ link }) => link.id),
+        );
+        for (const { path, link } of slides) {
+          const title = titles.get(link.id);
+          if (title !== undefined) add(path, title);
+        }
+      }
       return result;
-    });
+    };
+    const found = await ctx.data(
+      team.id,
+      read,
+      slides.length ? { first: [{ sql: SLIDE_STORE_READY_SQL }] } : {},
+    );
     links.push(...found);
   }
   return { links };
