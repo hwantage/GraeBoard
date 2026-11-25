@@ -54,7 +54,7 @@ DB 왕복은 이미 검사한 연결 기준이며 `client.query` 호출 수입�
 - 커서와 판정용 목록을 한 왕복으로 묶으면 외부가 4회 → 3회가 되지만, 두 저장소에 묶음 메서드를 더해 계약이 넓어지므로 하지 않았습니다.
 - 슬라이드 저장소의 연결 검사 2회는 사용자 요청 경로와 함께 쓰는 검사라 건드리지 않았습니다.
 
-검증: Node.js 22.23.1·PostgreSQL 17.11·Git 2.50.1에서 관련 검사만 실행했습니다. 전체 `npm test`, `npm run build`, 브라우저 검사, 고정 전환 호환 검사(`sheet-clone-frozen-compatibility`)는 이 기록 시점에 실행하지 않았습니다. 새 검사 5건은 수정 전 소스(340938c)에 그대로 넣으면 모두 실패하고 수정 후 통과합니다.
+검증: Node.js 22.23.1·PostgreSQL 17.11·Git 2.50.1에서 먼저 관련 검사를 실행했습니다(전체 검증은 아래). 새 검사 5건은 수정 전 소스(340938c)에 그대로 넣으면 모두 실패하고 수정 후 통과합니다.
 
 - `tests/sync/transport/sync-git-read-head.test.mjs`: 없는 브랜치(`ls-remote`만, null), 처음 읽기, 변화 없는 읽기(원격 연결은 `ls-remote`뿐이고 명령은 `ls-remote`·`rev-parse`), 상대의 게시와 자기 게시 뒤의 fetch, 브랜치별 비교, 없는 커밋을 가리키는 ref, 원격 접속 실패. 수정 전에는 변화 없는 읽기에서 `fetch`가 실행돼 실패합니다.
 - `tests/slides/slide-file-sync-external.test.mjs`: 실제 PostgreSQL의 팀 연결에서 보낸 SQL 문장과 GitHub 요청을 셉니다. 쓴 적 없는 팀 3회(`BEGIN`·`COMMIT`·`SELECT`, 상태 행을 만들지 않음), 쓰는 팀 4회(쓰기 없음, 판정용 목록에 `shared_chunks` 없음), 자료 3개(삭제 1개)에서도 같은 4회, 받고 게시하는 실행의 결과(받음 1·게시 1)와 양쪽 내용 일치. 수정 전에는 3회 자리에서 7회로 실패합니다.
