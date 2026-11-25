@@ -12,6 +12,7 @@ import type { User } from "../types";
 import { Button } from "../ui/Button";
 import { Empty } from "../ui/Empty";
 import { ErrorNote } from "../ui/ErrorNote";
+import CopyDocumentLinkButton from "../documents/CopyDocumentLinkButton";
 import SlideLoadingState from "./SlideLoadingState";
 import { isSlideShareId } from "../../shared/slides/slide-file-rules.js";
 import {
@@ -211,6 +212,10 @@ export default function SlidesWorkspace({
             <span>목록</span>
           </Button>
           <strong className="slide-editor-title">{initialFile.title}</strong>
+          <CopyDocumentLinkButton
+            target={{ kind: "slide", teamId, id: initialFile.id }}
+            title={initialFile.title}
+          />
           <div className="heading-actions">
             <SlideFileActions
               key={initialFile.id}

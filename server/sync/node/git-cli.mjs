@@ -238,7 +238,7 @@ export class GitCliTransport {
   }
   async readFile(oid, path) {
     if (
-      !/^(manifest\.json|events\/[a-zA-Z0-9-]+\.json|snapshots\/[a-zA-Z0-9-]+\.json(?:\.gz)?|objects\/[a-f0-9]{64}|images\/[a-zA-Z0-9-]+\/[a-f0-9]{64}\.webp|status\.json|directory\.json|keys\.json|slides\.json|files\/[a-f0-9-]{36}\.json|chunks\/[a-f0-9]{64})$/.test(
+      !/^(manifest\.json|events\/[a-zA-Z0-9-]+\.json|snapshots\/[a-zA-Z0-9-]+\.json(?:\.gz)?|objects\/[a-f0-9]{64}|images\/[a-zA-Z0-9-]+\/[a-f0-9]{64}\.webp|status\.json|directory\.json|avatars\.json|keys\.json|slides\.json|files\/[a-f0-9-]{36}\.json|chunks\/[a-f0-9]{64})$/.test(
         path,
       )
     )

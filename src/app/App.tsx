@@ -38,6 +38,7 @@ import {
   documentLinkWindowKey,
   documentLinkDocumentId,
   refreshDocumentLinkTitles,
+  slideFileAddress,
   type DocumentLinkOpener,
   type DocumentLinkNavigation,
   type DocumentLinkTarget,
@@ -270,6 +271,7 @@ export default function App() {
     </SiteContext.Provider>
   );
 }
+type SlideLink = Extract<DocumentLinkTarget, { kind: "slide" }>;
 function Workspace({
   boot,
   onBootstrap,
@@ -284,6 +286,8 @@ function Workspace({
   // A copied link address opens the app at /links/…: clean the address before
   // the screen route reads it, and open the target once it is found. A
   // full-page button's new tab also asks for full page (document-links.ts).
+  // A slide of one of the user's teams opens at the slides screen's address
+  // of the file, in that team (see `teamId` below).
   const [deepLink] = useState(() => {
     const target = parseDocumentLinkPath(location.pathname);
     if (!target) return null;
@@ -291,8 +295,17 @@ function Workspace({
     const fullPage = documentLinkFullPage(location.search),
       documentId =
         documentLinkDocument(location.search) ?? documentLinkDocumentId(target);
-    history.replaceState(history.state, "", "/");
-    return { target, fullPage, documentId };
+    const slideTeam =
+      target.kind === "slide" &&
+      boot.teams.some((team) => team.id === target.teamId)
+        ? target.teamId
+        : null;
+    history.replaceState(
+      history.state,
+      "",
+      slideTeam ? slideFileAddress(target.id) : "/",
+    );
+    return { target, fullPage, documentId, slideTeam };
   });
   const navigation = useWorkspaceNavigation({
     canLeaveSheet: () =>
@@ -343,7 +356,9 @@ function Workspace({
     teamId: string;
   } | null>(null);
   const [initialBoard] = useState(() => rememberedBoard(boot));
-  const [teamId, setTeamId] = useState(initialBoard.teamId),
+  const [teamId, setTeamId] = useState(
+      deepLink?.slideTeam ?? initialBoard.teamId,
+    ),
     [year, setYear] = useState(initialBoard.year),
     [view, setView] = useState<View>(defaultView(initialBoard.year) as View),
     [panel, setPanel] = useState(""),
@@ -514,6 +529,11 @@ function Workspace({
     };
   }, [browserTitle]);
   const [linkReload, setLinkReload] = useState(0);
+  // Opening a slide link mounts the slides screen again on its file.
+  const [slideLinkOpens, setSlideLinkOpens] = useState(0);
+  const [slideNavigation, setSlideNavigation] = useState<SlideLink | null>(
+    null,
+  );
   // "사본에서 열기" on a copy's task moves to that copy (linkNavigation).
   const [linkNavigation, setLinkNavigation] = useState<{
     target: Extract<DocumentLinkTarget, { kind: "sheet-clone-task" }>;
@@ -545,11 +565,13 @@ function Workspace({
         };
       },
       open: (target) => openLink.current(target),
+      teamId: () => currentTeam.current,
     }),
     [],
   );
   // Linked detail windows keep the screen below them for the return on close.
   openLink.current = async (target) => {
+    if (target.kind === "slide") return openSlideLink(target);
     // Links to different documents of one task open the same window.
     const key = documentLinkWindowKey(target);
     if (openingTargets.current.has(key)) return;
@@ -595,10 +617,45 @@ function Workspace({
     if (annualMemoRef.current && !(await annualMemoRef.current.flush())) return;
     setLinkNavigation({ target, teamId });
   }
+  // A slide opens in the slides screen of its team, the way a file opens from
+  // the team's list there. Windows above close through their own save paths
+  // first, as for "사본에서 열기" (slideNavigation moves on).
+  async function openSlideLink(target: SlideLink) {
+    if (!boot.teams.some((team) => team.id === target.teamId))
+      throw new Error(UNAVAILABLE_LINK_MESSAGE);
+    for (const entry of [...openDetails.current].reverse())
+      if (!(await entry.close())) return;
+    setSlideNavigation(target);
+  }
+  // The calendar stays busy until its closed window has rendered away. Then
+  // the screen is left through its own leave path, and the file, its team and
+  // the slides screen render together.
+  useEffect(() => {
+    const target = slideNavigation;
+    if (!target || calendarBusy || insightsBusy) return;
+    setSlideNavigation(null);
+    const show = () => {
+      history.replaceState(history.state, "", slideFileAddress(target.id));
+      setTeamId(target.teamId);
+      setSlideLinkOpens((count) => count + 1);
+    };
+    if (screen === "slides") void navigateWorkspace(show);
+    else void workspaceRoute.navigate("slides", show);
+  }, [slideNavigation, calendarBusy, insightsBusy]);
   // A link address has no screen to return to: open over the target's team,
-  // and over the calendar for an entry.
+  // and over the calendar for an entry. A slide's address was already
+  // turned into its slides screen address and team.
   useEffect(() => {
     if (!deepLink) return;
+    if (deepLink.target.kind === "slide") {
+      // Another team's slide is refused as a click refuses it, after the
+      // board's first load has started.
+      if (!deepLink.slideTeam)
+        openSlideLink(deepLink.target).catch((e) =>
+          setError((e as Error).message),
+        );
+      return;
+    }
     let active = true;
     loadDocumentLink(deepLink.target).then(
       (link) => {
@@ -2402,7 +2459,7 @@ function Workspace({
           />
         ) : screen === "slides" ? (
           <SlidesWorkspace
-            key={teamId}
+            key={`${teamId}:${slideLinkOpens}`}
             ref={slidesRef}
             teamId={teamId}
             user={user}

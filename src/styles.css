@@ -2598,6 +2598,34 @@ body.document-block-moving * {
 .task-detail-modal .modal-heading .task-new-mark::before {
   font-size: 11px;
 }
+/* The task title scrolled away in the body (TaskDetailHeaderTitle) takes the
+   heading's place and only the space the heading already had, so the header
+   buttons stay put. The hidden heading still names the dialog. */
+.task-detail-modal
+  > header
+  > .modal-heading:has(> .task-detail-header-title:not([hidden])) {
+  flex-basis: 0;
+  flex-shrink: 1;
+}
+.modal-heading:has(> .task-detail-header-title:not([hidden])) > h2 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+/* Display only: a click must not put a selection (or the caret-browsing
+   caret, which also scrolls the clipped text) inside the title. */
+.task-detail-header-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 17px;
+  font-weight: 600;
+  user-select: none;
+}
 .task-detail-modal > header .document-expand,
 .task-detail-modal > header .document-link-copy,
 .task-detail-modal > header .document-full-width,
@@ -2753,7 +2781,8 @@ body.document-block-moving * {
   white-space: nowrap;
 }
 .detail-field-value.is-empty,
-.task-detail-description-text.is-empty {
+.task-detail-description-text.is-empty,
+.task-detail-header-title.is-empty {
   color: #8a969c;
 }
 .detail-field-value:disabled {
@@ -5348,8 +5377,17 @@ body.document-block-moving * {
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }
-  .settings-nav h3 {
-    display: none;
+  /* Keep the 팀·시스템 group names: both groups have an 외부 동기화 item. */
+  .modal-body .settings-nav h3 {
+    flex-shrink: 0;
+    align-self: center;
+    margin: 0;
+    white-space: nowrap;
+  }
+  .modal-body .settings-nav ul + h3 {
+    margin: 0 0 0 4px;
+    padding-left: 10px;
+    border-left: 1px solid var(--line);
   }
   .settings-version {
     flex-shrink: 0;
@@ -5870,18 +5908,27 @@ body.document-block-moving * {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
   }
+  /* One row per group, its name beside it, so a scrolled row keeps its name. */
   .settings-nav {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 4px 8px;
     max-height: 132px;
     padding: 8px;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+  }
+  .modal-body .settings-nav ul + h3 {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
   }
   .settings-nav ul {
     display: flex;
     flex-wrap: nowrap;
     gap: 4px;
     overflow-x: auto;
-    flex-shrink: 0;
   }
   .settings-nav li {
     flex-shrink: 0;
@@ -5900,8 +5947,10 @@ body.document-block-moving * {
     overflow-x: auto;
     flex-wrap: nowrap;
   }
+  /* The five team tabs, 외부 동기화 last, fit a 360px phone. */
   .settings-tabs [role="tab"] {
     flex-shrink: 0;
+    padding: 12px 8px;
   }
   .settings-danger {
     flex-wrap: wrap;

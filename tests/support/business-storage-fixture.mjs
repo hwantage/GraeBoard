@@ -103,12 +103,14 @@ export function sqliteFixture(t, { documents = true } = {}) {
     app = createApp({
       db,
       rateLimits: false,
+      slideFilesDir: join(dir, "slide-files"),
       syncOptions: { schedule: false, installationId: link.installation_id },
     });
   t.after(async () => {
     await app.locals.sync.close();
     app.locals.cellEvents.close();
     app.locals.documentEvents.close();
+    app.locals.slideFileRepository.close();
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });

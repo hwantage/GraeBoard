@@ -1,5 +1,6 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { unpack } from "../../../shared/formatting/compact.js";
 import { defaultView, todayKey } from "../../../shared/domain.js";
 
@@ -535,6 +536,210 @@ test("삭제했거나 열 수 없는 링크는 저장된 글자를 흐리게 보
     "링크한 문서를 열 수 없습니다.",
   );
   expect(new URL(page.url()).pathname).toBe("/");
+});
+
+// A team slide file from the CanvaSlide build that `npm run build` installed.
+async function slideFile(page: Page, title: string, team = teamId) {
+  const dist = "dist/tools/canvaslide";
+  const { buildId } = JSON.parse(readFileSync(`${dist}/current.json`, "utf8"));
+  const response = await page.request.post(`/api/teams/${team}/slides`, {
+    headers: {
+      ...headers,
+      "Content-Type": "application/octet-stream",
+      "X-Slide-Title": encodeURIComponent(title),
+      "X-Slide-Request-Id": randomUUID(),
+    },
+    data: readFileSync(`${dist}/${buildId}/examples/flowchart.canvaslide`),
+  });
+  expect(response.status()).toBe(201);
+  return (unpack(await response.json()) as { id: string }).id;
+}
+const slideEditor = (page: Page) =>
+  page.frameLocator("iframe.slide-editor-frame");
+async function expectSlideOpen(page: Page, team: string, fileId: string) {
+  await expect(page.getByLabel("팀 선택")).toHaveValue(team);
+  await expect(
+    slideEditor(page).locator("[data-element-id]").first(),
+  ).toBeVisible();
+  expect(new URL(page.url()).pathname).toBe("/slides");
+  expect(new URL(page.url()).searchParams.get("file")).toBe(fileId);
+}
+
+test("슬라이드 주소를 붙여넣으면 제목 링크가 되고 누르거나 주소로 열면 그 팀의 슬라이드 편집 화면이 열린다", async ({
+  page,
+}, info) => {
+  const first = await slideFile(page, "링크할 슬라이드"),
+    second = await slideFile(page, "두 번째 슬라이드");
+  const origin = new URL(page.url()).origin;
+  const source = await open(page);
+  // The slides screen's address names no team: it is the current team's.
+  await paste(rich(source), `${origin}/slides?file=${first}`);
+  await expect(links(source)).toHaveText(["링크할 슬라이드"]);
+  // The link address itself, as a slide's link copy would give it.
+  await paste(rich(source), `${origin}/links/slide/${teamId}/${second}`);
+  await expect(links(source)).toHaveText([
+    "링크할 슬라이드",
+    "두 번째 슬라이드",
+  ]);
+  await expect
+    .poll(() => taskMarkdown(page, taskIds[0]))
+    .toContain(
+      `[링크할 슬라이드](/links/slide/${teamId}/${first})[두 번째 슬라이드](/links/slide/${teamId}/${second})`,
+    );
+  // A temporary share address expires and stays an ordinary web link.
+  const share = `${origin}/slides?team=${teamId}&share=${"a".repeat(21)}`;
+  await rich(source).press("End");
+  await paste(rich(source), share);
+  await expect(rich(source).locator(`a[href="${share}"]`)).toHaveCount(1);
+  await expect(links(source)).toHaveCount(2);
+  await source.screenshot({ path: info.outputPath("pasted-slide-links.png") });
+
+  // ⌘/Ctrl+click opens the link address in a new tab.
+  await page.evaluate(() => {
+    (window as any).__opened = [];
+    window.open = (...args: unknown[]) => {
+      (window as any).__opened.push(args);
+      return null;
+    };
+  });
+  await links(source)
+    .nth(1)
+    .click({ modifiers: ["ControlOrMeta"] });
+  expect(await page.evaluate(() => (window as any).__opened)).toEqual([
+    [
+      `${origin}/links/slide/${teamId}/${second}`,
+      "_blank",
+      "noopener,noreferrer",
+    ],
+  ]);
+  // A click leaves the detail through its own save path and opens the file
+  // in the slides screen, as the team's list does.
+  await links(source).nth(0).click();
+  await expect(details(page)).toHaveCount(0);
+  await expectSlideOpen(page, teamId, first);
+  await page.screenshot({ path: info.outputPath("slide-link-opened.png") });
+
+  // The address opens the file in its team, from another team and screen.
+  const other = (
+    await request(page, "/admin/teams", "POST", {
+      name: `다른 팀 ${randomUUID().slice(0, 8)}`,
+      members: [{ userId, role: "lead" }],
+    })
+  ).id;
+  await page.goto("/");
+  await page.getByLabel("팀 선택").selectOption(other);
+  await page.goto(`/links/slide/${teamId}/${second}`);
+  await expectSlideOpen(page, teamId, second);
+
+  // A deleted file keeps the stored text and says the link cannot be opened.
+  await request(page, `/teams/${teamId}/slides/${second}`, "DELETE");
+  await saveTask(
+    page,
+    taskIds[1],
+    `[지운 슬라이드](/links/slide/${teamId}/${second})\n`,
+  );
+  await page.goto("/");
+  await page.getByLabel("팀 선택").selectOption(teamId);
+  const linked = await open(page, taskIds[1]);
+  await expect(links(linked)).toHaveText(["지운 슬라이드"]);
+  await expect(links(linked)).toHaveAttribute("data-state", "unavailable");
+  await links(linked).click();
+  await expect(linked.getByRole("alert")).toHaveText(
+    "링크한 문서를 열 수 없습니다. 삭제되었거나 접근 권한이 없습니다.",
+  );
+  await expect(details(page)).toHaveCount(1);
+
+  // Someone outside the slide's team gets the same notice from its address.
+  const username = `slide-link-${randomUUID()}@example.com`;
+  await request(page, "/admin/users", "POST", {
+    username,
+    password: "local-peer-password",
+    name: "다른 팀원",
+    memberships: [{ teamId: other, role: "member" }],
+  });
+  const peer = await page
+    .context()
+    .browser()!
+    .newContext({
+      baseURL: info.project.use.baseURL,
+      viewport: { width: 1366, height: 900 },
+    });
+  const outsider = await peer.newPage();
+  await outsider.request.post("/api/auth/login", {
+    headers,
+    data: { username, password: "local-peer-password" },
+  });
+  await outsider.goto(`/links/slide/${teamId}/${first}`);
+  await expect(outsider.locator(".board-error")).toContainText(
+    "링크한 문서를 열 수 없습니다.",
+  );
+  expect(new URL(outsider.url()).pathname).toBe("/");
+  await peer.close();
+});
+
+test("슬라이드 편집 화면 제목 오른쪽의 링크 복사는 링크 주소와 제목을 복사하고 그 주소로 같은 편집 화면을 연다", async ({
+  page,
+  browserName,
+}, info) => {
+  const file = await slideFile(page, "복사한 슬라이드");
+  const origin = new URL(page.url()).origin;
+  await page.goto(`/slides?file=${file}`);
+  await expectSlideOpen(page, teamId, file);
+  const copy = page
+    .locator(".slide-editor-bar")
+    .getByRole("button", { name: "링크 복사", exact: true });
+  await expect(copy).toHaveAttribute("data-tooltip", "링크 복사");
+  const address = `${origin}/links/slide/${teamId}/${file}`;
+  const result = await copied(page, browserName, copy);
+  expect(result.text).toBe(address);
+  expect(result.html).toContain(`<a href="${address}">복사한 슬라이드</a>`);
+  await page.screenshot({ path: info.outputPath("slide-link-copied.png") });
+
+  // The address opens the same editing screen as the team's list does.
+  await page.goto("/");
+  await page.goto(new URL(result.text).pathname);
+  await expectSlideOpen(page, teamId, file);
+  await expect(page.getByRole("textbox", { name: "자료 제목" })).toHaveValue(
+    "복사한 슬라이드",
+  );
+
+  // Pasted in a document, it is the slide's title link, stored as a path.
+  await page.goto("/");
+  await page.getByLabel("팀 선택").selectOption(teamId);
+  const source = await open(page);
+  await paste(rich(source), result.text, result.html);
+  await expect(links(source)).toHaveText(["복사한 슬라이드"]);
+  await expect
+    .poll(() => taskMarkdown(page, taskIds[0]))
+    .toContain(`[복사한 슬라이드](/links/slide/${teamId}/${file})`);
+});
+
+test("캘린더 일정 상세의 슬라이드 링크는 일정 상세를 닫고 슬라이드 편집 화면을 연다", async ({
+  page,
+}) => {
+  const file = await slideFile(page, "일정에서 연 슬라이드");
+  const scheduled = await entry(page);
+  await request(page, `/calendar/entries/${scheduled.id}/document`, "PUT", {
+    markdown: `[슬라이드](/links/slide/${teamId}/${file})\n`,
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  await page.getByRole("button", { name: "캘린더", exact: true }).click();
+  await page
+    .locator(`[data-entry-id="${scheduled.id}"] .calendar-entry-card`)
+    .first()
+    .click();
+  await expect(links(calendarDetail(page))).toHaveText("일정에서 연 슬라이드");
+  // An edit not saved yet: the detail saves it before it closes.
+  await rich(calendarDetail(page)).press("End");
+  await rich(calendarDetail(page)).pressSequentially(" 메모");
+  await links(calendarDetail(page)).click();
+  await expect(calendarDetail(page)).toHaveCount(0);
+  await expectSlideOpen(page, teamId, file);
+  expect(
+    (await request(page, `/calendar/entries/${scheduled.id}/document`))
+      .markdown,
+  ).toContain(" 메모");
 });
 
 test("기존 HTTP 링크는 붙여넣기·읽기 전용 클릭에서 그대로 동작한다", async ({

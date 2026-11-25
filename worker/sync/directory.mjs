@@ -1,4 +1,8 @@
 import {
+  AVATARS_FILE,
+  avatarFile,
+  decodeAvatarImage,
+  decodeAvatars,
   decodeDirectory,
   validateDirectory,
   DIRECTORY_MAX_BYTES,
@@ -53,6 +57,23 @@ export async function refreshDirectory(env, { force = false, transport } = {}) {
       ),
     );
     directoryChecked.set(teamId, Date.now());
+    // A version before avatars, or a pass that reached its image limit, may
+    // have applied this head's members but not all of its avatars.
+    if (!previous.directory_hash?.includes(":"))
+      await transport
+        .readFile(head, "directory.json")
+        .then((bytes) =>
+          applyAvatars(
+            env,
+            transport,
+            head,
+            decodeDirectory(bytes, {
+              teamId,
+              installationId: env.PEER_INSTALLATION_ID,
+            }),
+          ),
+        )
+        .catch(avatarsFailed);
     return;
   }
   if (previous.directory_head)
@@ -88,7 +109,110 @@ export async function refreshDirectory(env, { force = false, transport } = {}) {
     previousHead: previous.directory_head,
   });
   directoryChecked.set(teamId, Date.now());
+  if (applied.changed)
+    await applyAvatars(env, transport, head, directory).catch(avatarsFailed);
   return applied;
+}
+// Sign-in and approval wait for the directory; avatars never fail them. An
+// unfinished head is retried on the next directory check.
+const avatarsFailed = (error) =>
+  console.error("GraeBoard team avatars skipped", error.message);
+
+// Images fetched by one pass; the rest follow on the next directory check.
+export const AVATAR_IMAGES_PER_PASS = 20;
+// Avatars follow the intranet like names do. PostgreSQL hashes the stored
+// images, so only a changed picture is fetched and only changed rows written.
+// A broken image keeps its member's previous picture and never holds back
+// membership, which applyDirectory has already committed.
+async function applyAvatars(env, transport, head, directory) {
+  const files = new Set(
+    (await transport.readCommit(head)).files.map((f) => f.path),
+  );
+  const avatars = files.has(AVATARS_FILE)
+    ? decodeAvatars(await transport.readFile(head, AVATARS_FILE), directory)
+    : null;
+  const members = new Set(directory.members.map((member) => member.id)),
+    listed = (avatars?.members || []).filter((member) =>
+      members.has(member.id),
+    );
+  const stored = new Map(
+    listed.length
+      ? (
+          await controlTransaction(env, (tx) =>
+            tx.query(
+              "SELECT id,color,avatar_initials,CASE avatar_image WHEN '' THEN '' ELSE encode(sha256(convert_to(avatar_image,'UTF8')),'hex') END AS image FROM users WHERE id=ANY($1::text[])",
+              [listed.map((member) => member.id)],
+            ),
+          )
+        ).rows.map((row) => [row.id, row])
+      : [],
+  );
+  const changed = listed.filter((member) => {
+    const row = stored.get(member.id);
+    return (
+      row &&
+      (row.color !== member.color ||
+        row.avatar_initials !== member.initials ||
+        row.image !== member.image)
+    );
+  });
+  const fetching = changed.filter(
+    (member) => member.image && stored.get(member.id).image !== member.image,
+  );
+  const later = new Set(
+    fetching.slice(AVATAR_IMAGES_PER_PASS).map((member) => member.id),
+  );
+  const images = new Map();
+  for (const member of fetching.slice(0, AVATAR_IMAGES_PER_PASS))
+    try {
+      images.set(
+        member.id,
+        decodeAvatarImage(
+          await transport.readFile(head, avatarFile(member.id)),
+          member.image,
+        ),
+      );
+    } catch (error) {
+      console.error(
+        "GraeBoard avatar image skipped",
+        JSON.stringify({ userId: member.id, message: error.message }),
+      );
+    }
+  await controlTransaction(
+    env,
+    async (tx) => {
+      const meta = (
+        await tx.query(
+          "SELECT directory_head FROM site_meta WHERE singleton=1 FOR UPDATE",
+        )
+      ).rows[0];
+      // A newer head is applied by its own pass.
+      if (meta.directory_head !== head) return;
+      for (const member of changed) {
+        if (later.has(member.id)) continue;
+        const image = member.image ? images.get(member.id) : "";
+        await tx.query(
+          image === undefined
+            ? "UPDATE users SET color=$2,avatar_initials=$3 WHERE id=$1"
+            : "UPDATE users SET color=$2,avatar_initials=$3,avatar_image=$4 WHERE id=$1",
+          [
+            member.id,
+            member.color,
+            member.initials,
+            ...(image === undefined ? [] : [image]),
+          ],
+        );
+      }
+      // "<directory hash>:<avatar list hash>" marks this head's avatars done;
+      // the second part is empty when the intranet publishes no avatar list.
+      if (!later.size)
+        await tx.query(
+          "UPDATE site_meta SET directory_hash=$1 WHERE singleton=1",
+          [`${digest(directory)}:${avatars ? digest(avatars) : ""}`],
+        );
+    },
+    { write: true },
+  );
 }
 
 async function applyDirectory(env, directory, { head, previousHead }) {

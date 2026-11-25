@@ -97,6 +97,7 @@ export async function bootstrapFromTeamStores(ctx) {
   const { users: controlUsers, teams: rows } = ctx.controlStore.usersAndTeams
     ? await ctx.controlStore.usersAndTeams(ctx.user)
     : { users: await ctx.controlStore.users(), teams: await ctx.teams() };
+  const accounts = new Map(controlUsers.map((user) => [user.id, user]));
   for (const row of rows) {
     let settings = DEFAULT_SETTINGS,
       name = row.name,
@@ -120,7 +121,9 @@ export async function bootstrapFromTeamStores(ctx) {
             revision: t?.revision || 0,
           };
           name = t?.payload?.name || name;
-          for (const p of await s.list("person"))
+          for (const p of await s.list("person")) {
+            // A former member keeps the avatar last synchronized for them.
+            const account = accounts.get(p.key[0]);
             people.set(p.key[0], {
               id: p.key[0],
               name: p.payload.name,
@@ -128,10 +131,11 @@ export async function bootstrapFromTeamStores(ctx) {
               teamIds: [],
               teamRoles: {},
               active: false,
-              color: "#177b70",
-              avatarInitials: "",
-              avatarImage: "",
+              color: account?.color || "#177b70",
+              avatarInitials: account?.avatarInitials || "",
+              avatarImage: account?.avatarImage || "",
             });
+          }
           const result = await s.tx.query(
             "SELECT DISTINCT y.value::integer AS year FROM site_entities s CROSS JOIN LATERAL jsonb_array_elements_text(s.payload::jsonb->'years') y(value) WHERE s.team_id=$1 AND s.entity='task' AND s.deleted=0",
             [row.id],
@@ -191,6 +195,16 @@ async function execute(ctx, command, body, targetId) {
         body.name === ctx.user.name,
         403,
         "이름은 사내 계정에서 변경하세요.",
+      );
+    // Avatars follow the intranet through the member directory (2026-11-24).
+    if (command === "profile")
+      assert(
+        ["color", "avatarInitials", "avatarImage"].every(
+          (field) =>
+            body[field] === undefined || body[field] === ctx.user[field],
+        ),
+        403,
+        "아바타는 사내 계정에서 변경하세요.",
       );
   }
   if (command === "profile") {

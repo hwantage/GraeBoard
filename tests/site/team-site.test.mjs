@@ -656,6 +656,204 @@ test(
       success(await outside("lead-google", "/bootstrap")).site,
       "external",
     );
+    // Avatars follow the intranet like names (2026-11-24): the external
+    // profile refuses changes, and the member directory brings intranet values.
+    const avatarOf = async (id) =>
+      (
+        await pool.query(
+          "SELECT color,avatar_initials AS initials,avatar_image AS image FROM graeboard_site.users WHERE id=$1",
+          [id],
+        )
+      ).rows[0];
+    const leadProfile = success(
+      await outside("lead-google", "/bootstrap"),
+    ).user;
+    const refused = await outside(
+      "lead-google",
+      "/auth/profile",
+      { color: "#000000" },
+      "PATCH",
+    );
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.error, "아바타는 사내 계정에서 변경하세요.");
+    success(
+      await outside(
+        "lead-google",
+        "/auth/profile",
+        {
+          name: leadProfile.name,
+          color: leadProfile.color,
+          avatarInitials: leadProfile.avatarInitials,
+          avatarImage: leadProfile.avatarImage,
+        },
+        "PATCH",
+      ),
+    );
+    // A value chosen on the external site before this rule is overwritten.
+    await pool.query(
+      "UPDATE graeboard_site.users SET color='#123456',avatar_initials='AB' WHERE id=$1",
+      [lead],
+    );
+    const picture = async (red) =>
+      "data:image/png;base64," +
+      (
+        await sharp({
+          create: {
+            width: 8,
+            height: 8,
+            channels: 3,
+            background: { r: red, g: 40, b: 90 },
+          },
+        })
+          .png()
+          .toBuffer()
+      ).toString("base64");
+    const leadImage = await picture(255),
+      extras = [];
+    for (let i = 0; i < 21; i++) {
+      const id = randomUUID(),
+        image = await picture(i);
+      extras.push({ id, image });
+      db.prepare(
+        "INSERT INTO users(id,username,name,password,avatar_image,created_at) VALUES(?,?,?,'private-extra-hash',?,?)",
+      ).run(
+        id,
+        `extra${i}@internal.test`,
+        "Extra " + i,
+        image,
+        new Date().toISOString(),
+      );
+    }
+    const teamMembers = (more) =>
+      inside(
+        `/teams/${teamId}/members`,
+        {
+          members: [
+            { userId: lead, role: "lead" },
+            { userId: member, role: "member" },
+            ...more,
+          ],
+        },
+        "PUT",
+      );
+    success(
+      await teamMembers(
+        extras.map(({ id }) => ({ userId: id, role: "member" })),
+      ),
+    );
+    success(
+      await inside(
+        "/auth/profile",
+        { color: "#3a6ea5", avatarInitials: "", avatarImage: leadImage },
+        "PATCH",
+      ),
+    );
+    success(
+      await inside("/auth/profile", { avatarInitials: "MB" }, "PATCH", member),
+    );
+    await app.locals.sync.get(teamId).run();
+    const directoryRef = "refs/heads/sync-directory/" + sourceId,
+      avatarHead = github.text(["rev-parse", directoryRef]);
+    const imageBlobs = new Set(
+      github
+        .text(["ls-tree", "-r", avatarHead])
+        .split("\n")
+        .filter((line) => line.endsWith(".txt"))
+        .map((line) => line.split(/\s+/)[2]),
+    );
+    const imageFetches = (from) =>
+      github.calls
+        .slice(from)
+        .filter((call) => imageBlobs.has(call.path.split("/").at(-1))).length;
+    const siteHash = async () =>
+      (
+        await pool.query(
+          "SELECT directory_hash FROM graeboard_site.site_meta WHERE singleton=1",
+        )
+      ).rows[0].directory_hash;
+    const pictured = async () =>
+      Number(
+        (
+          await pool.query(
+            "SELECT count(*) n FROM graeboard_site.users WHERE avatar_image<>''",
+          )
+        ).rows[0].n,
+      );
+    // One pass fetches at most 20 changed images; the next check goes on.
+    let callsBefore = github.calls.length;
+    await refreshDirectory(env, { force: true });
+    assert.equal(imageFetches(callsBefore), 20);
+    assert.equal(await pictured(), 20);
+    assert.doesNotMatch(await siteHash(), /:/);
+    callsBefore = github.calls.length;
+    await refreshDirectory(env, { force: true });
+    assert.equal(imageFetches(callsBefore), 2);
+    assert.equal(await pictured(), 22);
+    assert.match(await siteHash(), /^[0-9a-f]{64}:[0-9a-f]{64}$/);
+    assert.deepEqual(await avatarOf(lead), {
+      color: "#3a6ea5",
+      initials: "",
+      image: leadImage,
+    });
+    assert.deepEqual(await avatarOf(member), {
+      color: "#177b70",
+      initials: "MB",
+      image: "",
+    });
+    assert.equal((await avatarOf(extras[7].id)).image, extras[7].image);
+    const seen = success(await outside("lead-google", "/bootstrap")).users.find(
+      (user) => user.id === lead,
+    );
+    assert.equal(seen.color, "#3a6ea5");
+    assert.equal(seen.avatarImage, leadImage);
+    // Unchanged: no new directory commit, no image fetch, no external write.
+    const revision = async () =>
+      (
+        await pool.query(
+          "SELECT revision FROM graeboard_site.control_meta WHERE singleton=1",
+        )
+      ).rows[0].revision;
+    const revisionBefore = await revision();
+    callsBefore = github.calls.length;
+    await app.locals.sync.get(teamId).run();
+    await refreshDirectory(env, { force: true });
+    assert.equal(github.text(["rev-parse", directoryRef]), avatarHead);
+    assert.equal(imageFetches(callsBefore), 0);
+    assert.equal(await revision(), revisionBefore);
+    // A role change moves the directory but fetches no image.
+    success(
+      await teamMembers(
+        extras.map(({ id }, i) => ({
+          userId: id,
+          role: i ? "member" : "viewer",
+        })),
+      ),
+    );
+    await app.locals.sync.get(teamId).run();
+    callsBefore = github.calls.length;
+    await refreshDirectory(env, { force: true });
+    assert.notEqual(github.text(["rev-parse", directoryRef]), avatarHead);
+    assert.equal(imageFetches(callsBefore), 0);
+    assert.match(await siteHash(), /:/);
+    // A site that applied this head before avatars existed (an older
+    // version, or the intranet updated first) applies them on its next check.
+    await pool.query(
+      "UPDATE graeboard_site.site_meta SET directory_hash=split_part(directory_hash,':',1)",
+    );
+    await pool.query(
+      "UPDATE graeboard_site.users SET color='#177b70',avatar_image='' WHERE id=$1",
+      [lead],
+    );
+    await refreshDirectory(env, { force: true });
+    assert.deepEqual(await avatarOf(lead), {
+      color: "#3a6ea5",
+      initials: "",
+      image: leadImage,
+    });
+    assert.match(await siteHash(), /:/);
+    success(await teamMembers([]));
+    await app.locals.sync.get(teamId).run();
+    await refreshDirectory(env, { force: true });
     assert.deepEqual(
       success(
         await outside(
@@ -1211,6 +1409,34 @@ test(
       ).status,
       403,
     );
+    // Control transactions (search_path graeboard_site) a call opens.
+    const controlTransactions = async (work) => {
+      const connect = pool.connect;
+      let opened = 0;
+      pool.connect = async function (...args) {
+        if (typeof args[0] === "function") return connect.apply(this, args);
+        const client = await connect.apply(this, args),
+          { query, release } = client;
+        client.query = function (text, ...rest) {
+          if (String(text).includes("search_path TO graeboard_site")) opened++;
+          return query.call(this, text, ...rest);
+        };
+        client.release = function (...rest) {
+          Object.assign(client, { query, release });
+          return release.apply(this, rest);
+        };
+        return client;
+      };
+      try {
+        const result = await work();
+        return { opened, result };
+      } finally {
+        pool.connect = connect;
+      }
+    };
+    const withMember = await controlTransactions(() =>
+      outside("lead-google", "/bootstrap"),
+    );
     success(
       await inside(
         `/teams/${teamId}/members`,
@@ -1221,6 +1447,17 @@ test(
     await app.locals.sync.get(teamId).run();
     await refreshDirectory(env, { force: true });
     assert.equal((await outside("member-google", "/bootstrap")).status, 401);
+    // A former member keeps the avatar last synchronized for them, taken from
+    // the accounts bootstrap already reads: no control transaction is added.
+    const withFormer = await controlTransactions(() =>
+      outside("lead-google", "/bootstrap"),
+    );
+    assert.equal(
+      success(withFormer.result).users.find((user) => user.id === member)
+        .avatarInitials,
+      "MB",
+    );
+    assert.equal(withFormer.opened, withMember.opened);
     // The removed member's person record stays for old references, but the
     // calendar lists only the internal team's current active members.
     assert.equal(
