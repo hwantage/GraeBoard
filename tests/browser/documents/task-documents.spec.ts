@@ -493,6 +493,129 @@ test("업무 상세와 메모 전체 페이지는 스크롤 중 탭 줄과 모�
   );
 });
 
+test("업무 상세는 본문 제목이 스크롤로 가려지면 헤더의 업무 상세 자리에 제목을 한 줄로 보인다", async ({
+  page,
+}, info) => {
+  await save(
+    page,
+    taskIds[0],
+    Array.from({ length: 80 }, (_, i) => `문단 ${i + 1}`).join("\n\n"),
+  );
+  await open(page);
+  const dialog = detail(page);
+  const body = dialog.locator(".modal-body");
+  const header = dialog.locator(":scope > header");
+  const heading = dialog.getByRole("heading", {
+    name: "업무 상세",
+    exact: true,
+  });
+  const shown = header.locator(".task-detail-header-title");
+  const input = dialog.getByRole("textbox", { name: "작업 편집", exact: true });
+  const scroll = async (end: boolean) => {
+    await body.evaluate((el, end) => {
+      el.scrollTop = end ? el.scrollHeight : 0;
+    }, end);
+    await expect(shown).toBeVisible({ visible: end });
+  };
+  // The buttons right of the title keep their places whichever title is
+  // shown; the title's own buttons follow it on the same line.
+  const layout = () =>
+    header.evaluate((el) =>
+      [
+        ...el.querySelectorAll(
+          ":scope > :not(.modal-heading), :scope > :not(.modal-heading) button",
+        ),
+      ].map((node) => {
+        const box = node.getBoundingClientRect();
+        return [box.x, box.y, box.width, box.height].map(Math.round);
+      }),
+    );
+  const fitsHeader = async (text: string) => {
+    await expect(shown).toHaveText(text);
+    const title = (await shown.boundingBox())!;
+    expect(title.height).toBeLessThan(30);
+    const end = (await header
+      .locator(":scope > :not(.modal-heading)")
+      .first()
+      .boundingBox())!;
+    let right = title.x + title.width;
+    for (const button of await header
+      .locator(".modal-heading > button")
+      .all()) {
+      const box = (await button.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(right);
+      expect(box.y).toBeLessThan(title.y + title.height);
+      right = box.x + box.width;
+    }
+    expect(right).toBeLessThanOrEqual(end.x);
+    // The dialog keeps its name; the heading is only hidden from view.
+    await expect(heading).toHaveCount(1);
+    expect((await heading.boundingBox())!.width).toBeLessThanOrEqual(1);
+    await expect(dialog).toBeVisible();
+  };
+
+  await expect(shown).toBeHidden();
+  expect((await heading.boundingBox())!.width).toBeGreaterThan(1);
+  const before = await layout();
+  const height = (await header.boundingBox())!.height;
+  await dialog.screenshot({ path: info.outputPath("header-before.png") });
+  await scroll(true);
+  await fitsHeader("첫 문서 업무");
+  await expect(shown).toHaveAttribute("title", "첫 문서 업무");
+  await expect(shown).toHaveAttribute("aria-hidden", "true");
+  expect(await layout()).toEqual(before);
+  expect((await header.boundingBox())!.height).toBe(height);
+  await dialog.screenshot({ path: info.outputPath("header-scrolled.png") });
+  // Scrolled back to the title, the header names the dialog again.
+  await scroll(false);
+  expect((await heading.boundingBox())!.width).toBeGreaterThan(1);
+
+  // A title edited in the body shows in the header; a long one is cut.
+  const long = `헤더에서 확인하는 아주 긴 업무 제목 ${"끝까지 이어지는 설명 ".repeat(12)}마지막`;
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/api/cells/batch") && r.ok()),
+    input.fill(long).then(() => input.press("Enter")),
+  ]);
+  await scroll(true);
+  await fitsHeader(long);
+  await expect(shown).toHaveAttribute("title", long);
+  expect(await shown.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+    true,
+  );
+  await expect(shown).toHaveCSS("text-overflow", "ellipsis");
+  expect(await layout()).toEqual(before);
+  expect((await header.boundingBox())!.height).toBe(height);
+  await dialog.screenshot({ path: info.outputPath("header-long-title.png") });
+
+  // An empty title shows the body's placeholder text.
+  await scroll(false);
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/api/cells/batch") && r.ok()),
+    input.fill("").then(() => input.press("Enter")),
+  ]);
+  await scroll(true);
+  await fitsHeader("제목 없는 업무");
+  await expect(shown).toHaveClass(/is-empty/);
+  await expect(shown).not.toHaveAttribute("title");
+
+  // The full page keeps the same header.
+  await scroll(false);
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/api/cells/batch") && r.ok()),
+    input.fill(long).then(() => input.press("Enter")),
+  ]);
+  await dialog
+    .getByRole("button", { name: "문서 전체 페이지로 보기", exact: true })
+    .click();
+  await expect(dialog).toHaveClass(/document-full-page/);
+  await scroll(false);
+  const fullPage = await layout();
+  await scroll(true);
+  await fitsHeader(long);
+  expect(await layout()).toEqual(fullPage);
+  await dialog.screenshot({ path: info.outputPath("header-full-page.png") });
+});
+
 test("Markdown 코드 입력창은 일반·작은 팝업·전체 페이지의 남은 높이를 채운다", async ({
   page,
 }, info) => {
