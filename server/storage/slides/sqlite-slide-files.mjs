@@ -21,6 +21,17 @@ export const SLIDE_STORE_VERSION = 2;
 export const SLIDE_STORE_FILE = "slide-files.sqlite";
 // Bytes of the current revision and this many revisions before it are kept.
 export const SLIDE_KEPT_REVISIONS = 10;
+// A change that gives a file a new revision (a save, a version received from
+// the other site) cleans up the content of the one revision that left the
+// kept window, and tries again the content of this many revisions before it:
+// a clean-up cut short by a failed removal or a restart is finished by the
+// next changes of the file. Every revision looked back at costs each change
+// one more check and removal (requests to the bucket on the external site),
+// so the number is small. Two covers a clean-up that was lost and whose first
+// retry was lost as well. Content left behind longer ago is not looked at
+// again: nothing removes it short of comparing the stored files with the kept
+// revisions, which no code does yet.
+export const SLIDE_PRUNE_LOOKBACK = 2;
 
 // Released steps are never edited; a later change is a new step.
 const migrations = ["001-slide-files.sql", "002-slide-sync.sql"].map(
@@ -357,6 +368,20 @@ export class SqliteSlideFileRepository {
       )
       .get(teamId, contentHash, SLIDE_KEPT_REVISIONS);
   }
+  // Content that may have lost its last reference when the file reached
+  // `revision`: of the revision that left the kept window and of the
+  // SLIDE_PRUNE_LOOKBACK revisions before it. Revision rows are never deleted,
+  // so reading every older revision instead would repeat the clean-up of the
+  // file's whole history on each save.
+  #expired(db, fileId, revision) {
+    const left = revision - SLIDE_KEPT_REVISIONS - 1;
+    return db
+      .prepare(
+        "SELECT content_hash FROM slide_file_revisions WHERE file_id=? AND revision BETWEEN ? AND ?",
+      )
+      .all(fileId, left - SLIDE_PRUNE_LOOKBACK, left)
+      .map((row) => row.content_hash);
+  }
   // Removes bytes no kept revision of any file of the team refers to, and
   // the thumbnails of that content under every drawing version. The check and
   // the removal stay one synchronous step: a save that is writing the same
@@ -515,12 +540,7 @@ export class SqliteSlideFileRepository {
         at,
         requestId,
       );
-      expired = db
-        .prepare(
-          "SELECT content_hash FROM slide_file_revisions WHERE file_id=? AND revision < ?",
-        )
-        .all(fileId, revision - SLIDE_KEPT_REVISIONS)
-        .map((row) => row.content_hash);
+      expired = this.#expired(db, fileId, revision);
       return { saved: true, file: meta(this.#live(db, teamId, fileId)) };
     });
     // After the commit: a save that did not commit removes nothing.
@@ -779,8 +799,9 @@ export class SqliteSlideFileRepository {
   // its own. Bytes are complete on disk before any row changes.
   // False (nothing applied) when the file no longer looks like `expect`: it
   // was saved, renamed or deleted here after the decision was made.
-  syncApply(teamId, { meta, metaOid, bytes, take, copy, expect }) {
-    return this.#stored(teamId, meta.contentHash, bytes, (db) => {
+  async syncApply(teamId, { meta, metaOid, bytes, take, copy, expect }) {
+    let expired = [];
+    const result = await this.#stored(teamId, meta.contentHash, bytes, (db) => {
       const file = db
         .prepare("SELECT * FROM slide_files WHERE id=? AND team_id=?")
         .get(meta.id, teamId);
@@ -881,6 +902,7 @@ export class SqliteSlideFileRepository {
             meta.updatedAt,
             `sync:${meta.version}`,
           );
+          expired = this.#expired(db, meta.id, revision);
         }
         if (take.title)
           db.prepare("UPDATE slide_files SET title=? WHERE id=?").run(
@@ -903,6 +925,10 @@ export class SqliteSlideFileRepository {
       });
       return true;
     });
+    // A received version moves the kept window as a save does; after the
+    // commit, as in replace.
+    this.#prune(this.#open(), teamId, expired);
+    return result;
   }
   #stagePath(teamId, hash) {
     return join(this.directory, "staging", teamId, hash);
