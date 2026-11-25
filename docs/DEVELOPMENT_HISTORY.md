@@ -58,7 +58,7 @@
 - 변경 전 코드에 새 검사만 실행: 사내 재시작 뒤 조회, 외부 인스턴스 교체 뒤 조회, 팀 삭제의 썸네일 폴더 확인이 실패했습니다. 새 export나 저장소 메서드를 쓰는 검사(계약·겹침·gateway 파일, 백업 fixture)는 불러오기나 준비 단계에서 실패합니다.
 - 겹침 검사의 유효성: 제자리에 둔 뒤의 재확인을 빼면 겹침 3건이, 쓰기 공유를 빼면 동시 `PUT` 2건이 실패하는 것을 확인하고 되돌렸습니다.
 - `npm run check:structure`(806 파일, 오류 0, 기존과 같은 검토 알림 38), `npm run check:architecture`(482 모듈, 위반 0), `npm run build:edge`, 변경한 코드 파일의 `npx prettier --check`, `git diff --check` 통과.
-- 실행하지 않은 것: 전체 `npm test`, `npm run build`, 브라우저 검사, 실제 Cloudflare gateway·R2와 Supabase Edge에서의 확인.
+- 실행하지 않은 것: 실제 Cloudflare gateway·R2와 Supabase Edge에서의 확인.
 
 전체 검증(2026-11-26, main `0df7815`를 합친 커밋 `5ab9203`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 1,010건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `tests/browser/slides`·`document-links` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 201건 통과. 실제 Cloudflare gateway·R2·Supabase Edge에서는 확인하지 않았습니다.
 
