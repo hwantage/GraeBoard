@@ -1,0 +1,54 @@
+/* These load with the app, not with the slides screen (slides.css): the
+   screen's frame and the ray show while that screen's code is still loading. */
+.slides-board {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 18px 22px;
+  overflow: auto;
+}
+/* The center of the original artwork stays still while each wing bends at its root. */
+.slide-loading-ray {
+  display: grid;
+  grid-template-columns: 44px 32px 20px;
+  width: 96px;
+  height: 64px;
+  justify-self: center;
+}
+.slide-loading-ray::before,
+.slide-loading-ray > span,
+.slide-loading-ray::after {
+  background: url("../../assets/character/canvaslide-ray-384.png") left center /
+    96px 64px no-repeat;
+}
+.slide-loading-ray > span {
+  background-position-x: -44px;
+}
+.slide-loading-ray::before,
+.slide-loading-ray::after {
+  content: "";
+  transform-origin: right center;
+  --wing-up: 12deg;
+  --wing-down: -6deg;
+}
+.slide-loading-ray::after {
+  background-position-x: right;
+  transform-origin: left center;
+  --wing-up: -18deg;
+  --wing-down: 9deg;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .slide-loading-ray::before,
+  .slide-loading-ray::after {
+    animation: slide-ray-wingbeat 700ms ease-in-out infinite alternate;
+  }
+}
+@keyframes slide-ray-wingbeat {
+  from {
+    transform: skewY(var(--wing-down));
+  }
+  to {
+    transform: skewY(var(--wing-up));
+  }
+}

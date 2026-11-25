@@ -46,7 +46,9 @@ const syncFile = (row) => ({
         hash: row.shared_hash,
         title: row.shared_title,
         deletedAt: row.shared_deleted_at,
-        chunks: JSON.parse(row.shared_chunks),
+        ...(row.shared_chunks !== undefined && {
+          chunks: JSON.parse(row.shared_chunks),
+        }),
         metaOid: row.meta_oid,
       }
     : null,
@@ -408,18 +410,24 @@ export class PostgresSlideFileRepository {
   // The same contract as the SQLite repository's sync methods.
   async syncState(teamId) {
     this.#team(teamId);
-    return this.#transaction(async (client) => {
-      await client.query(
-        `INSERT INTO ${S}.slide_sync_state VALUES($1,NULL,$2,1) ON CONFLICT(team_id) DO NOTHING`,
-        [teamId, crypto.randomUUID()],
-      );
-      return (
+    const read = async (client) =>
+      (
         await client.query(
           `SELECT head,epoch FROM ${S}.slide_sync_state WHERE team_id=$1`,
           [teamId],
         )
       ).rows[0];
-    });
+    // The row is there after the team's first pass, so a pass only reads it.
+    return (
+      (await this.#read(read)) ||
+      this.#transaction(async (client) => {
+        await client.query(
+          `INSERT INTO ${S}.slide_sync_state VALUES($1,NULL,$2,1) ON CONFLICT(team_id) DO NOTHING`,
+          [teamId, crypto.randomUUID()],
+        );
+        return read(client);
+      })
+    );
   }
   async syncHasFiles(teamId) {
     this.#team(teamId);
@@ -448,13 +456,15 @@ export class PostgresSlideFileRepository {
         ).rowCount === 1,
     );
   }
-  async syncFiles(teamId) {
+  // `chunks: false` leaves out the shared chunk lists; see the SQLite
+  // repository.
+  async syncFiles(teamId, { chunks = true } = {}) {
     this.#team(teamId);
     return this.#read(async (client) =>
       (
         await client.query(
           `SELECT f.*, COALESCE(f.id, s.file_id) AS sync_id, s.shared_version, s.shared_hash, s.shared_title,
-                  s.shared_deleted_at, s.shared_chunks, s.meta_oid, s.pending_version
+                  s.shared_deleted_at, ${chunks ? "s.shared_chunks, " : ""}s.meta_oid, s.pending_version
            FROM (SELECT * FROM ${S}.slide_files WHERE team_id=$1) f
            FULL JOIN (SELECT * FROM ${S}.slide_sync_files WHERE team_id=$1) s ON s.file_id=f.id`,
           [teamId],

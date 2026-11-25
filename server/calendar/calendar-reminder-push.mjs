@@ -68,8 +68,8 @@ export function createCalendarReminderPush({
   appOrigin = process.env.APP_ORIGIN,
   request = fetch,
   now = Date.now,
-  // Called with the team of an entry whose reminder was just sent or closed,
-  // so open calendars show how it went.
+  // Called at the end of a check with each team that had a reminder sent or
+  // closed in it, so open calendars show how those went.
   onSent,
 } = {}) {
   const base = String(hubUrl || "")
@@ -164,23 +164,32 @@ export function createCalendarReminderPush({
 
   async function run() {
     const at = now();
-    for (const { entry, minutes, fireAt, recipients } of due(at)) {
-      const message = calendarReminderMessage(entry, minutes, { appOrigin });
-      const results = await Promise.all(
-        recipients.map(({ ip }) => send(ip, message)),
-      );
-      // Nobody to send to is final. When the hub took none, the next tick
-      // tries again until the grace period ends.
-      if (recipients.length && !results.some(Boolean)) continue;
-      db.prepare(
-        "INSERT OR IGNORE INTO calendar_reminder_sends(entry_id,fire_at,sent_at,recipients) VALUES(?,?,?,?)",
-      ).run(
-        entry.id,
-        fireAt,
-        new Date(now()).toISOString(),
-        results.filter(Boolean).length,
-      );
-      onSent?.(entry.teamId);
+    // Telling a team makes each of its open screens read again, so a team is
+    // told once, when the check ends, however many of its reminders were due
+    // together. A check that fails part way still tells the teams whose
+    // reminders it recorded.
+    const teams = new Set();
+    try {
+      for (const { entry, minutes, fireAt, recipients } of due(at)) {
+        const message = calendarReminderMessage(entry, minutes, { appOrigin });
+        const results = await Promise.all(
+          recipients.map(({ ip }) => send(ip, message)),
+        );
+        // Nobody to send to is final. When the hub took none, the next tick
+        // tries again until the grace period ends.
+        if (recipients.length && !results.some(Boolean)) continue;
+        db.prepare(
+          "INSERT OR IGNORE INTO calendar_reminder_sends(entry_id,fire_at,sent_at,recipients) VALUES(?,?,?,?)",
+        ).run(
+          entry.id,
+          fireAt,
+          new Date(now()).toISOString(),
+          results.filter(Boolean).length,
+        );
+        teams.add(entry.teamId);
+      }
+    } finally {
+      for (const teamId of teams) onSent?.(teamId);
     }
   }
   // One pass at a time: a slow hub must not send a reminder twice.

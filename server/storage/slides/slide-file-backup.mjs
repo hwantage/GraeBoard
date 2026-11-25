@@ -1,13 +1,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
-  readFileSync,
+  openSync,
+  readSync,
   readdirSync,
   renameSync,
   rmSync,
+  writeSync,
 } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
@@ -18,8 +21,30 @@ import {
   slideBlobPath,
 } from "./sqlite-slide-files.mjs";
 
-const hashOf = (path) =>
-  createHash("sha256").update(readFileSync(path)).digest("hex");
+// SHA-256 of a file that is read once, a piece at a time, so a slide file is
+// never held whole. With `target`, the pieces are written there as they are
+// hashed: the copy and its check share that one read.
+function hashOf(source, target) {
+  const hash = createHash("sha256");
+  const piece = Buffer.allocUnsafe(1024 * 1024);
+  const input = openSync(source, "r");
+  try {
+    const output = target ? openSync(target, "w", 0o600) : null;
+    try {
+      let length;
+      while ((length = readSync(input, piece))) {
+        hash.update(piece.subarray(0, length));
+        for (let written = 0; output !== null && written < length;)
+          written += writeSync(output, piece, written, length - written);
+      }
+    } finally {
+      if (output !== null) closeSync(output);
+    }
+  } finally {
+    closeSync(input);
+  }
+  return hash.digest("hex");
+}
 export const hasSlideStore = (directory) =>
   existsSync(join(directory, SLIDE_STORE_FILE));
 
@@ -56,9 +81,7 @@ function copyBlob(from, to, { teamId, contentHash, current }) {
   }
   const target = slideBlobPath(to, teamId, contentHash);
   mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-  copyFileSync(source, target);
-  chmodSync(target, 0o600);
-  if (hashOf(target) !== contentHash)
+  if (hashOf(source, target) !== contentHash)
     throw new Error(
       `슬라이드 자료 파일의 해시가 기록과 다릅니다: ${teamId}/${contentHash}`,
     );
@@ -103,7 +126,8 @@ export function backupSlideStore(source, destination) {
   }
 }
 
-// Checks a whole slide backup before anything is published from it.
+// Checks a whole slide backup before anything is published from it. Returns
+// the files restoreSlideStore copies.
 export function verifySlideBackup(backup) {
   const db = new DatabaseSync(join(backup, SLIDE_STORE_FILE), {
     readOnly: true,
@@ -140,8 +164,10 @@ export function assertEmptySlideTarget(target) {
     );
 }
 
-export function restoreSlideStore(backup, target) {
-  const blobs = verifySlideBackup(backup);
+// Publishes a backup that verifySlideBackup accepted; `blobs` is what it
+// returned. Each file is hashed again while it is copied, so one that changed
+// after that check is refused before the store that refers to it is published.
+export function restoreSlideStore(backup, target, blobs) {
   assertEmptySlideTarget(target);
   mkdirSync(target, { recursive: true, mode: 0o700 });
   for (const blob of blobs) copyBlob(backup, target, blob);

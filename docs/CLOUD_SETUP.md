@@ -343,9 +343,9 @@ GitHub는 저장한 Secret의 원문을 다시 보여주지 않습니다. **기�
 - 명령: `git push origin main:release`. `release`가 `main`의 이전 커밋일 때만 성공합니다.
 - GitHub 화면: `https://github.com/hwantage/GraeBoard/compare/release...main`(또는 **Pull requests → New pull request**에서 base `release`, compare `main`)에서 **Create pull request**를 누릅니다. 병합 버튼 옆 **▼**에서 **Create a merge commit**을 고르고 **Merge pull request → Confirm merge**를 누릅니다. Squash는 `main`에 없는 커밋을 `release`에 만들어 다음 반영 때 충돌할 수 있으므로 쓰지 않습니다. 병합 뒤 나오는 **Delete branch**는 `main`을 지우는 버튼이므로 누르지 않습니다. 화면으로 병합하면 `release`에 병합 커밋이 생겨 이후 명령 방식은 거절되므로, 다음 릴리스도 같은 화면 방식으로 올립니다.
 
-원본 저장소의 Actions에 "팀 사이트 release 배포"가 skipped로 표시되는 것은 원본에 배포 설정이 없기 때문이며 정상입니다.
+원본 저장소의 Actions에 "팀 외부 사이트 배포 (운영=release, 개발 Fork=main)"가 skipped로 표시되는 것은 원본에 배포 설정이 없기 때문이며 정상입니다.
 
-**2. 팀 Fork 반영.** 팀은 따로 할 일이 없습니다. 워크플로의 주기 실행이 원본 `release`·`main`을 Fork에 합치고 배포합니다. 주기는 30분으로 지정했지만 GitHub가 혼잡하면 실행을 미루므로 실제 간격은 40~60분이었습니다(2026-11-01 somansadev Fork 실행 기록). 바로 배포하려면 Fork의 **Actions → 팀 사이트 release 배포 → Run workflow**를 누릅니다. "release가 그대로여도 다시 배포"는 비워 둡니다. 이 실행이 **Sync fork**와 같은 합치기를 먼저 하므로 Fork에서 Sync fork를 따로 누르지 않습니다. 원본 `release`를 올리기 전에 실행하면 받을 변경이 없어 "이미 배포했습니다"로 배포를 건너뜁니다.
+**2. 팀 Fork 반영.** 팀은 따로 할 일이 없습니다. 워크플로의 주기 실행이 원본 `release`·`main`을 Fork에 합치고 배포합니다. 주기는 30분으로 지정했지만 GitHub가 혼잡하면 실행을 미루므로 실제 간격은 40~60분이었습니다(2026-11-01 somansadev Fork 실행 기록). 바로 배포하려면 Fork의 **Actions → 팀 외부 사이트 배포 (운영=release, 개발 Fork=main) → Run workflow**를 누릅니다. "release가 그대로여도 다시 배포"는 비워 둡니다. 이 실행이 **Sync fork**와 같은 합치기를 먼저 하므로 Fork에서 Sync fork를 따로 누르지 않습니다. 원본 `release`를 올리기 전에 실행하면 받을 변경이 없어 "이미 배포했습니다"로 배포를 건너뜁니다.
 
 **3. 확인.** 실행의 **sync**·**deploy** 작업이 모두 성공하고 Fork `release`의 최신 커밋이 원본 `release`와 같은지 봅니다. 배포를 마친 커밋은 Fork의 `team-site-deployed` 태그가 가리킵니다. 이어서 외부 사이트에서 바뀐 기능을 확인합니다.
 
