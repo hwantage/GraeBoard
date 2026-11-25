@@ -312,7 +312,14 @@ export class SqliteSlideFileRepository {
         throw new HttpError(404, "팀을 찾을 수 없습니다.");
       }
       if (!bytes || existsSync(path)) return this.#transaction(work);
-      await this.#place(path, bytes, { durable: true });
+      try {
+        await this.#place(path, bytes, { durable: true });
+      } catch (error) {
+        // Deleting the team removes its folder, which can fail a write that
+        // was about to move its file in. The check above then answers for
+        // the deleted team; any other failure is reported as it is.
+        if (this.#teamExists(teamId)) throw error;
+      }
     }
   }
   async #readBlob(teamId, contentHash) {
@@ -797,10 +804,15 @@ export class SqliteSlideFileRepository {
     return join(this.directory, "staging", teamId, hash);
   }
   // A staged chunk is verified when it is read, so it is not synced to disk.
-  syncStage(teamId, hash, bytes) {
-    return this.#place(this.#stagePath(teamId, hash), bytes, {
+  async syncStage(teamId, hash, bytes) {
+    await this.#place(this.#stagePath(teamId, hash), bytes, {
       durable: false,
     });
+    // A team permanently deleted while the chunk was written had its folder
+    // removed first and put back by this write. Everything of the team goes
+    // again, as in #stored: the pass that staged the chunk may have put rows
+    // back as well.
+    if (!this.#teamExists(teamId)) this.removeTeam(teamId);
   }
   async syncStaged(teamId, hash) {
     let bytes;

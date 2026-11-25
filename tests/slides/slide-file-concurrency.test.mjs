@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import fsPromises from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -414,4 +416,64 @@ test("바이트를 쓰는 동안 팀이 영구 삭제되면 그 팀의 자료와
   assert.deepEqual(repository.syncFiles(teamId), []);
   assert.equal(existsSync(join(directory, "blobs", teamId)), false);
   assert.deepEqual(readdirSync(join(directory, "tmp")), []);
+});
+
+// Runs `during` at the one moment no timing can reach from outside: the bytes
+// are written and their folder exists, and the file is about to be moved in.
+function beforeMove(t, during) {
+  const rename = fsPromises.rename;
+  fsPromises.rename = (...paths) => {
+    during();
+    return rename(...paths);
+  };
+  syncBuiltinESMExports();
+  t.after(() => {
+    fsPromises.rename = rename;
+    syncBuiltinESMExports();
+  });
+}
+
+test("다 쓴 파일을 옮기기 직전에 팀이 영구 삭제되면 404로 끝나고, 팀이 그대로면 쓰기 오류를 그대로 알린다", async (t) => {
+  let alive = true;
+  const { repository, directory, teamId, put } = store(t, {
+    teamExists: () => alive,
+  });
+  const folder = join(directory, "blobs", teamId);
+  let during;
+  beforeMove(t, () => during());
+  const create = (title) =>
+    repository.create(put(slide(title), { id: randomUUID(), title }));
+
+  // Only the folder goes: the team is still there, so this is an I/O error.
+  during = () => rmSync(folder, { recursive: true, force: true });
+  await assert.rejects(create("폴더만 사라짐"), { code: "ENOENT" });
+  assert.deepEqual(readdirSync(join(directory, "tmp")), []);
+
+  // The control repository deletes the team, then its slide files.
+  during = () => {
+    alive = false;
+    repository.removeTeam(teamId);
+  };
+  await assert.rejects(create("삭제 중 생성"), { status: 404 });
+  assert.deepEqual(repository.syncFiles(teamId), []);
+  assert.equal(existsSync(folder), false);
+  assert.deepEqual(readdirSync(join(directory, "tmp")), []);
+});
+
+test("조각을 받아 두는 동안 팀이 영구 삭제되면 그 조각을 남기지 않는다", async (t) => {
+  let alive = true;
+  const { repository, directory, teamId } = store(t, {
+    teamExists: () => alive,
+  });
+  // A pass has its state before it stages anything.
+  repository.syncState(teamId);
+  const chunk = slide("조각");
+  const staging = repository.syncStage(teamId, sha(chunk), chunk);
+  alive = false;
+  repository.removeTeam(teamId);
+
+  await staging;
+  assert.equal(existsSync(join(directory, "staging", teamId)), false);
+  assert.deepEqual(readdirSync(join(directory, "tmp")), []);
+  assert.equal(await repository.syncStaged(teamId, sha(chunk)), null);
 });
