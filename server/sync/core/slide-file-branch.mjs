@@ -378,6 +378,15 @@ export async function syncSlideFiles({
   for (const file of dirty) {
     let chunks = file.shared?.chunks;
     if (!chunks || file.contentHash !== file.shared.hash) {
+      // Which chunks the branch lacks is known only by reading and hashing the
+      // whole content (on the external site a download from the bucket), and
+      // without budget none of them could be uploaded. The file waits unread
+      // for a pass that still has budget when its turn comes, even if all of
+      // its chunks happen to be on the branch already.
+      if (upload <= 0) {
+        result.pending++;
+        continue;
+      }
       const pieces = slideChunks(
         await store.syncReadContent(teamId, file.contentHash),
       );
