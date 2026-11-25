@@ -736,6 +736,365 @@ test("첫 프레임 사진을 썸네일에 그리고 다음 열람자는 원본�
   }
 });
 
+// A file whose content, and so whose thumbnail, no other card shares.
+async function distinctFile(page: Page, label: string) {
+  const deck = JSON.parse(example("flowchart.canvaslide").toString());
+  deck.name = `${label} ${randomUUID()}`;
+  return upload(
+    page.request,
+    teamId,
+    deck.name,
+    Buffer.from(JSON.stringify(deck)),
+  );
+}
+// Puts a thumbnail in the server's cache, as another member's list would.
+async function serverThumbnail(
+  page: Page,
+  file: { id: string; contentHash: string },
+  color: string,
+) {
+  const image = await page.evaluate((fill) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 36;
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = fill;
+    ctx.fillRect(0, 0, 64, 36);
+    return canvas.toDataURL("image/jpeg");
+  }, color);
+  const stored = await page.request.put(
+    `/api/teams/${teamId}/slides/${file.id}/thumbnail`,
+    { headers, data: { hash: file.contentHash, image } },
+  );
+  expect(stored.ok()).toBe(true);
+  return image;
+}
+const thumbnailAddress = /\/slides\/([^/]+)\/thumbnail$/;
+const allThumbnails = (url: URL) => thumbnailAddress.test(url.pathname);
+// How many times the page asked the server for a file's thumbnail.
+function thumbnailReads(page: Page) {
+  const asked: string[] = [];
+  page.on("request", (request) => {
+    const id = thumbnailAddress.exec(new URL(request.url()).pathname)?.[1];
+    if (id && request.method() === "GET") asked.push(id);
+  });
+  return (file: { id: string }) => asked.filter((id) => id === file.id).length;
+}
+const cardPicture = (page: Page, file: { title: string }) =>
+  fileCard(page, file.title).locator(".slide-card-thumbnail img");
+const leaveSlides = async (page: Page) => {
+  await page.getByRole("button", { name: "연간 업무", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "연간 업무", exact: true }),
+  ).toBeVisible();
+};
+const returnToSlides = (page: Page) =>
+  page.getByRole("button", { name: "CanvaSlide", exact: true }).click();
+// Importing a file also reads the open list again.
+async function importSlide(page: Page, title: string, bytes: Buffer) {
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: /팀 자료로 가져오기/ }).click();
+  await (
+    await chooser
+  ).setFiles({
+    name: `${title}.canvaslide`,
+    mimeType: "application/json",
+    buffer: bytes,
+  });
+}
+
+test("이미 받은 썸네일은 다른 화면·편집기·다른 팀에 다녀와도 다시 요청하지 않는다", async ({
+  page,
+}) => {
+  const user = (await json(await page.request.get("/api/bootstrap"))).user;
+  const otherTeam = await json(
+    await page.request.post("/api/admin/teams", {
+      headers,
+      data: {
+        name: `다른 팀 ${randomUUID().slice(0, 8)}`,
+        members: [{ userId: user.id, role: "lead" }],
+      },
+    }),
+  );
+  const file = await distinctFile(page, "다시 방문");
+  const image = await serverThumbnail(page, file, "#2a6");
+  const reads = thumbnailReads(page);
+  await page.goto("/slides");
+  const picture = cardPicture(page, file);
+  await expect(picture).toHaveAttribute("src", image);
+
+  await leaveSlides(page);
+  await returnToSlides(page);
+  await expect(picture).toHaveAttribute("src", image);
+
+  await page.getByRole("button", { name: file.title, exact: true }).click();
+  await expect(titleInput(page)).toHaveValue(file.title);
+  await page.getByRole("button", { name: "팀 자료 목록" }).click();
+  await expect(picture).toHaveAttribute("src", image);
+
+  const team = page.getByRole("combobox", { name: "팀 선택", exact: true });
+  await team.selectOption(otherTeam.id);
+  await expect(page.getByText("아직 팀 자료가 없습니다")).toBeVisible();
+  await team.selectOption(teamId);
+  await expect(picture).toHaveAttribute("src", image);
+  expect(reads(file)).toBe(1);
+});
+
+test("목록이 같은 내용으로 갱신돼도 조회 중인 썸네일을 다시 요청하지 않는다", async ({
+  page,
+}) => {
+  const file = await distinctFile(page, "갱신 중 조회");
+  const image = await serverThumbnail(page, file, "#a62");
+  const reads = thumbnailReads(page);
+  const answer = Promise.withResolvers<void>();
+  await page.route(
+    `**/api/teams/${teamId}/slides/${file.id}/thumbnail`,
+    async (route) => {
+      await answer.promise;
+      await route.continue();
+    },
+  );
+  await page.goto("/slides");
+  await expect.poll(() => reads(file)).toBe(1);
+  // The list is read again while the card is still waiting.
+  const imported = `가져온 자료 ${randomUUID().slice(0, 8)}`;
+  await importSlide(page, imported, example("flowchart.canvaslide"));
+  await expect(fileCard(page, imported)).toBeVisible();
+  answer.resolve();
+  await expect(cardPicture(page, file)).toHaveAttribute("src", image);
+  expect(reads(file)).toBe(1);
+});
+
+test("서버에 있는 썸네일은 네 장까지 함께 조회한다", async ({ page }) => {
+  const files = [];
+  for (const color of ["#c33", "#3c3", "#33c", "#cc3", "#3cc", "#c3c"]) {
+    const file = await distinctFile(page, "함께 조회");
+    files.push({ ...file, image: await serverThumbnail(page, file, color) });
+  }
+  let waiting = 0;
+  let most = 0;
+  const answer = Promise.withResolvers<void>();
+  await page.route(allThumbnails, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    most = Math.max(most, ++waiting);
+    await answer.promise;
+    const response = await route.fetch();
+    // The page asks for the next one as soon as it has this answer.
+    waiting--;
+    await route.fulfill({ response });
+  });
+  await page.goto("/slides");
+  await expect.poll(() => waiting).toBe(4);
+  answer.resolve();
+  for (const file of files)
+    await expect(cardPicture(page, file)).toHaveAttribute("src", file.image);
+  expect(most).toBe(4);
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
+test("조회 중에 화면을 떠났다 돌아와도 조회 자리가 남아 썸네일을 받는다", async ({
+  page,
+}) => {
+  const files = [];
+  for (const color of ["#933", "#393", "#339", "#993", "#399"]) {
+    const file = await distinctFile(page, "떠났다 조회");
+    files.push({ ...file, image: await serverThumbnail(page, file, color) });
+  }
+  let asked = 0;
+  const answer = Promise.withResolvers<void>();
+  await page.route(allThumbnails, async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    asked++;
+    await answer.promise;
+    // The card that asked may be gone.
+    await route.continue().catch(() => {});
+  });
+  await page.goto("/slides");
+  await expect.poll(() => asked).toBe(4);
+  await leaveSlides(page);
+  await returnToSlides(page);
+  await expect.poll(() => asked).toBe(8);
+  answer.resolve();
+  for (const file of files)
+    await expect(cardPicture(page, file)).toHaveAttribute("src", file.image);
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
+test("썸네일을 만드는 동안에도 다른 카드는 서버의 썸네일을 받고 만들기는 하나씩 한다", async ({
+  page,
+}) => {
+  const ready = await distinctFile(page, "서버에 있음");
+  const image = await serverThumbnail(page, ready, "#639");
+  // The newest files come first in the list and have no thumbnail yet.
+  const second = await distinctFile(page, "만들기 둘째");
+  const first = await distinctFile(page, "만들기 첫째");
+  const downloads: string[] = [];
+  let downloading = 0;
+  let most = 0;
+  const answer = Promise.withResolvers<void>();
+  await page.route(
+    (url) =>
+      [first, second].some((file) =>
+        url.pathname.endsWith(`/slides/${file.id}/content`),
+      ),
+    async (route) => {
+      downloads.push(route.request().url());
+      most = Math.max(most, ++downloading);
+      await answer.promise;
+      const response = await route.fetch();
+      downloading--;
+      await route.fulfill({ response });
+    },
+  );
+  // Both know by now that the server has no thumbnail for them.
+  const asked = [first, second].map((file) =>
+    page.waitForResponse((response) =>
+      response.url().endsWith(`/slides/${file.id}/thumbnail`),
+    ),
+  );
+  await page.goto("/slides");
+  for (const response of asked) await (await response).finished();
+  await expect(cardPicture(page, ready)).toHaveAttribute("src", image);
+  await expect.poll(() => downloads).toHaveLength(1);
+  answer.resolve();
+  for (const file of [first, second])
+    await expect(cardPicture(page, file)).toHaveAttribute(
+      "src",
+      /^data:image\/jpeg/,
+    );
+  expect(downloads).toHaveLength(2);
+  expect(most).toBe(1);
+});
+
+test("내용이 바뀐 자료는 목록 갱신과 재방문 때 새 썸네일을 받고 그대로인 자료는 다시 요청하지 않는다", async ({
+  page,
+}) => {
+  const kept = await distinctFile(page, "그대로");
+  const keptImage = await serverThumbnail(page, kept, "#286");
+  const changed = await distinctFile(page, "바뀜");
+  const before = await serverThumbnail(page, changed, "#862");
+  // Another member's save, which this page learns from the next list.
+  const saveElsewhere = async (revision: number) => {
+    const deck = JSON.parse(example("flowchart.canvaslide").toString());
+    deck.name = `${changed.title} ${revision}`;
+    const saved = await page.request.put(
+      `/api/teams/${teamId}/slides/${changed.id}/content`,
+      {
+        headers: {
+          ...headers,
+          "Content-Type": "application/octet-stream",
+          "X-Slide-Base-Revision": String(revision),
+          "X-Slide-Request-Id": randomUUID(),
+        },
+        data: Buffer.from(JSON.stringify(deck)),
+      },
+    );
+    expect(saved.ok()).toBe(true);
+    return json(saved);
+  };
+  const reads = thumbnailReads(page);
+  await page.goto("/slides");
+  const picture = cardPicture(page, changed);
+  await expect(picture).toHaveAttribute("src", before);
+  await expect(cardPicture(page, kept)).toHaveAttribute("src", keptImage);
+
+  // The open list is read again: the card draws the new first frame itself.
+  await saveElsewhere(1);
+  await importSlide(
+    page,
+    `가져온 자료 ${randomUUID().slice(0, 8)}`,
+    example("flowchart.canvaslide"),
+  );
+  await expect.poll(() => reads(changed)).toBe(2);
+  await expect(picture).toHaveAttribute("src", /^data:image\/jpeg/);
+  expect(await picture.getAttribute("src")).not.toBe(before);
+
+  await leaveSlides(page);
+  const after = await serverThumbnail(page, await saveElsewhere(2), "#268");
+  await returnToSlides(page);
+  await expect(picture).toHaveAttribute("src", after);
+  await expect(cardPicture(page, kept)).toHaveAttribute("src", keptImage);
+  expect(reads(changed)).toBe(3);
+  expect(reads(kept)).toBe(1);
+});
+
+test("같은 내용의 카드들은 썸네일을 한 번만 조회한다", async ({ page }) => {
+  const deck = JSON.parse(example("flowchart.canvaslide").toString());
+  deck.name = `같은 내용 ${randomUUID()}`;
+  const bytes = Buffer.from(JSON.stringify(deck));
+  const copies = [];
+  for (const label of ["원본", "사본 1", "사본 2"])
+    copies.push(
+      await upload(page.request, teamId, `${deck.name} ${label}`, bytes),
+    );
+  const image = await serverThumbnail(page, copies[0], "#484");
+  const reads = thumbnailReads(page);
+  await page.goto("/slides");
+  for (const copy of copies)
+    await expect(cardPicture(page, copy)).toHaveAttribute("src", image);
+  expect(copies.reduce((sum, copy) => sum + reads(copy), 0)).toBe(1);
+});
+
+test("가져온 자료의 썸네일은 올린 내용으로 만들고 원본을 내려받지 않는다", async ({
+  page,
+}) => {
+  const title = `가져온 썸네일 ${randomUUID()}`;
+  const deck = JSON.parse(example("flowchart.canvaslide").toString());
+  deck.name = title;
+  const downloads: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.endsWith("/content"))
+      downloads.push(request.url());
+  });
+  await page.goto("/slides");
+  await importSlide(page, title, Buffer.from(JSON.stringify(deck)));
+  await expect(cardPicture(page, { title })).toHaveAttribute(
+    "src",
+    /^data:image\/jpeg/,
+  );
+  const { files } = await json(
+    await page.request.get(`/api/teams/${teamId}/slides`),
+  );
+  const file = files.find((item: { title: string }) => item.title === title);
+  expect(downloads.filter((url) => url.includes(file.id))).toEqual([]);
+});
+
+test("로그아웃한 화면에서 로그인한 다른 계정은 썸네일을 서버에서 다시 받는다", async ({
+  page,
+}) => {
+  const peerName = `slides-${randomUUID()}@example.com`;
+  expect(
+    (
+      await page.request.post("/api/admin/users", {
+        headers,
+        data: {
+          username: peerName,
+          password: "local-peer-password",
+          name: "같은 화면의 다른 계정",
+          memberships: [{ teamId, role: "viewer" }],
+        },
+      })
+    ).ok(),
+  ).toBe(true);
+  const file = await distinctFile(page, "계정 전환");
+  const image = await serverThumbnail(page, file, "#555");
+  const reads = thumbnailReads(page);
+  await page.goto("/slides");
+  await expect(cardPicture(page, file)).toHaveAttribute("src", image);
+  // Signing out keeps this page, and with it the pictures held in memory.
+  await page.evaluate(() => ((window as any).samePage = true));
+  await page.getByRole("button", { name: "내 계정", exact: true }).click();
+  await page.getByRole("menuitem", { name: "로그아웃", exact: true }).click();
+  await page.getByLabel("아이디(이메일)", { exact: true }).fill(peerName);
+  await page
+    .getByLabel("비밀번호", { exact: true })
+    .fill("local-peer-password");
+  await page.getByRole("button", { name: "로그인", exact: true }).click();
+  await expect(cardPicture(page, file)).toHaveAttribute("src", image);
+  expect(await page.evaluate(() => (window as any).samePage)).toBe(true);
+  expect(reads(file)).toBe(2);
+});
+
 test("카드의 new 표시는 생성 시각을 기준으로 12시간이 지나면 열린 목록에서도 사라진다", async ({
   page,
 }) => {
@@ -1108,6 +1467,81 @@ test("다른 팀원이 먼저 저장하면 두 내용을 모두 보존하고 사
     title: file.title,
     revision: 2,
   });
+});
+
+test("연 자료의 바이트는 복제하지 않고 편집기로 옮기며 저장·최신 자료 다시 열기·썸네일이 그대로 동작한다", async ({
+  page,
+}) => {
+  test.setTimeout(60000);
+  // Every file content the screen read from the server, as the buffer it got.
+  await page.addInitScript(() => {
+    const held: ArrayBuffer[] = [];
+    const read = Response.prototype.arrayBuffer;
+    Response.prototype.arrayBuffer = async function () {
+      const buffer = await read.call(this);
+      if (new URL(this.url).pathname.endsWith("/content")) held.push(buffer);
+      return buffer;
+    };
+    Object.assign(window, { slideContentBuffers: held });
+  });
+  const heldSizes = () =>
+    page.evaluate(() =>
+      (
+        window as unknown as { slideContentBuffers: ArrayBuffer[] }
+      ).slideContentBuffers.map((buffer) => buffer.byteLength),
+    );
+  const original = example("flowchart.canvaslide");
+  const title = `넘겨주기 ${randomUUID().slice(0, 8)}`;
+  const file = await upload(page.request, teamId, title, original);
+  await openTeamFile(page, file.id);
+  // The editor shows the file and the screen keeps no copy of its bytes.
+  expect(await heldSizes()).toEqual([0]);
+  await nudge(page);
+  await saveShortcut(page);
+  await expect(idleSave(page)).toBeDisabled();
+  expect((await meta(page.request, teamId, file.id)).revision).toBe(2);
+
+  // Another member saves; the author drops the next edit for the newer file.
+  const newer = Buffer.from(
+    original.toString().replaceAll("Order received", "Order reloaded"),
+  );
+  expect(
+    (
+      await page.request.put(`/api/teams/${teamId}/slides/${file.id}/content`, {
+        headers: {
+          ...headers,
+          "Content-Type": "application/octet-stream",
+          "X-Slide-Base-Revision": "2",
+          "X-Slide-Request-Id": randomUUID(),
+        },
+        data: newer,
+      })
+    ).ok(),
+  ).toBe(true);
+  await nudge(page);
+  await saveShortcut(page);
+  await page
+    .getByRole("dialog", { name: "다른 팀원이 먼저 저장했습니다" })
+    .getByRole("button", { name: "내 변경을 버리고 최신 자료 열기" })
+    .click();
+  const reloaded = editor(page).getByText("Order reloaded", { exact: true });
+  await expect(reloaded).toBeVisible();
+  await expect(idleSave(page)).toBeDisabled();
+  expect(await heldSizes()).toEqual([0, 0]);
+  await reloaded.click({ force: true });
+  await page.keyboard.press("ArrowRight");
+  await saveButton(page).click();
+  await expect(idleSave(page)).toBeDisabled();
+  expect((await meta(page.request, teamId, file.id)).revision).toBe(4);
+
+  await page.getByRole("button", { name: "팀 자료 목록" }).click();
+  await fileCard(page, title).scrollIntoViewIfNeeded();
+  await expect(
+    fileCard(page, title).locator(".slide-card-thumbnail img"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: title, exact: true }).click();
+  await expect(reloaded).toBeVisible();
+  await expect(idleSave(page)).toBeDisabled();
 });
 
 test("새 자료는 이름 없이 편집하고 첫 저장 때만 팀 파일을 만든다", async ({

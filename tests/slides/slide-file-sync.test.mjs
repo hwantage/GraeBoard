@@ -152,6 +152,48 @@ test("사내 서버는 연결이 활성인 팀만, 한 번에 한 번씩 동기�
   assert.equal((await manual.run(teamId)).published, 1);
 });
 
+// A pass runs for every active team every minute. With nothing to do it asks
+// the remote for the head once, compares it with the clone and only reads the
+// store.
+test("사내 서버의 변화 없는 실행은 원격 조회 한 번으로 끝나고 저장소를 잠그지 않는다", async (t) => {
+  const { inside, outside, directory } = await twoPeers(t, sqliteStores);
+  const commands = [];
+  await inside.transport.init();
+  inside.transport.log = (entry) => commands.push(entry.command);
+  const pass = async () => {
+    commands.length = 0;
+    const result = await inside.sync();
+    return [result.received + result.published + result.pending, ...commands];
+  };
+  // A team that has never used slides: the branch does not exist.
+  assert.deepEqual(await pass(), [0, "ls-remote"]);
+
+  const file = await inside.create("자료", slide("처음"));
+  assert.equal((await inside.sync()).published, 1);
+  // The clone's copy of the branch follows the commit this site pushed.
+  assert.equal((await pass()).at(-1), "fetch");
+
+  // Nothing to do, even while another connection is writing to the store.
+  const writer = new DatabaseSync(
+    join(directory, "internal-store", SLIDE_STORE_FILE),
+  );
+  writer.exec("BEGIN IMMEDIATE");
+  try {
+    assert.deepEqual(await pass(), [0, "ls-remote", "rev-parse"]);
+  } finally {
+    writer.close();
+  }
+
+  // A version from the other site is still fetched and received.
+  await settle(outside);
+  await outside.save(file.id, slide("외부 수정"));
+  assert.equal((await outside.sync()).published, 1);
+  const moved = await pass();
+  assert.deepEqual(moved.slice(0, 4), [1, "ls-remote", "rev-parse", "fetch"]);
+  assert.equal((await inside.read(file.id)).equals(slide("외부 수정")), true);
+  assert.deepEqual(await pass(), [0, "ls-remote", "rev-parse"]);
+});
+
 test("슬라이드 도입 전 릴리스의 동기화 코드는 슬라이드 브랜치를 읽지 않고 업무 브랜치를 그대로 쓴다", async (t) => {
   const { inside, outside, remote, directory } = await twoPeers(
     t,

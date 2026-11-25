@@ -48,7 +48,9 @@ function fixture(t, { hubUrl = HUB, appOrigin = "http://board.test" } = {}) {
       );
   }
   const calls = [],
-    notified = [];
+    notified = [],
+    // How many reminders were on record each time a team was told.
+    recorded = [];
   const clock = { ms: Date.parse("2026-11-23T00:00:00.000Z") };
   const hub = { status: 200, fail: false };
   const push = createCalendarReminderPush({
@@ -56,7 +58,10 @@ function fixture(t, { hubUrl = HUB, appOrigin = "http://board.test" } = {}) {
     hubUrl,
     appOrigin,
     now: () => clock.ms,
-    onSent: (team) => notified.push(team),
+    onSent: (team) => {
+      notified.push(team);
+      recorded.push(sends().length);
+    },
     request: async (url, options) => {
       calls.push({ url, body: JSON.parse(options.body) });
       if (hub.fail) throw new Error("connect ECONNREFUSED");
@@ -71,7 +76,7 @@ function fixture(t, { hubUrl = HUB, appOrigin = "http://board.test" } = {}) {
       "INSERT INTO calendar_entries(id,team_id,user_id,date,end_date,title,updated_at,actor_id,start_time,reminders,deleted_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
     ).run(
       id,
-      teamId,
+      values.teamId || teamId,
       values.userId === undefined ? people.owner : values.userId,
       values.date,
       values.endDate || values.date,
@@ -86,12 +91,23 @@ function fixture(t, { hubUrl = HUB, appOrigin = "http://board.test" } = {}) {
   };
   const sends = () =>
     db.prepare("SELECT * FROM calendar_reminder_sends ORDER BY fire_at").all();
+  const team = (name) => {
+    const id = randomUUID();
+    db.prepare("INSERT INTO teams VALUES(?,?,?)").run(
+      id,
+      name,
+      json(DEFAULT_SETTINGS),
+    );
+    return id;
+  };
   return {
     db,
     teamId,
+    team,
     people,
     calls,
     notified,
+    recorded,
     clock,
     hub,
     push,
@@ -292,6 +308,90 @@ test("a reminder nobody can receive is closed, an unreachable hub is retried wit
   f.clock.ms += 30 * 86400000;
   await f.push.tick();
   assert.equal(f.sends().length, 2);
+});
+
+test("reminders of one team due in the same check tell its calendars once, after all of them are on record", async (t) => {
+  const f = fixture(t);
+  f.push.remember(f.people.owner, "10.1.2.3");
+  for (const title of ["기획 회의", "디자인 리뷰", "배포 점검"])
+    f.entry({ date: "2026-11-23", time: "10:00", reminders: [0], title });
+  // Nobody can receive this one: it is closed in the same check.
+  f.entry({
+    userId: f.people.unregistered,
+    date: "2026-11-23",
+    time: "10:00",
+    reminders: [0],
+  });
+  f.clock.ms = START;
+  await f.push.tick();
+  assert.equal(f.calls.length, 3);
+  assert.deepEqual(f.notified, [f.teamId]);
+  // The one read that follows finds how every reminder went.
+  assert.deepEqual(f.recorded, [4]);
+  // A check with nothing due tells nobody.
+  f.clock.ms += 30000;
+  await f.push.tick();
+  assert.deepEqual(f.notified, [f.teamId]);
+});
+
+test("each team with a reminder on record is told once, and a team whose reminders the hub did not take is not told", async (t) => {
+  const f = fixture(t);
+  const other = f.team("다른 팀");
+  f.push.remember(f.people.owner, "10.1.2.3");
+  // All four are due at 09:50 and go out in the order of their start times,
+  // the two teams by turns.
+  for (const [teamId, time, minutes] of [
+    [f.teamId, "09:50", 0],
+    [other, "09:55", 5],
+    [f.teamId, "10:00", 10],
+    [other, "10:20", 30],
+  ])
+    f.entry({ teamId, date: "2026-11-23", time, reminders: [minutes] });
+  f.clock.ms = START - 10 * 60000;
+  await f.push.tick();
+  assert.equal(f.calls.length, 4);
+  assert.deepEqual(f.notified, [f.teamId, other]);
+  assert.deepEqual(f.recorded, [4, 4]);
+
+  // The hub takes nothing: the reminders stay unrecorded for the next check
+  // and there is nothing new for a calendar to read.
+  f.entry({ date: "2026-11-23", time: "11:00", reminders: [0] });
+  f.entry({ teamId: other, date: "2026-11-23", time: "11:00", reminders: [0] });
+  f.hub.fail = true;
+  f.clock.ms = START + 60 * 60000;
+  await f.push.tick();
+  assert.equal(f.calls.length, 6);
+  assert.equal(f.sends().length, 4);
+  assert.deepEqual(f.notified, [f.teamId, other]);
+});
+
+test("a check that fails part way still tells the teams whose reminders it recorded", async (t) => {
+  const f = fixture(t);
+  const other = f.team("다른 팀");
+  f.push.remember(f.people.owner, "10.1.2.3");
+  f.entry({ date: "2026-11-23", time: "09:55", reminders: [5] });
+  const failing = f.entry({
+    teamId: other,
+    date: "2026-11-23",
+    time: "10:00",
+    reminders: [10],
+  });
+  // Never reached: the check ends at the reminder before it.
+  f.entry({ date: "2026-11-23", time: "10:20", reminders: [30] });
+  f.db.exec(
+    `CREATE TRIGGER reminder_log_fails BEFORE INSERT ON calendar_reminder_sends WHEN NEW.entry_id='${failing}' BEGIN SELECT RAISE(ABORT,'log write failed'); END`,
+  );
+  const warn = t.mock.method(console, "warn", () => {});
+  f.clock.ms = START - 10 * 60000;
+  await f.push.tick();
+  assert.deepEqual(
+    warn.mock.calls.map((call) => call.arguments),
+    [["GraeBoard reminder check failed", "log write failed"]],
+  );
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.sends().length, 1);
+  assert.deepEqual(f.notified, [f.teamId]);
+  assert.deepEqual(f.recorded, [1]);
 });
 
 test("an entry's reminders are pending, then sent, and failed once one reached nobody or was missed", () => {
