@@ -10,7 +10,12 @@ import {
   SLIDE_EDITOR_POLICY,
   slideEditorRequest,
 } from "../../shared/slides/slide-editor-policy.js";
-import { MAX_SLIDE_FILE_BYTES } from "../../shared/slides/slide-file-rules.js";
+import {
+  MAX_SLIDE_FILE_BYTES,
+  MAX_SLIDE_THUMBNAIL_LENGTH,
+  SLIDE_THUMBNAIL_VERSION,
+} from "../../shared/slides/slide-file-rules.js";
+import { slideThumbnailKey } from "../../worker/storage/slides/r2-slide-blobs.mjs";
 
 const buildId = "0de6fc3b40a8-1d25ad0d063a";
 const appPage = "<!doctype html><title>GraeBoard</title>";
@@ -272,6 +277,37 @@ test("gateway 자원 경로는 이 팀의 슬라이드 객체만 25MiB까지 받
     headers: { "content-length": String(MAX_SLIDE_FILE_BYTES + 1) },
   });
   assert.equal(over.status, 413);
+  // A card thumbnail is kept under the same prefix, under the name the
+  // external site gives it, within its own limit.
+  const thumbnail = slideThumbnailKey(teamId, hash, SLIDE_THUMBNAIL_VERSION);
+  assert.equal(
+    (await call(object(thumbnail), { method: "PUT", body: bytes })).status,
+    204,
+  );
+  assert.deepEqual(
+    new Uint8Array(await (await call(object(thumbnail))).arrayBuffer()),
+    bytes,
+  );
+  for (const refused of [
+    `slides/22222222-2222-4222-8222-222222222222/${hash}.v1.thumbnail`,
+    `slides/${teamId}/${hash}.v0.thumbnail`,
+    `slides/${teamId}/${hash}.thumbnail`,
+    `slides/${teamId}/name.v1.thumbnail`,
+  ])
+    assert.equal(
+      (await call(object(refused), { method: "PUT", body: bytes })).status,
+      403,
+    );
+  assert.equal(
+    (
+      await call(object(thumbnail), {
+        method: "PUT",
+        body: bytes,
+        headers: { "content-length": String(MAX_SLIDE_THUMBNAIL_LENGTH + 1) },
+      })
+    ).status,
+    413,
+  );
   assert.equal(
     (await call(object(key), { headers: { "x-graeboard-resource": "wrong" } }))
       .status,

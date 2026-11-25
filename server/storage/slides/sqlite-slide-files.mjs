@@ -11,7 +11,9 @@ import { DatabaseSync } from "node:sqlite";
 import { dirname, join, resolve } from "node:path";
 import {
   SLIDE_FILE_EXTENSION,
+  SLIDE_THUMBNAIL_VERSION,
   slideContentHash,
+  slideThumbnailName,
 } from "../../../shared/slides/slide-file-rules.js";
 import { HttpError, requireThat } from "../../../shared/validation.js";
 
@@ -41,6 +43,13 @@ export function slideFilesDirectory() {
 }
 export const slideBlobPath = (directory, teamId, contentHash) =>
   join(directory, "blobs", teamId, `${contentHash}.${SLIDE_FILE_EXTENSION}`);
+export const slideThumbnailPath = (directory, teamId, contentHash, version) =>
+  join(
+    directory,
+    "thumbnails",
+    teamId,
+    slideThumbnailName(contentHash, version),
+  );
 
 const userVersion = (db) =>
   db.prepare("PRAGMA user_version").get().user_version;
@@ -226,7 +235,9 @@ const replay = (file, revision, contentHash) => {
 
 // Slide files of the internal Node site: metadata in the slide store database
 // and immutable bytes at blobs/<team>/<SHA-256>.canvaslide. The database opens
-// on first use, so a server that never touches slides creates nothing.
+// on first use, so a server that never touches slides creates nothing. Card
+// thumbnails of kept content are files of their own under thumbnails/<team>/,
+// which no row refers to.
 //
 // The site is one process. Reading, writing and hashing a file's bytes are
 // asynchronous, so other requests are answered while a 25MiB file is handled;
@@ -236,14 +247,19 @@ const replay = (file, revision, contentHash) => {
 export class SqliteSlideFileRepository {
   #db = null;
   #teamExists;
+  #thumbnailVersion;
+  #thumbnailWrites = new Map();
   // `teamExists` asks the task database, which no foreign key links to this
-  // store, whether a team is still there.
+  // store, whether a team is still there. `thumbnailVersion` is the drawing
+  // version thumbnails are read and written under.
   constructor({
     directory = slideFilesDirectory(),
     teamExists = () => true,
+    thumbnailVersion = SLIDE_THUMBNAIL_VERSION,
   } = {}) {
     this.directory = directory;
     this.#teamExists = teamExists;
+    this.#thumbnailVersion = thumbnailVersion;
     // An existing store is checked at startup instead of on a first request.
     if (existsSync(join(directory, SLIDE_STORE_FILE))) this.#open();
   }
@@ -330,21 +346,30 @@ export class SqliteSlideFileRepository {
       throw new Error("슬라이드 자료 파일의 해시가 기록과 다릅니다.");
     return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   }
-  // Removes bytes no kept revision of any file of the team refers to. The
-  // check and the removal stay one synchronous step: a save that is writing
-  // the same content either committed before this check, which then keeps the
-  // file, or finds the file gone in #stored and writes it again. Removing a
-  // file does not read its bytes.
+  // Whether a kept revision of any file of the team refers to the content.
+  #kept(db, teamId, contentHash) {
+    return !!db
+      .prepare(
+        `SELECT 1 FROM slide_file_revisions r JOIN slide_files f ON f.id=r.file_id
+         WHERE f.team_id=? AND r.content_hash=? AND r.revision >= f.revision-? LIMIT 1`,
+      )
+      .get(teamId, contentHash, SLIDE_KEPT_REVISIONS);
+  }
+  // Removes bytes no kept revision of any file of the team refers to, and
+  // the thumbnails of that content under every drawing version. The check and
+  // the removal stay one synchronous step: a save that is writing the same
+  // content either committed before this check, which then keeps the file, or
+  // finds the file gone in #stored and writes it again; a thumbnail that is
+  // being written looks at the same rows after it is in place
+  // (#writeThumbnail). Removing a file does not read its bytes.
   #prune(db, teamId, hashes) {
     for (const hash of new Set(hashes)) {
-      const kept = db
-        .prepare(
-          `SELECT 1 FROM slide_file_revisions r JOIN slide_files f ON f.id=r.file_id
-           WHERE f.team_id=? AND r.content_hash=? AND r.revision >= f.revision-? LIMIT 1`,
-        )
-        .get(teamId, hash, SLIDE_KEPT_REVISIONS);
-      if (!kept)
-        rmSync(slideBlobPath(this.directory, teamId, hash), { force: true });
+      if (this.#kept(db, teamId, hash)) continue;
+      rmSync(slideBlobPath(this.directory, teamId, hash), { force: true });
+      for (let version = 1; version <= this.#thumbnailVersion; version++)
+        rmSync(slideThumbnailPath(this.directory, teamId, hash, version), {
+          force: true,
+        });
     }
   }
   list(teamId) {
@@ -536,6 +561,76 @@ export class SqliteSlideFileRepository {
       recursive: true,
       force: true,
     });
+    rmSync(join(this.directory, "thumbnails", teamId), {
+      recursive: true,
+      force: true,
+    });
+  }
+  // --- Card thumbnails: a cache the browser can draw again, so no row refers
+  // to one and a backup leaves them out.
+  // The stored thumbnail of a content under this drawing version, or null.
+  async thumbnail(teamId, contentHash) {
+    let bytes;
+    try {
+      bytes = await readFile(
+        slideThumbnailPath(
+          this.directory,
+          teamId,
+          contentHash,
+          this.#thumbnailVersion,
+        ),
+      );
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
+    return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  }
+  // Stores a thumbnail unless the content already has one, and answers with
+  // the one that is kept; null when the content is no longer kept. Members
+  // who send the same card at once share the write of the first, decided
+  // here with nothing awaited, so #place never replaces a thumbnail.
+  putThumbnail(teamId, contentHash, bytes) {
+    const path = slideThumbnailPath(
+      this.directory,
+      teamId,
+      contentHash,
+      this.#thumbnailVersion,
+    );
+    let write = this.#thumbnailWrites.get(path);
+    if (!write) {
+      write = this.#writeThumbnail(teamId, contentHash, path, bytes).finally(
+        () => this.#thumbnailWrites.delete(path),
+      );
+      this.#thumbnailWrites.set(path, write);
+    }
+    return write;
+  }
+  async #writeThumbnail(teamId, contentHash, path, bytes) {
+    const earlier = await this.thumbnail(teamId, contentHash);
+    if (earlier) return earlier;
+    try {
+      // Synced like the content: nothing replaces a stored thumbnail, so one
+      // cut short by a power failure would stay.
+      await this.#place(path, bytes, { durable: true });
+    } catch (error) {
+      // As in #stored: deleting the team removes the folder the file was
+      // about to be moved into, and the check below then cleans up.
+      if (this.#teamExists(teamId)) throw error;
+    }
+    // Other requests ran while the file was written, and two of them take
+    // the content away: a save that prunes it (#prune) and the permanent
+    // deletion of the team. Both are synchronous, so looking here, with
+    // nothing awaited, decides which came first. Either they saw this file
+    // and removed it, or it goes now; no thumbnail outlives its content.
+    if (!this.#teamExists(teamId)) {
+      this.removeTeam(teamId);
+      return null;
+    }
+    if (this.#kept(this.#open(), teamId, contentHash) && existsSync(path))
+      return bytes;
+    rmSync(path, { force: true });
+    return null;
   }
   // --- Synchronization with the other site (server/sync/core/slide-file-branch.mjs).
   // The repository only keeps state; the rules live in the sync core.

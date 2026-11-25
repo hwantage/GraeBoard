@@ -1,7 +1,9 @@
-// A disposable cache per storage backend. Cached pixels convey no access:
-// the file service checks the caller and the live file on every request.
+// Card thumbnails as the file service handles them: what a valid one is, the
+// bytes a site stores for it, and a memory cache per storage backend in front
+// of that store. Stored or cached pixels convey no access: the file service
+// checks the caller and the live file on every request.
 import { Buffer } from "node:buffer";
-import { requireThat } from "../../../shared/validation.js";
+import { MAX_SLIDE_THUMBNAIL_LENGTH } from "../../../shared/slides/slide-file-rules.js";
 
 const caches = new WeakMap();
 const maxCharacters = 6 * 1024 * 1024;
@@ -11,7 +13,7 @@ export function validSlideThumbnail(image) {
   if (image === "") return true; // Empty canvas.
   if (
     typeof image !== "string" ||
-    image.length > 160 * 1024 ||
+    image.length > MAX_SLIDE_THUMBNAIL_LENGTH ||
     !image.startsWith(prefix)
   )
     return false;
@@ -40,6 +42,23 @@ export function validSlideThumbnail(image) {
   return false;
 }
 
+// What a site stores for a valid thumbnail: the JPEG itself. An empty canvas
+// is one zero byte, which no JPEG starts with; an empty object would not do,
+// because the external site's bucket takes no empty upload.
+export const slideThumbnailBytes = (image) =>
+  image === ""
+    ? Buffer.alloc(1)
+    : Buffer.from(image.slice(prefix.length), "base64");
+export const slideThumbnailImage = (bytes) =>
+  bytes.length === 1 && bytes[0] === 0
+    ? ""
+    : prefix +
+      Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString(
+        "base64",
+      );
+
+// The first lookup in front of a site's stored thumbnails. The first value
+// put under a key stays, as in the store.
 export function slideThumbnailCache(scope) {
   if (!caches.has(scope)) {
     const entries = new Map();
@@ -53,11 +72,6 @@ export function slideThumbnailCache(scope) {
         return value;
       },
       put(key, value) {
-        requireThat(
-          validSlideThumbnail(value),
-          400,
-          "올바르지 않은 미리보기입니다.",
-        );
         if (entries.has(key)) return;
         entries.set(key, value);
         characters += value.length;

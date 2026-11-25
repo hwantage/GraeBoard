@@ -10,6 +10,20 @@ export const MAX_SLIDE_TITLE_LENGTH = 120;
 export const MAX_SLIDE_SHARE_BYTES = 5 * 1024 * 1024;
 export const SLIDE_SHARE_TTL_MS = 24 * 60 * 60 * 1000;
 
+// A card thumbnail is a JPEG data URL of at most this many characters, so its
+// stored bytes are fewer.
+export const MAX_SLIDE_THUMBNAIL_LENGTH = 160 * 1024;
+// The drawing version of stored card thumbnails. Each site keeps a thumbnail
+// under the content it shows and this number. Raise it by one whenever
+// scripts/canvaslide/frame/slide-card-render.ts changes what a card looks
+// like: pictures stored under an older number are no longer served, so every
+// card is drawn again once. An editor update alone is no reason to raise it.
+// Never lower it or skip a number: the thumbnails of content that is no longer
+// kept are removed under every number from 1 to this one.
+export const SLIDE_THUMBNAIL_VERSION = 1;
+export const slideThumbnailName = (contentHash, version) =>
+  `${contentHash}.v${version}.thumbnail`;
+
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 
 export function slideTitleProblem(value) {

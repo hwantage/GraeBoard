@@ -2,6 +2,7 @@ import {
   SLIDE_SCHEMA,
   slideSchemaReady,
 } from "../../../shared/slides/slide-store-version.js";
+import { SLIDE_THUMBNAIL_VERSION } from "../../../shared/slides/slide-file-rules.js";
 import { requireThat } from "../../../shared/validation.js";
 import { assert } from "../../control/access.mjs";
 import { R2SlideBlobStore } from "./r2-slide-blobs.mjs";
@@ -89,11 +90,20 @@ export async function slideFileTitles(tx, teamId, fileIds) {
 // Slide files of the external site: metadata in the graeboard_slides schema of
 // the team database and immutable bytes in the team's R2 bucket. Bytes are
 // uploaded before the transaction; inside it only an existence check and, when
-// a concurrent delete won, one repeated upload touch R2.
+// a concurrent delete won, one repeated upload touch R2. Card thumbnails of
+// kept content are objects in the same bucket, which no row refers to.
 export class PostgresSlideFileRepository {
-  constructor({ pool, bucket, teamId }) {
+  // `thumbnailVersion` is the drawing version thumbnails are read and written
+  // under.
+  constructor({
+    pool,
+    bucket,
+    teamId,
+    thumbnailVersion = SLIDE_THUMBNAIL_VERSION,
+  }) {
     this.pool = pool;
     this.teamId = teamId;
+    this.thumbnailVersion = thumbnailVersion;
     this.blobs = new R2SlideBlobStore(bucket, teamId);
   }
   #team(teamId) {
@@ -177,20 +187,28 @@ export class PostgresSlideFileRepository {
     if (!(await this.blobs.has(contentHash)))
       await this.blobs.write(contentHash, bytes);
   }
-  // Removes bytes no kept revision of any file of the team refers to. A
-  // failure or a restart leaves an unreferenced object, never a referenced
-  // one missing.
+  // Whether a kept revision of any file of the team refers to the content.
+  async #kept(client, contentHash) {
+    return (
+      (
+        await client.query(
+          `SELECT 1 FROM ${S}.slide_file_revisions r JOIN ${S}.slide_files f ON f.id=r.file_id
+           WHERE f.team_id=$1 AND r.content_hash=$2 AND r.revision >= f.revision-$3 LIMIT 1`,
+          [this.teamId, contentHash, SLIDE_KEPT_REVISIONS],
+        )
+      ).rowCount > 0
+    );
+  }
+  // Removes bytes no kept revision of any file of the team refers to, and
+  // the thumbnails of that content under every drawing version. A failure or
+  // a restart leaves an unreferenced object, never a referenced one missing.
   async #prune(hashes) {
     for (const hash of new Set(hashes))
       await this.#transaction(async (client) => {
-        const kept = (
-          await client.query(
-            `SELECT 1 FROM ${S}.slide_file_revisions r JOIN ${S}.slide_files f ON f.id=r.file_id
-             WHERE f.team_id=$1 AND r.content_hash=$2 AND r.revision >= f.revision-$3 LIMIT 1`,
-            [this.teamId, hash, SLIDE_KEPT_REVISIONS],
-          )
-        ).rowCount;
-        if (!kept) await this.blobs.remove(hash);
+        if (await this.#kept(client, hash)) return;
+        await this.blobs.remove(hash);
+        for (let version = 1; version <= this.thumbnailVersion; version++)
+          await this.blobs.removeThumbnail(hash, version);
       }).catch(() => {});
   }
   async list(teamId) {
@@ -358,6 +376,33 @@ export class PostgresSlideFileRepository {
         [at, fileId, teamId],
       ),
     );
+  }
+  // --- Card thumbnails: a cache the browser can draw again, so no row refers
+  // to one and a backup leaves them out.
+  // The stored thumbnail of a content under this drawing version, or null:
+  // one request to the bucket and none to the database.
+  async thumbnail(teamId, contentHash) {
+    this.#team(teamId);
+    return this.blobs.thumbnail(contentHash, this.thumbnailVersion);
+  }
+  // Stores a thumbnail unless the content already has one, and answers with
+  // the one that is kept; null when the content is no longer kept. Like the
+  // bytes (#ensureBlob), storing and pruning are serialized by the team lock:
+  // a thumbnail is stored only while its content is kept, and a later prune
+  // of that content sees and removes it. The same lock puts members who send
+  // the same card at once in an order, so the first one's picture stays.
+  async putThumbnail(teamId, contentHash, bytes) {
+    this.#team(teamId);
+    return this.#transaction(async (client) => {
+      if (!(await this.#kept(client, contentHash))) return null;
+      const earlier = await this.blobs.thumbnail(
+        contentHash,
+        this.thumbnailVersion,
+      );
+      if (earlier) return earlier;
+      await this.blobs.putThumbnail(contentHash, this.thumbnailVersion, bytes);
+      return bytes;
+    });
   }
   // --- Synchronization with the other site (server/sync/core/slide-file-branch.mjs).
   // The same contract as the SQLite repository's sync methods.

@@ -1,6 +1,11 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { HttpError, requireThat } from "../../../shared/validation.js";
-import { slideThumbnailCache } from "./slide-thumbnail-cache.mjs";
+import {
+  slideThumbnailBytes,
+  slideThumbnailCache,
+  slideThumbnailImage,
+  validSlideThumbnail,
+} from "./slide-thumbnail-cache.mjs";
 import { canContribute } from "../../../shared/domain.js";
 import {
   isSlideRequestId,
@@ -73,20 +78,44 @@ export class SlideFileService {
     requireThat(stored, 404, "자료를 찾을 수 없습니다.");
     return stored;
   }
+  // Card thumbnails are a cache anyone can draw again from the file, kept in
+  // the site's store and, in front of it, in memory. A store that cannot be
+  // reached never fails a request: a read answers like a card nobody has
+  // drawn yet, and a write leaves the picture in memory only, which is all
+  // there was before thumbnails were stored.
   async thumbnail(teamId, fileId) {
     const file = await this.get(teamId, fileId);
-    return {
-      hash: file.contentHash,
-      image: slideThumbnailCache(this.thumbnailScope).get(
-        teamId + "/" + file.contentHash,
-      ),
-    };
+    const cache = slideThumbnailCache(this.thumbnailScope);
+    const key = teamId + "/" + file.contentHash;
+    let image = cache.get(key);
+    if (image === null) {
+      const stored = await this.repository
+        .thumbnail(teamId, file.contentHash)
+        .catch(() => null);
+      if (stored) cache.put(key, (image = slideThumbnailImage(stored)));
+    }
+    return { hash: file.contentHash, image };
   }
   async putThumbnail(teamId, fileId, { hash, image }) {
     await this.#write(teamId);
     const file = await this.#file(teamId, fileId);
     requireThat(hash === file.contentHash, 409, "자료가 변경되었습니다.");
-    slideThumbnailCache(this.thumbnailScope).put(teamId + "/" + hash, image);
+    requireThat(
+      validSlideThumbnail(image),
+      400,
+      "올바르지 않은 미리보기입니다.",
+    );
+    // The store answers with the picture it keeps, which is an earlier one
+    // when this is not the first write, so memory serves what a restart will.
+    const kept = await this.repository
+      .putThumbnail(teamId, hash, slideThumbnailBytes(image))
+      .then(
+        (stored) => stored && slideThumbnailImage(stored),
+        () => image,
+      );
+    // The content stopped being kept while the picture was written.
+    requireThat(kept !== null, 409, "자료가 변경되었습니다.");
+    slideThumbnailCache(this.thumbnailScope).put(teamId + "/" + hash, kept);
     return {};
   }
   async create(teamId, { title, bytes, requestId }) {
