@@ -1490,6 +1490,7 @@ test(
     assert.equal(listed[0].recovered, true);
 
     // Every Git command is written only after the administrator asks for it.
+    // A cycle with nothing new reads each head without fetching.
     const level = `/admin/teams/${teamId}/sync-log-level`;
     assert.equal((await a.api(level, { level: "all" }, "PUT")).status, 400);
     assert.deepEqual(ok(await a.api(level, { level: "git" }, "PUT")), {
@@ -1500,7 +1501,7 @@ test(
     assert.ok(
       listed.some(
         (entry) =>
-          entry.kind === "git" && entry.ok && entry.command === "fetch",
+          entry.kind === "git" && entry.ok && entry.command === "ls-remote",
       ),
     );
     const changed = listed.find((entry) => entry.action === "log-level");

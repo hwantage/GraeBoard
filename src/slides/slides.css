@@ -1,11 +1,5 @@
-.slides-board {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  padding: 18px 22px;
-  overflow: auto;
-}
+/* `.slides-board` itself and the loading ray are in slide-loading-state.css,
+   which loads with the app. */
 .slides-board.slides-editing {
   padding: 0;
   overflow: hidden;
@@ -334,9 +328,11 @@ input.slide-editor-title:hover {
 input.slide-editor-title:focus {
   border-color: var(--accent);
 }
-/* A plain icon, as beside a task detail's title, apart from the file buttons. */
+/* A plain icon, as beside a task detail's title, apart from the file buttons.
+   The bar's own buttons, this one included, keep the padding styles.css gives
+   `.slide-editor-bar > .button`: this file loads after styles.css, so a
+   padding set here with the same selector weight would replace it. */
 .slide-editor-bar > .document-link-copy {
-  padding: 5px;
   border: 0;
   background: transparent;
   color: var(--ink);
@@ -351,6 +347,8 @@ input.slide-editor-title:focus {
     flex: none;
     width: 34px;
     height: 34px;
+  }
+  .slide-editor-bar > .heading-actions > .button {
     padding: 0;
   }
   .slide-editor-bar > .document-link-copy {
@@ -359,50 +357,6 @@ input.slide-editor-title:focus {
   .slide-editor-bar > .button > span,
   .slide-editor-bar > .heading-actions > .button > span {
     display: none;
-  }
-}
-/* The center of the original artwork stays still while each wing bends at its root. */
-.slide-loading-ray {
-  display: grid;
-  grid-template-columns: 44px 32px 20px;
-  width: 96px;
-  height: 64px;
-  justify-self: center;
-}
-.slide-loading-ray::before,
-.slide-loading-ray > span,
-.slide-loading-ray::after {
-  background: url("../../assets/character/canvaslide-ray-384.png") left center /
-    96px 64px no-repeat;
-}
-.slide-loading-ray > span {
-  background-position-x: -44px;
-}
-.slide-loading-ray::before,
-.slide-loading-ray::after {
-  content: "";
-  transform-origin: right center;
-  --wing-up: 12deg;
-  --wing-down: -6deg;
-}
-.slide-loading-ray::after {
-  background-position-x: right;
-  transform-origin: left center;
-  --wing-up: -18deg;
-  --wing-down: 9deg;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .slide-loading-ray::before,
-  .slide-loading-ray::after {
-    animation: slide-ray-wingbeat 700ms ease-in-out infinite alternate;
-  }
-}
-@keyframes slide-ray-wingbeat {
-  from {
-    transform: skewY(var(--wing-down));
-  }
-  to {
-    transform: skewY(var(--wing-up));
   }
 }
 .slide-editor-stage {

@@ -20,7 +20,22 @@ export async function syncTeamSlides(
   { transport, limits = EXTERNAL_SLIDE_SYNC_LIMITS } = {},
 ) {
   const database = databaseFor(env, profile);
-  const link = await database.readLink(profile.teamId);
+  // Both answers that can keep a pass from starting come in the round trip
+  // that opens the transaction.
+  const [link, refresh] = await database.withTeamTransaction(
+    profile.teamId,
+    (tx) => tx.first.map((result) => result.rows[0]),
+    {
+      readOnly: true,
+      first: [
+        {
+          sql: "SELECT mode,lease_owner,lease_until FROM team_sync_links WHERE team_id=$1",
+          params: [profile.teamId],
+        },
+        { sql: SCHEDULING_SQL, params: [profile.teamId] },
+      ],
+    },
+  );
   // Not while task synchronization is paused or recovering, and not while
   // another executor holds its lease (a run, maintenance or an upgrade).
   if (
@@ -31,8 +46,7 @@ export async function syncTeamSlides(
   // The GitHub budget is shared with task synchronization: while it waits out
   // a rate limit, slides wait too, and a limit met here is recorded in the
   // same place so every executor honours it.
-  if ((await githubCooldown(database, profile.teamId)) > Date.now())
-    return null;
+  if (githubCooldown(schedulingOf(refresh)) > Date.now()) return null;
   const store = new PostgresSlideFileRepository({
     pool: database.pool,
     bucket: env[profile.bucketBinding],
@@ -82,21 +96,13 @@ export async function syncTeamSlides(
 // 5 seconds ahead. A deadline further away than that is a rate limit.
 const REFRESH_WINDOW_MS = 30000;
 const PUBLISH_WINDOW_MS = 5000;
+const SCHEDULING_SQL =
+  "SELECT payload FROM site_entities WHERE team_id=$1 AND entity='syncRefresh' AND entity_key='[]'";
+const schedulingOf = (row) => JSON.parse(row?.payload || "{}");
 async function schedulingState(tx, teamId) {
-  const row = (
-    await tx.query(
-      "SELECT payload FROM site_entities WHERE team_id=$1 AND entity='syncRefresh' AND entity_key='[]'",
-      [teamId],
-    )
-  ).rows[0];
-  return JSON.parse(row?.payload || "{}");
+  return schedulingOf((await tx.query(SCHEDULING_SQL, [teamId])).rows[0]);
 }
-async function githubCooldown(database, teamId) {
-  const state = await database.withTeamTransaction(
-    teamId,
-    (tx) => schedulingState(tx, teamId),
-    { readOnly: true },
-  );
+function githubCooldown(state) {
   const now = Date.now();
   const nextAt = Number(state.nextAt || 0);
   const publishAfter = Number(state.publishAfter || 0);
