@@ -174,15 +174,18 @@ export function documentLinkView(
   };
 }
 
-// A pasted address of this site's document link becomes a link. Without
-// a title on the clipboard, the looked-up title replaces the address as the
-// stored text; it belongs to the paste, so undo removes the link at once.
+// A pasted address of this site's document link becomes a link, and so does
+// the slides screen's address of a file of the current team (`teamId`).
+// Without a title on the clipboard, the looked-up title replaces the address
+// as the stored text; it belongs to the paste, so undo removes the link at
+// once.
 export function pasteDocumentLink(
   view: EditorView,
   text: string,
   titles: DocumentLinkTitles,
+  teamId?: string,
 ) {
-  const target = documentLinkTarget(text.trim());
+  const target = documentLinkTarget(text.trim(), teamId);
   const type = view.state.schema.nodes.document_link;
   if (!target || !type) return false;
   const known = titles.get(target);

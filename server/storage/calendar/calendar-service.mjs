@@ -416,8 +416,9 @@ export const CALENDAR_ROUTES = [
     path: "/calendar/tasks/:id",
     status: 200,
   },
-  // Current titles of linked tasks, entries, memos and copy rows. The
-  // repositories that open a task or an entry from the calendar answer it.
+  // Current titles of linked tasks, entries, memos, copy rows and slide
+  // files. The repositories that open a task or an entry from the calendar
+  // answer it.
   {
     name: "resolveLinks",
     method: "GET",

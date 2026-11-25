@@ -1437,6 +1437,100 @@ test("업무와 일정 문서는 처음부터 전체 화면이며 너비 설정�
   ).toBeVisible();
 });
 
+test("휴대폰 업무 상세도 스크롤로 가려진 제목을 헤더에 한 줄로 보이고 버튼 자리를 바꾸지 않는다", async ({
+  page,
+}, info) => {
+  await request(page, `/tasks/${taskId}/documents/main`, "PUT", {
+    markdown: Array.from({ length: 60 }, (_, i) => `문단 ${i + 1}`).join(
+      "\n\n",
+    ),
+    expectedRevision: 0,
+    operationId: randomUUID(),
+  });
+  await page.reload();
+  await titleCell(page).locator(".task-document-indicator").tap();
+  const detail = page.getByRole("dialog", { name: "업무 상세", exact: true });
+  await expect(
+    detail.getByRole("textbox", { name: "업무 문서 리치 편집" }),
+  ).toContainText("문단 60");
+  const header = detail.locator(":scope > header");
+  const body = detail.locator(".modal-body");
+  const shown = header.locator(".task-detail-header-title");
+  const scroll = async (end: boolean) => {
+    await body.evaluate((el, end) => {
+      el.scrollTop = end ? el.scrollHeight : 0;
+    }, end);
+    await expect(shown).toBeVisible({ visible: end });
+  };
+  // Every header control, with the title's own buttons following the title.
+  const layout = () =>
+    header.evaluate((el) =>
+      [
+        ...el.querySelectorAll(
+          ":scope > :not(.modal-heading), :scope > :not(.modal-heading) button",
+        ),
+      ].map((node) => {
+        const box = node.getBoundingClientRect();
+        return [box.x, box.y, box.width, box.height].map(Math.round);
+      }),
+    );
+  const check = async (text: string, name: string) => {
+    // 360px and narrower move the task actions to a second header row.
+    for (const width of [720, 480, 390, 360, 320]) {
+      await page.setViewportSize({ width, height: 844 });
+      await scroll(false);
+      const before = await layout();
+      const height = (await header.boundingBox())!.height;
+      await scroll(true);
+      await expect(shown).toHaveText(text);
+      expect(await layout()).toEqual(before);
+      expect((await header.boundingBox())!.height).toBe(height);
+      const title = (await shown.boundingBox())!;
+      expect(title.height).toBeLessThan(30);
+      let right = title.x + title.width;
+      for (const button of await header
+        .locator(".modal-heading > button:visible")
+        .all()) {
+        const box = (await button.boundingBox())!;
+        expect(box.x).toBeGreaterThanOrEqual(right);
+        right = box.x + box.width;
+      }
+      const next = (await header
+        .locator(":scope > :not(.modal-heading):visible")
+        .first()
+        .boundingBox())!;
+      if (next.y < title.y + title.height)
+        expect(right).toBeLessThanOrEqual(next.x);
+      await expect(
+        detail.getByRole("button", { name: "닫기", exact: true }),
+      ).toBeInViewport();
+      expect(
+        await detail.evaluate((el) => el.scrollWidth - el.clientWidth),
+      ).toBeLessThanOrEqual(1);
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(width);
+      if (width === 390)
+        await page.screenshot({ path: info.outputPath(`${name}-390.png`) });
+    }
+  };
+  await check("모바일에서 읽는 업무", "header-title-mobile");
+
+  const long = `휴대폰에서 스크롤한 뒤에도 확인하는 긴 업무 제목 ${"이어지는 설명 ".repeat(8)}끝`;
+  await page.setViewportSize(mobile);
+  await scroll(false);
+  const input = detail.getByRole("textbox", { name: "작업 편집", exact: true });
+  await Promise.all([
+    page.waitForResponse((r) => r.url().endsWith("/api/cells/batch") && r.ok()),
+    input.fill(long).then(() => input.press("Enter")),
+  ]);
+  await check(long, "header-long-title-mobile");
+  await expect(shown).toHaveAttribute("title", long);
+  expect(await shown.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+    true,
+  );
+});
+
 test("일정 상세의 긴 제목은 앞부터 보이고 옮긴 커서를 따라가며 시작일·종료일 칸은 겹치지 않는다", async ({
   page,
 }, info) => {

@@ -581,6 +581,34 @@ test("사본의 달력·필터도 편집하며 원본 보기 설정은 보존한
   expect(await get(page, `/filters?teamId=${teamId}`)).toEqual(originalFilters);
 });
 
+test("사본 업무 상세도 스크롤로 가려진 제목을 헤더에 보이고 고친 제목을 따른다", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1366, height: 560 });
+  await openSheetClone(page);
+  await page
+    .locator(`[data-cell="${taskIds[0]}:title"]`)
+    .click({ button: "right" });
+  const dialog = page.getByRole("dialog", { name: "업무 상세", exact: true });
+  const shown = dialog.locator(":scope > header .task-detail-header-title");
+  const scroll = async (end: boolean) => {
+    await dialog.locator(".modal-body").evaluate((el, end) => {
+      el.scrollTop = end ? el.scrollHeight : 0;
+    }, end);
+    await expect(shown).toBeVisible({ visible: end });
+  };
+  await scroll(true);
+  await expect(shown).toHaveText("보고 전 첫 업무");
+  await scroll(false);
+  await dialog
+    .getByRole("textbox", { name: "작업 편집", exact: true })
+    .fill("사본에서 고친 제목");
+  await saved(page);
+  await scroll(true);
+  await expect(shown).toHaveText("사본에서 고친 제목");
+  await expect(dialog).toBeVisible();
+});
+
 test("사본 상세 속성은 자동 저장하고 실패 안내·재시도를 팝업 안에 표시한다", async ({
   page,
 }) => {

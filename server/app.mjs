@@ -228,6 +228,7 @@ export function createApp({
   const { calendarDocumentAccess } = installCalendarRoutes(app, {
     documentEvents,
     db,
+    slideFiles: slideFileRepository,
     teamAccess,
     managedTeam,
     taskAccess,

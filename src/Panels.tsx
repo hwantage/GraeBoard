@@ -231,6 +231,35 @@ export const TaskDetailContent = forwardRef<
   );
 });
 
+// Once the title in the body scrolls out of view, the header shows it in place
+// of "업무 상세". Only this span re-renders; the heading still names the dialog.
+function TaskDetailHeaderTitle({ title }: { title: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [shown, setShown] = useState(false);
+  useEffect(() => {
+    const target = ref.current
+      ?.closest("dialog")
+      ?.querySelector(".task-detail-title");
+    if (!target) return;
+    const observer = new IntersectionObserver((entries) =>
+      setShown(!entries.at(-1)!.isIntersecting),
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <span
+      ref={ref}
+      className={`task-detail-header-title${title ? "" : " is-empty"}`}
+      title={title || undefined}
+      aria-hidden="true"
+      hidden={!shown}
+    >
+      {title || "제목 없는 업무"}
+    </span>
+  );
+}
+
 export function RowPanel({
   settings,
   task,
@@ -274,6 +303,7 @@ export function RowPanel({
 }) {
   const editable = !readOnly && canEdit(user, task);
   const newTask = useNewTask(task);
+  const title = String(value(task, "title"));
   const detailRef = useRef<TaskDetailHandle>(null);
   const [preferredFullPage, setDocumentFullPage] = useState(initialFullPage);
   // The full-page button's new tab opens the document shown here.
@@ -331,11 +361,9 @@ export function RowPanel({
       title="업무 상세"
       titleAction={
         <>
+          <TaskDetailHeaderTitle title={title} />
           {newTask && <NewTaskMark labelled />}
-          <CopyDocumentLinkButton
-            target={copyTarget}
-            title={String(value(task, "title"))}
-          />
+          <CopyDocumentLinkButton target={copyTarget} title={title} />
           <DocumentFullPageButton
             fullPage={documentFullPage}
             link={linkTarget}

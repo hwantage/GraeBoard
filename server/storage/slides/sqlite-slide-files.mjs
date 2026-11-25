@@ -313,6 +313,17 @@ export class SqliteSlideFileRepository {
   get(teamId, fileId) {
     return meta(this.#live(this.#open(), teamId, fileId)) || null;
   }
+  // Titles of the team's live files among `fileIds`, for document links.
+  titles(teamId, fileIds) {
+    return new Map(
+      this.#open()
+        .prepare(
+          "SELECT id,title FROM slide_files WHERE team_id=? AND deleted_at IS NULL AND id IN (SELECT value FROM json_each(?))",
+        )
+        .all(teamId, JSON.stringify(fileIds))
+        .map((row) => [row.id, row.title]),
+    );
+  }
   read(teamId, fileId) {
     const file = this.get(teamId, fileId);
     return file
