@@ -16,6 +16,9 @@ import {
 } from "../support/business-storage-fixture.mjs";
 import { CalendarBusinessService } from "../../server/storage/calendar/calendar-service.mjs";
 import { PostgresCalendarRepository } from "../../worker/storage/calendar/postgres-calendar.mjs";
+import { SlideFileService } from "../../server/storage/slides/slide-file-service.mjs";
+import { PostgresSlideFileRepository } from "../../worker/storage/slides/postgres-slide-files.mjs";
+import { migrateSlideSchema } from "../../server/migrations/postgres-slides.mjs";
 
 const saveRequest = (markdown, expectedRevision) => ({
   markdown,
@@ -184,7 +187,39 @@ async function documentContract({ f, service, counts, failOnce }) {
 
 // Link titles follow the document routes on both engines: what the user can
 // read, current titles, nothing for deleted, missing or other teams' targets.
-async function linkContract({ f, service, links, outsiderLinks }) {
+// The team's slide files through the service both sites' routes use; the
+// slide store is apart from the task data.
+function slideFiles(repository, f) {
+  const files = new SlideFileService(repository, f.user, {
+    teamAccess: async () => {},
+  });
+  return {
+    create: async (title) =>
+      (
+        await files.create(f.teamId, {
+          title,
+          bytes: new TextEncoder().encode(JSON.stringify({ name: title })),
+          requestId: randomUUID(),
+        })
+      ).id,
+    rename: (id, title) => files.rename(f.teamId, id, title),
+    remove: (id) => files.remove(f.teamId, id),
+  };
+}
+// R2 for the external slide store: objects by key.
+function memoryBucket() {
+  const objects = new Map();
+  return {
+    put: async (key, bytes) => void objects.set(key, Uint8Array.from(bytes)),
+    head: async (key) => (objects.has(key) ? { key } : null),
+    get: async (key) =>
+      objects.has(key) && {
+        arrayBuffer: async () => objects.get(key).buffer,
+      },
+    delete: async (key) => void objects.delete(key),
+  };
+}
+async function linkContract({ f, service, links, outsiderLinks, slides }) {
   const memo = randomUUID(),
     copyMemo = randomUUID(),
     missing = randomUUID();
@@ -196,12 +231,16 @@ async function linkContract({ f, service, links, outsiderLinks }) {
     { kind: "sheetCloneMemo", sheetCloneId: f.sheetCloneId },
     { id: copyMemo, title: "Linked copy memo" },
   );
+  const slide = await slides.create("Linked slide"),
+    deletedSlide = await slides.create("Deleted slide");
   const paths = {
     task: `/links/task/${f.taskId}`,
     calendar: `/links/calendar/${f.entryId}`,
     memo: `/links/memo/${f.teamId}/2026/${memo}`,
     sheetCloneTask: `/links/sheet-clone-task/${f.sheetCloneId}/${f.taskId}`,
     sheetCloneMemo: `/links/sheet-clone-memo/${f.sheetCloneId}/${copyMemo}`,
+    slide: `/links/slide/${f.teamId}/${slide}`,
+    deletedSlide: `/links/slide/${f.teamId}/${deletedSlide}`,
   };
   const absent = [
     `/links/memo/${f.teamId}/2025/${memo}`,
@@ -209,6 +248,9 @@ async function linkContract({ f, service, links, outsiderLinks }) {
     `/links/sheet-clone-task/${f.sheetCloneId}/${missing}`,
     `/links/sheet-clone-task/${missing}/${f.taskId}`,
     `/links/sheet-clone-memo/${f.sheetCloneId}/${missing}`,
+    `/links/slide/${f.teamId}/${missing}`,
+    // Another team's file, which this user cannot open.
+    `/links/slide/${missing}/${slide}`,
   ];
   const titles = async (read, list) =>
     Object.fromEntries(
@@ -223,6 +265,8 @@ async function linkContract({ f, service, links, outsiderLinks }) {
     [paths.memo]: "Linked memo",
     [paths.sheetCloneTask]: "initial",
     [paths.sheetCloneMemo]: "Linked copy memo",
+    [paths.slide]: "Linked slide",
+    [paths.deletedSlide]: "Deleted slide",
   });
   assert.deepEqual(await titles(outsiderLinks, Object.values(paths)), {});
   await service.rename(
@@ -244,6 +288,11 @@ async function linkContract({ f, service, links, outsiderLinks }) {
   );
   assert.deepEqual(await titles(links, [paths.memo, paths.sheetCloneMemo]), {
     [paths.memo]: "Renamed memo",
+  });
+  await slides.rename(slide, "Renamed slide");
+  await slides.remove(deletedSlide);
+  assert.deepEqual(await titles(links, [paths.slide, paths.deletedSlide]), {
+    [paths.slide]: "Renamed slide",
   });
 }
 async function retentionContract({ f, service, counts, exclude }) {
@@ -378,6 +427,7 @@ test("M6 shared document contract on SQLite retains synchronous commands, all do
       new CalendarBusinessService(calendar, outsiderUser).resolveLinks({
         query: { links: paths.join(",") },
       }),
+    slides: slideFiles(f.app.locals.slideFileRepository, f),
   });
   const outsider = new DocumentBusinessService(repository, outsiderUser);
   await rejected(
@@ -472,6 +522,16 @@ test("M6 identical document contract uses PostgreSQL and external HTTP task-id r
       new PostgresCalendarRepository({ context: f.makeContext(user) }),
       user,
     ).resolveLinks({ query: { links: paths.join(",") } });
+  // Until its own migration creates the slide store, slide links have no
+  // title and the other links still do.
+  const unstored = `/links/slide/${f.teamId}/${randomUUID()}`;
+  assert.deepEqual(
+    (await resolver(f.user)([unstored, `/links/task/${f.taskId}`])).links.map(
+      (link) => link.path,
+    ),
+    [`/links/task/${f.taskId}`],
+  );
+  await migrateSlideSchema(f.pool);
   await linkContract({
     f,
     service,
@@ -483,6 +543,14 @@ test("M6 identical document contract uses PostgreSQL and external HTTP task-id r
       teamIds: [],
       teamRoles: {},
     }),
+    slides: slideFiles(
+      new PostgresSlideFileRepository({
+        pool: f.pool,
+        bucket: memoryBucket(),
+        teamId: f.teamId,
+      }),
+      f,
+    ),
   });
   const target = { kind: "task", taskId: f.taskId, documentId: "main" };
   const before = await service.read(target);

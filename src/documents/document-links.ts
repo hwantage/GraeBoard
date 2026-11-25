@@ -8,9 +8,9 @@ import {
 } from "../../shared/documents/document-links.js";
 
 // Links between documents point at a task detail, a calendar entry, a tail
-// memo or a copy's task detail or memo. The Markdown stores the app path
-// (shared/documents/document-links.js); the clipboard carries this site's absolute
-// address of the same path.
+// memo, a copy's task detail or memo, or a team slide file. The Markdown
+// stores the app path (shared/documents/document-links.js); the clipboard
+// carries this site's absolute address of the same path.
 export type DocumentLinkTarget =
   // documentId: the task's document to show, when the link names one.
   | { kind: "task"; id: string; documentId?: string }
@@ -22,7 +22,8 @@ export type DocumentLinkTarget =
       id: string;
       documentId?: string;
     }
-  | { kind: "sheet-clone-memo"; sheetCloneId: string; id: string };
+  | { kind: "sheet-clone-memo"; sheetCloneId: string; id: string }
+  | { kind: "slide"; teamId: string; id: string };
 export type DocumentLinkTitle =
   | { status: "loading" }
   | { status: "ready"; title: string }
@@ -62,14 +63,34 @@ export const documentLinkDocument = (search: string) =>
 export const UNAVAILABLE_LINK_MESSAGE =
   "링크한 문서를 열 수 없습니다. 삭제되었거나 접근 권한이 없습니다.";
 
+// The slides screen's address of a file of the current team
+// (SlidesWorkspace).
+export const slideFileAddress = (fileId: string) =>
+  `/slides?${new URLSearchParams({ file: fileId })}`;
+
 // The stored path, or this site's absolute address of it. Other origins
-// stay ordinary web links.
-export function documentLinkTarget(href: string): DocumentLinkTarget | null {
+// stay ordinary web links. Given the current team, the slides screen's own
+// address `/slides?file=<id>` is also a link: that screen opens it as a file
+// of the current team, and so does the link. Its temporary share address
+// (`?team=…&share=…`) is not, since the snapshot expires and stays on this
+// site.
+export function documentLinkTarget(
+  href: string,
+  teamId?: string,
+): DocumentLinkTarget | null {
   if (href.startsWith("/")) return parseDocumentLinkPath(href);
   try {
     const url = new URL(href);
-    return url.origin === location.origin && !url.search && !url.hash
-      ? parseDocumentLinkPath(url.pathname)
+    if (url.origin !== location.origin || url.hash) return null;
+    if (!url.search) return parseDocumentLinkPath(url.pathname);
+    const file = url.searchParams.get("file");
+    return teamId &&
+      url.pathname === "/slides" &&
+      file &&
+      [...url.searchParams.keys()].length === 1
+      ? parseDocumentLinkPath(
+          documentLinkPath({ kind: "slide", teamId, id: file }),
+        )
       : null;
   } catch {
     return null;
@@ -256,13 +277,15 @@ export function refreshDocumentLinkTitles() {
 
 // Opening a link is provided by the workspace, which knows the screens and
 // the detail windows already open. `close` leaves a detail window through its
-// own save path and says whether it closed.
+// own save path and says whether it closed. `teamId` is the current team,
+// which reads a pasted slides screen address.
 export type DocumentLinkNavigation = {
   accepts: (target: DocumentLinkTarget) => boolean;
   select: (target: DocumentLinkTarget) => Promise<boolean>;
 };
 export type DocumentLinkOpener = {
   open: (target: DocumentLinkTarget) => Promise<void>;
+  teamId: () => string;
   register: (
     target: DocumentLinkTarget,
     close: () => Promise<boolean>,
