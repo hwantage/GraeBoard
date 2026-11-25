@@ -45,6 +45,8 @@
 
 검증(Node.js 22.23.1): `tests/browser/slides/slide-team-files.spec.ts`에 검사 9건을 추가했습니다. 다른 화면·편집기·다른 팀에 다녀온 뒤 요청 0건, 조회 중 목록 갱신에 재요청 없음, 동시에 4건(응답을 붙잡아 확인), 조회 중 떠났다 돌아와도 자리가 남음, 생성 중에도 다른 카드 조회·생성은 하나씩, 바뀐 자료의 새 이미지, 같은 내용 한 건, 가져온 자료는 원본을 내려받지 않음, 로그아웃한 페이지의 다른 계정은 서버에서 다시 받음입니다. 수정 전 빌드(Chromium)에서는 당시 있던 7건 중 6건이 실패했고(요청 3건·2건, 동시 1건, 둘째 카드가 조회하지 못해 시간 초과 등) 계정 검사만 통과했습니다. 나중에 더한 두 건(같은 내용, 가져오기)은 수정 전 빌드에서 실행하지 않았습니다. 같은 내용 차례 처리와 계정 범위를 각각 뺀 빌드에서는 해당 검사가 실패했습니다(요청 3건, 다른 계정이 서버에 묻지 않음). 수정 후 `npm run build` 통과, `npx playwright test tests/browser/slides --project=chromium` 35건 통과(기존 26건 포함), 새 검사 9건은 Firefox·WebKit에서 18건 통과했습니다. `npm run check:structure`(804개 파일, 오류 0), `npm run check:architecture`(482개 모듈, 위반 0), 바뀐 소스·검사의 `prettier --check`, `git diff --check`도 통과했습니다. `npm test`, `npm run build:edge`, 전체 브라우저 검사는 이 기록 시점에 실행하지 않았습니다.
 
+전체 검증(2026-11-26, 커밋 `4f3eaf0`): `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 962건 통과(실패·취소·skip 0), `npm run check:structure`·`check:architecture`·`npm run build`·`npm run build:edge` 통과. `tests/browser/slides`·`workspace-navigation` 브라우저 검사를 Chromium·Firefox·WebKit에서 실행해 123건 통과.
+
 ## 2026-11-24 — 사내에서 정한 아바타를 외부(팀) 사이트에 그대로 표시
 
 외부 사이트에서 모든 구성원이 기본 초록색·이름 첫 글자로 보이던 원인은 저장 실패가 아니었습니다. 로컬 외부 경로(Pages 진입점 → gateway → Edge 핸들러 → PostgreSQL 17)에서 외부 `PATCH /auth/profile`은 200으로 저장·유지됐습니다. 구성원 동기화가 이름·이메일·역할·활성 상태만 보내 사내 색·글자·이미지가 외부로 전혀 전달되지 않는 것이 원인입니다. 실제 배포 환경(Supabase Edge·Cloudflare)의 외부 저장은 확인하지 않았습니다.
