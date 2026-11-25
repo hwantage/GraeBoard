@@ -206,13 +206,40 @@ export class GitCliTransport {
       .toString()
       .trim();
     if (!refs) return null;
-    await this.git([
-      "fetch",
-      "--no-tags",
-      "origin",
-      `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
-    ]);
-    return refs.split(/\s/)[0];
+    const head = refs.split(/\s/)[0];
+    // The fetch is a second connection, made only when the branch is not
+    // where this clone's copy of it is: for the same head it transfers
+    // nothing and moves no ref. The copy is compared instead of asking
+    // whether the clone holds the commit, because a commit this site pushed
+    // is here before any ref of the clone keeps it; the fetch after a push
+    // is what protects it from pruning.
+    if ((await this.fetchedHead(branch)) !== head)
+      await this.git([
+        "fetch",
+        "--no-tags",
+        "origin",
+        `+refs/heads/${branch}:refs/remotes/origin/${branch}`,
+      ]);
+    return head;
+  }
+  // The commit this clone's copy of the branch is at, or null when it has no
+  // copy yet or the copy names a commit the clone does not hold.
+  async fetchedHead(branch) {
+    try {
+      return (
+        await this.git([
+          "rev-parse",
+          "--verify",
+          "--quiet",
+          `refs/remotes/origin/${branch}^{commit}`,
+        ])
+      )
+        .toString()
+        .trim();
+    } catch (error) {
+      if (error.code === 1) return null;
+      throw error;
+    }
   }
   async readCommit(oid) {
     await this.init();

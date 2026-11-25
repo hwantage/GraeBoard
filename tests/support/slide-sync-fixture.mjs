@@ -174,6 +174,55 @@ export function slideSyncContract(name, makeStores) {
     }
   });
 
+  test(`${name}: 동기화 상태는 한 번만 만들고, 조각 목록 없이 읽은 자료는 그 밖의 값이 전체 목록과 같다`, async (t) => {
+    const peers = await twoPeers(t, makeStores);
+    if (!peers) return;
+    const { inside, outside, teamId } = peers;
+    for (const { store } of [inside, outside]) {
+      const created = await store.syncState(teamId);
+      assert.equal(created.head, null);
+      assert.match(created.epoch, /^[0-9a-f-]{36}$/);
+      assert.deepEqual(await store.syncState(teamId), created);
+    }
+
+    // Every kind of row: shared, shared and deleted, known only from the
+    // branch (deleted there before it arrived here) and not shared yet.
+    await inside.create("남는 자료", slide("남는 자료"));
+    const removed = await inside.create("지울 자료", slide("지울 자료"));
+    await settle(inside, outside);
+    await outside.remove(removed.id);
+    const early = await inside.create("받기 전에 지울 자료", slide("일찍"));
+    await inside.sync();
+    await inside.remove(early.id);
+    await settle(inside, outside);
+    await outside.create("게시 전 자료", slide("게시 전"));
+    const byId = (files) => files.sort((a, b) => (a.id < b.id ? -1 : 1));
+    for (const { store } of [inside, outside]) {
+      const whole = byId(await store.syncFiles(teamId));
+      assert.deepEqual(
+        byId(await store.syncFiles(teamId, { chunks: false })),
+        whole.map((file) => {
+          if (!file.shared) return file;
+          const { chunks, ...shared } = file.shared;
+          assert.equal(chunks.length, 1);
+          return { ...file, shared };
+        }),
+      );
+    }
+    const kinds = (await outside.store.syncFiles(teamId, { chunks: false }))
+      .map((file) =>
+        file.missing
+          ? "missing"
+          : !file.shared
+            ? "unshared"
+            : file.deletedAt
+              ? "deleted"
+              : "shared",
+      )
+      .sort();
+    assert.deepEqual(kinds, ["deleted", "missing", "shared", "unshared"]);
+  });
+
   test(`${name}: 25MiB 자료는 4MiB 조각으로 나뉘어 중단 뒤 이어서 전달되고, 다 받기 전에는 보이지 않는다`, async (t) => {
     const peers = await twoPeers(t, makeStores);
     if (!peers) return;
