@@ -1,21 +1,19 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   chmodSync,
-  closeSync,
   existsSync,
-  fsyncSync,
   mkdirSync,
-  openSync,
   readFileSync,
-  renameSync,
   rmSync,
-  writeFileSync,
-  writeSync,
 } from "node:fs";
+import { mkdir, open, readFile, rename, rm } from "node:fs/promises";
 import { DatabaseSync } from "node:sqlite";
-import { join, resolve } from "node:path";
-import { SLIDE_FILE_EXTENSION } from "../../../shared/slides/slide-file-rules.js";
-import { requireThat } from "../../../shared/validation.js";
+import { dirname, join, resolve } from "node:path";
+import {
+  SLIDE_FILE_EXTENSION,
+  slideContentHash,
+} from "../../../shared/slides/slide-file-rules.js";
+import { HttpError, requireThat } from "../../../shared/validation.js";
 
 export const SLIDE_STORE_VERSION = 2;
 export const SLIDE_STORE_FILE = "slide-files.sqlite";
@@ -231,10 +229,23 @@ const replay = (file, revision, contentHash) => {
 // Slide files of the internal Node site: metadata in the slide store database
 // and immutable bytes at blobs/<team>/<SHA-256>.canvaslide. The database opens
 // on first use, so a server that never touches slides creates nothing.
+//
+// The site is one process. Reading, writing and hashing a file's bytes are
+// asynchronous, so other requests are answered while a 25MiB file is handled;
+// rows change only in synchronous transactions. Whatever a transaction relies
+// on is therefore checked in the same synchronous step as the transaction,
+// never before an `await`.
 export class SqliteSlideFileRepository {
   #db = null;
-  constructor({ directory = slideFilesDirectory() } = {}) {
+  #teamExists;
+  // `teamExists` asks the task database, which no foreign key links to this
+  // store, whether a team is still there.
+  constructor({
+    directory = slideFilesDirectory(),
+    teamExists = () => true,
+  } = {}) {
     this.directory = directory;
+    this.#teamExists = teamExists;
     // An existing store is checked at startup instead of on a first request.
     if (existsSync(join(directory, SLIDE_STORE_FILE))) this.#open();
   }
@@ -264,34 +275,68 @@ export class SqliteSlideFileRepository {
       )
       .get(fileId, teamId);
   }
-  // Bytes are complete on disk before any row refers to them.
-  #writeBlob(teamId, contentHash, bytes) {
-    const path = slideBlobPath(this.directory, teamId, contentHash);
-    if (existsSync(path)) return;
-    mkdirSync(join(this.directory, "blobs", teamId), {
-      recursive: true,
-      mode: 0o700,
-    });
-    mkdirSync(join(this.directory, "tmp"), { recursive: true, mode: 0o700 });
+  // Writes a whole file under a temporary name and moves it into place, so a
+  // crash or a failed write never leaves a partial file at `path`.
+  async #place(path, bytes, { durable }) {
+    await mkdir(join(this.directory, "tmp"), { recursive: true, mode: 0o700 });
     const temporary = join(this.directory, "tmp", randomUUID());
-    const handle = openSync(temporary, "wx", 0o600);
     try {
-      writeSync(handle, bytes);
-      fsyncSync(handle);
-    } finally {
-      closeSync(handle);
+      const handle = await open(temporary, "wx", 0o600);
+      try {
+        await handle.writeFile(bytes);
+        if (durable) await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+      await rename(temporary, path);
+    } catch (error) {
+      // For example the team's folder was removed between the two steps
+      // above: the bytes of a failed write do not stay behind.
+      await rm(temporary, { force: true });
+      throw error;
     }
-    renameSync(temporary, path);
   }
-  #readBlob(teamId, contentHash) {
-    const bytes = readFileSync(
+  // Runs `work` in a transaction once `bytes` (when given) are complete and
+  // synced at their content address, so no row ever refers to bytes that are
+  // not on disk. Other requests run while the bytes are written, and two of
+  // them can take the file away again: a save that prunes the same content
+  // (#prune) and the permanent deletion of the team. Both are synchronous, so
+  // checking here, with nothing awaited from the check to the commit, decides
+  // which came first: the bytes are written again, or nothing of a deleted
+  // team is put back.
+  async #stored(teamId, contentHash, bytes, work) {
+    const path = bytes && slideBlobPath(this.directory, teamId, contentHash);
+    for (;;) {
+      if (!this.#teamExists(teamId)) {
+        // The file this write placed after the team's folder was removed.
+        this.removeTeam(teamId);
+        throw new HttpError(404, "팀을 찾을 수 없습니다.");
+      }
+      if (!bytes || existsSync(path)) return this.#transaction(work);
+      try {
+        await this.#place(path, bytes, { durable: true });
+      } catch (error) {
+        // Deleting the team removes its folder, which can fail a write that
+        // was about to move its file in. The check above then answers for
+        // the deleted team; any other failure is reported as it is.
+        if (this.#teamExists(teamId)) throw error;
+      }
+    }
+  }
+  async #readBlob(teamId, contentHash) {
+    const bytes = await readFile(
       slideBlobPath(this.directory, teamId, contentHash),
     );
-    if (createHash("sha256").update(bytes).digest("hex") !== contentHash)
+    if ((await slideContentHash(bytes)) !== contentHash)
       throw new Error("슬라이드 자료 파일의 해시가 기록과 다릅니다.");
     return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   }
-  // Removes bytes no kept revision of any file of the team refers to.
+  // Removes bytes no kept revision of any file of the team refers to. The
+  // check and the removal stay one synchronous step: a save that is writing
+  // the same content either committed before this check, which then keeps the
+  // file, or finds the file gone in #stored and writes it again. Removing a
+  // file does not read its bytes.
   #prune(db, teamId, hashes) {
     for (const hash of new Set(hashes)) {
       const kept = db
@@ -326,33 +371,52 @@ export class SqliteSlideFileRepository {
         .map((row) => [row.id, row.title]),
     );
   }
-  read(teamId, fileId) {
+  // The file and the bytes of the revision it was at when the read began: a
+  // save that commits meanwhile changes neither.
+  async read(teamId, fileId) {
     const file = this.get(teamId, fileId);
     return file
-      ? { file, bytes: this.#readBlob(teamId, file.contentHash) }
+      ? { file, bytes: await this.#readBlob(teamId, file.contentHash) }
       : null;
   }
-  create({ id, teamId, title, bytes, contentHash, requestId, userId, at }) {
-    const db = this.#open();
-    // Also a file deleted since: the first answer is replayed, and the next
-    // save of that session is refused instead of touching newer content.
+  // Also a file deleted since: the first answer is replayed, and the next
+  // save of that session is refused instead of touching newer content.
+  #created(db, teamId, requestId, contentHash) {
     const earlier = db
       .prepare(
         "SELECT * FROM slide_files WHERE team_id=? AND create_request_id=?",
       )
       .get(teamId, requestId);
-    if (earlier)
-      return replay(
-        earlier,
-        db
-          .prepare(
-            "SELECT * FROM slide_file_revisions WHERE file_id=? AND revision=1",
-          )
-          .get(earlier.id),
-        contentHash,
-      );
-    this.#writeBlob(teamId, contentHash, bytes);
-    return this.#transaction((db) => {
+    return earlier
+      ? replay(
+          earlier,
+          db
+            .prepare(
+              "SELECT * FROM slide_file_revisions WHERE file_id=? AND revision=1",
+            )
+            .get(earlier.id),
+          contentHash,
+        )
+      : null;
+  }
+  async create({
+    id,
+    teamId,
+    title,
+    bytes,
+    contentHash,
+    requestId,
+    userId,
+    at,
+  }) {
+    // A repeated request is answered before its bytes are written again.
+    const earlier = this.#created(this.#open(), teamId, requestId, contentHash);
+    if (earlier) return earlier;
+    return this.#stored(teamId, contentHash, bytes, (db) => {
+      // Two attempts of one request can both pass the first check while
+      // their bytes are being written.
+      const raced = this.#created(db, teamId, requestId, contentHash);
+      if (raced) return raced;
       db.prepare(
         `INSERT INTO slide_files
          (id,team_id,title,revision,byte_length,content_hash,created_by,created_at,updated_by,updated_at,create_request_id)
@@ -380,7 +444,10 @@ export class SqliteSlideFileRepository {
       return meta(this.#live(db, teamId, id));
     });
   }
-  replace({
+  // The file can be saved, renamed, deleted or changed by synchronization
+  // while the bytes are being written, so everything the save depends on is
+  // read inside the transaction.
+  async replace({
     teamId,
     fileId,
     baseRevision,
@@ -392,10 +459,10 @@ export class SqliteSlideFileRepository {
     userId,
     at,
   }) {
+    // No bytes are written for a file that is already gone.
     if (!this.get(teamId, fileId)) return null;
-    this.#writeBlob(teamId, contentHash, bytes);
     let expired = [];
-    const result = this.#transaction((db) => {
+    const result = await this.#stored(teamId, contentHash, bytes, (db) => {
       const file = this.#live(db, teamId, fileId);
       if (!file) return null;
       const earlier = db
@@ -431,8 +498,7 @@ export class SqliteSlideFileRepository {
         .map((row) => row.content_hash);
       return { saved: true, file: meta(this.#live(db, teamId, fileId)) };
     });
-    // After the commit: a save that did not commit removes nothing. These
-    // calls are synchronous, so no other save runs between check and removal.
+    // After the commit: a save that did not commit removes nothing.
     this.#prune(this.#open(), teamId, expired);
     return result;
   }
@@ -546,6 +612,8 @@ export class SqliteSlideFileRepository {
       .all(teamId, teamId)
       .map(syncFile);
   }
+  // Rejects when the content is no longer kept: the file was saved more often
+  // than revisions are kept since the caller listed it.
   syncReadContent(teamId, contentHash) {
     return this.#readBlob(teamId, contentHash);
   }
@@ -617,8 +685,7 @@ export class SqliteSlideFileRepository {
   // False (nothing applied) when the file no longer looks like `expect`: it
   // was saved, renamed or deleted here after the decision was made.
   syncApply(teamId, { meta, metaOid, bytes, take, copy, expect }) {
-    if (bytes) this.#writeBlob(teamId, meta.contentHash, bytes);
-    return this.#transaction((db) => {
+    return this.#stored(teamId, meta.contentHash, bytes, (db) => {
       const file = db
         .prepare("SELECT * FROM slide_files WHERE id=? AND team_id=?")
         .get(meta.id, teamId);
@@ -745,27 +812,32 @@ export class SqliteSlideFileRepository {
   #stagePath(teamId, hash) {
     return join(this.directory, "staging", teamId, hash);
   }
-  syncStage(teamId, hash, bytes) {
-    mkdirSync(join(this.directory, "staging", teamId), {
-      recursive: true,
-      mode: 0o700,
+  // A staged chunk is verified when it is read, so it is not synced to disk.
+  async syncStage(teamId, hash, bytes) {
+    await this.#place(this.#stagePath(teamId, hash), bytes, {
+      durable: false,
     });
-    mkdirSync(join(this.directory, "tmp"), { recursive: true, mode: 0o700 });
-    const temporary = join(this.directory, "tmp", randomUUID());
-    writeFileSync(temporary, bytes, { mode: 0o600 });
-    renameSync(temporary, this.#stagePath(teamId, hash));
+    // A team permanently deleted while the chunk was written had its folder
+    // removed first and put back by this write. Everything of the team goes
+    // again, as in #stored: the pass that staged the chunk may have put rows
+    // back as well.
+    if (!this.#teamExists(teamId)) this.removeTeam(teamId);
   }
-  syncStaged(teamId, hash) {
-    const path = this.#stagePath(teamId, hash);
-    if (!existsSync(path)) return null;
-    const bytes = readFileSync(path);
+  async syncStaged(teamId, hash) {
+    let bytes;
+    try {
+      bytes = await readFile(this.#stagePath(teamId, hash));
+    } catch (error) {
+      if (error.code === "ENOENT") return null;
+      throw error;
+    }
     // A damaged staged chunk is fetched again.
-    if (createHash("sha256").update(bytes).digest("hex") !== hash) return null;
+    if ((await slideContentHash(bytes)) !== hash) return null;
     return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   }
-  syncUnstage(teamId, hashes) {
+  async syncUnstage(teamId, hashes) {
     for (const hash of hashes)
-      rmSync(this.#stagePath(teamId, hash), { force: true });
+      await rm(this.#stagePath(teamId, hash), { force: true });
   }
 
   createShare({ id, teamId, body, userId, createdAt, expiresAt }) {

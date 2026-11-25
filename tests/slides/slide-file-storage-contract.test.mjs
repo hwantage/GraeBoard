@@ -313,7 +313,7 @@ test("팀 자료는 받은 바이트 그대로 저장되고 서버를 다시 열
     repository.close();
     db.close();
   });
-  const stored = repository.read(first.teamId, created.body.id);
+  const stored = await repository.read(first.teamId, created.body.id);
   assert.equal(stored.file.revision, 2);
   assert.equal(Buffer.from(stored.bytes).equals(edited), true);
   assert.deepEqual(
@@ -608,7 +608,7 @@ test("파일 한도 25MiB는 경계까지 저장하고 넘으면 거절한다", 
   );
 });
 
-test("바이트는 현재와 직전 10개 revision만 남기고 다른 자료가 쓰는 내용은 지우지 않는다", (t) => {
+test("바이트는 현재와 직전 10개 revision만 남기고 다른 자료가 쓰는 내용은 지우지 않는다", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "slides-"));
   const repository = new SqliteSlideFileRepository({ directory });
   t.after(() => {
@@ -626,10 +626,10 @@ test("바이트는 현재와 직전 10개 revision만 남기고 다른 자료가
     ...extra,
   });
   const first = slide("r1");
-  const file = repository.create(
+  const file = await repository.create(
     put(first, { id: randomUUID(), title: "자료" }),
   );
-  const shared = repository.create(
+  const shared = await repository.create(
     put(first, { id: randomUUID(), title: "같은 내용" }),
   );
   const hashes = [sha(first)];
@@ -637,8 +637,10 @@ test("바이트는 현재와 직전 10개 revision만 남기고 다른 자료가
     const bytes = slide(`r${revision + 1}`);
     hashes.push(sha(bytes));
     assert.equal(
-      repository.replace(
-        put(bytes, { fileId: file.id, baseRevision: revision }),
+      (
+        await repository.replace(
+          put(bytes, { fileId: file.id, baseRevision: revision }),
+        )
       ).saved,
       true,
     );
@@ -652,7 +654,7 @@ test("바이트는 현재와 직전 10개 revision만 남기고 다른 자료가
     ...Array(SLIDE_KEPT_REVISIONS + 1).fill(true),
   ]);
   assert.equal(
-    Buffer.from(repository.read(teamId, shared.id).bytes).equals(first),
+    Buffer.from((await repository.read(teamId, shared.id)).bytes).equals(first),
     true,
   );
   assert.equal(
@@ -662,7 +664,7 @@ test("바이트는 현재와 직전 10개 revision만 남기고 다른 자료가
 
   // A damaged file is reported, never returned as the team original.
   writeFileSync(slideBlobPath(directory, teamId, hashes.at(-1)), "{}");
-  assert.throws(() => repository.read(teamId, file.id), /해시/);
+  await assert.rejects(repository.read(teamId, file.id), /해시/);
 
   repository.removeTeam(teamId);
   assert.deepEqual(repository.list(teamId), []);
