@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import {
+import fs, {
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -10,8 +10,9 @@ import {
   writeFileSync,
 } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { openDatabase } from "../../server/db.mjs";
 import { backupDatabase } from "../../scripts/transfer/backup.mjs";
 import { restoreDatabase } from "../../scripts/transfer/restore.mjs";
@@ -84,6 +85,41 @@ const options = (state, name = "restored") => ({
   documentImagesDir: join(state.directory, `${name}-images`),
   slideFilesDir: join(state.directory, `${name}-slides`),
 });
+// Counts every read of a slide file's bytes by the tools, whichever fs call
+// makes it. A copy reads its source, and the copy is the same slide file, so
+// reads are counted per file name. `whole` counts the reads that bring a
+// complete file into memory.
+function countSlideReads(t) {
+  const counted = { reads: new Map(), whole: 0 };
+  const originals = {};
+  let nested = false;
+  const wrap = (name, record) => {
+    originals[name] = fs[name];
+    fs[name] = (...args) => {
+      // readFileSync opens its file through fs.openSync: one read, not two.
+      if (nested) return originals[name](...args);
+      if (String(args[0]).endsWith(".canvaslide") && record(args)) {
+        const file = basename(args[0]);
+        counted.reads.set(file, (counted.reads.get(file) || 0) + 1);
+      }
+      nested = true;
+      try {
+        return originals[name](...args);
+      } finally {
+        nested = false;
+      }
+    };
+  };
+  wrap("openSync", ([, flags = "r"]) => flags === "r");
+  wrap("copyFileSync", () => true);
+  wrap("readFileSync", () => ++counted.whole);
+  syncBuiltinESMExports();
+  t.after(() => {
+    Object.assign(fs, originals);
+    syncBuiltinESMExports();
+  });
+  return counted;
+}
 
 test("백업은 슬라이드 저장소와 참조하는 파일만 함께 묶고 새 경로로 복원한다", (t) => {
   const state = fixture(t);
@@ -258,4 +294,53 @@ test("현재 revision의 파일이 없으면 백업을 만들지 않는다", (t)
   assert.equal(existsSync(backup), false);
   assert.equal(existsSync(backup + ".slides"), false);
   assert.equal(existsSync(backup + ".slides.partial"), false);
+});
+
+test("현재 revision의 파일 내용이 해시와 다르면 백업을 만들지 않는다", (t) => {
+  const state = fixture(t);
+  writeFileSync(
+    slideBlobPath(state.slideFilesDir, state.teamId, sha(state.current)),
+    "{}",
+  );
+  const backup = join(state.directory, "backup.sqlite");
+  assert.throws(
+    () =>
+      backupDatabase(state.source, backup, {
+        documentImagesDir: join(state.directory, "images"),
+        slideFilesDir: state.slideFilesDir,
+      }),
+    /슬라이드 자료 파일의 해시가 기록과 다릅니다/,
+  );
+  assert.equal(existsSync(backup), false);
+  assert.equal(existsSync(backup + ".slides"), false);
+  assert.equal(existsSync(backup + ".slides.partial"), false);
+});
+
+test("백업은 슬라이드 파일을 한 번, 복원은 두 번만 읽고 통째로 올리지 않는다", (t) => {
+  const state = fixture(t);
+  const each = (times) =>
+    [state.first, state.current, slide("삭제한 자료")]
+      .map((bytes) => [`${sha(bytes)}.canvaslide`, times])
+      .sort();
+  const counted = countSlideReads(t);
+  const backup = join(state.directory, "backup.sqlite");
+  backupDatabase(state.source, backup, {
+    documentImagesDir: join(state.directory, "images"),
+    slideFilesDir: state.slideFilesDir,
+  });
+  // The one read that copies a file also hashes it.
+  assert.deepEqual([...counted.reads].sort(), each(1));
+
+  counted.reads.clear();
+  const target = options(state);
+  restoreDatabase(backup, join(state.directory, "restored.sqlite"), target);
+  // One read checks the whole backup before anything is written; the second
+  // copies the file and hashes what it copies.
+  assert.deepEqual([...counted.reads].sort(), each(2));
+  assert.equal(counted.whole, 0);
+  assert.deepEqual(
+    files(target.slideFilesDir),
+    files(backup + ".slides"),
+    "the same files were restored",
+  );
 });
