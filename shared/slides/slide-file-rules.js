@@ -74,3 +74,14 @@ export function slideFileProblem(bytes) {
     return "CanvaSlide 자료 형식이 아닙니다.";
   return "";
 }
+
+// The name stored bytes are kept and verified under: their SHA-256 in
+// lowercase hex. WebCrypto hashes away from the calling thread on Node, so
+// hashing a 25MiB file does not hold up the other requests of the internal
+// site's single process.
+export async function slideContentHash(bytes) {
+  return Array.from(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+}

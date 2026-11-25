@@ -73,6 +73,8 @@ export function createApp({
   installRetentionContext(app);
   const slideFileRepository = new SqliteSlideFileRepository({
     directory: slideFilesDir,
+    teamExists: (teamId) =>
+      !!db.prepare("SELECT 1 FROM teams WHERE id=?").get(teamId),
   });
   const cachedTasks = createTaskCache(db);
   const cellEvents = createCellEvents(db, cellEventOptions);
