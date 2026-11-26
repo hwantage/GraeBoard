@@ -10,10 +10,14 @@ import {
   SLIDE_KEPT_REVISIONS,
   SqliteSlideFileRepository,
   slideBlobPath,
+  slideThumbnailPath,
 } from "../../server/storage/slides/sqlite-slide-files.mjs";
 import { SlideFileService } from "../../server/storage/slides/slide-file-service.mjs";
 import { syncSlideFiles } from "../../server/sync/core/slide-file-branch.mjs";
-import { MAX_SLIDE_FILE_BYTES } from "../../shared/slides/slide-file-rules.js";
+import {
+  MAX_SLIDE_FILE_BYTES,
+  SLIDE_THUMBNAIL_VERSION,
+} from "../../shared/slides/slide-file-rules.js";
 import { sha, slide } from "../support/slide-sync-fixture.mjs";
 
 // The internal site is one process: while it handles the bytes of a slide
@@ -419,12 +423,13 @@ test("바이트를 쓰는 동안 팀이 영구 삭제되면 그 팀의 자료와
 });
 
 // Runs `during` at the one moment no timing can reach from outside: the bytes
-// are written and their folder exists, and the file is about to be moved in.
+// are written and their folder exists, and the file is about to be moved to
+// `to`. The move waits for it, so it can be as long as a whole save.
 function beforeMove(t, during) {
   const rename = fsPromises.rename;
-  fsPromises.rename = (...paths) => {
-    during();
-    return rename(...paths);
+  fsPromises.rename = async (from, to) => {
+    await during(to);
+    return rename(from, to);
   };
   syncBuiltinESMExports();
   t.after(() => {
@@ -476,4 +481,151 @@ test("조각을 받아 두는 동안 팀이 영구 삭제되면 그 조각을 �
   assert.equal(existsSync(join(directory, "staging", teamId)), false);
   assert.deepEqual(readdirSync(join(directory, "tmp")), []);
   assert.equal(await repository.syncStaged(teamId, sha(chunk)), null);
+});
+
+// Card thumbnails are files no row refers to, written while other requests
+// run. The store never checks what a thumbnail is a picture of, so any bytes
+// stand for one here.
+const picture = Buffer.from("thumbnail");
+const thumbnailPath = (directory, teamId, bytes) =>
+  slideThumbnailPath(directory, teamId, sha(bytes), SLIDE_THUMBNAIL_VERSION);
+const isThumbnail = (path) => path.includes("thumbnails");
+
+test("썸네일을 쓰는 동안 그 내용이 보관 범위를 벗어나면 썸네일을 남기지 않는다", async (t) => {
+  const { repository, directory, teamId, put } = store(t);
+  const contents = [slide("r1")];
+  const file = await repository.create(
+    put(contents[0], { id: randomUUID(), title: "자료" }),
+  );
+  const save = () => {
+    contents.push(slide(`r${contents.length + 1}`));
+    return repository.replace(
+      put(contents.at(-1), {
+        fileId: file.id,
+        baseRevision: contents.length - 1,
+      }),
+    );
+  };
+  // The content the next save takes out of the kept range.
+  const oldest = () => contents[contents.length - 1 - SLIDE_KEPT_REVISIONS];
+  for (let saves = 0; saves < SLIDE_KEPT_REVISIONS; saves++) await save();
+
+  // The thumbnail of revision 1 is written and about to be moved in when a
+  // save prunes that content and finds no thumbnail to remove yet.
+  const pruned = oldest();
+  let during = async () => {
+    during = () => {};
+    assert.equal((await save()).saved, true);
+  };
+  beforeMove(t, (to) => isThumbnail(to) && during());
+  assert.equal(
+    await repository.putThumbnail(teamId, sha(pruned), picture),
+    null,
+    "nothing is reported as stored",
+  );
+  assert.equal(existsSync(thumbnailPath(directory, teamId, pruned)), false);
+  assert.equal(
+    existsSync(slideBlobPath(directory, teamId, sha(pruned))),
+    false,
+  );
+  assert.deepEqual(readdirSync(join(directory, "tmp")), []);
+
+  // Whichever of the two gets there first, no thumbnail outlives its content.
+  for (let round = 0; round < 30; round++) {
+    const leaving = oldest();
+    const [saved] = await Promise.all([
+      save(),
+      repository.putThumbnail(teamId, sha(leaving), picture),
+    ]);
+    assert.equal(saved.saved, true);
+    assert.equal(
+      existsSync(thumbnailPath(directory, teamId, leaving)),
+      false,
+      `round ${round}: the thumbnail went with its content`,
+    );
+  }
+  // A thumbnail of content that is still kept stays.
+  assert.deepEqual(
+    await repository.putThumbnail(teamId, sha(contents.at(-1)), picture),
+    picture,
+  );
+  assert.equal(
+    existsSync(thumbnailPath(directory, teamId, contents.at(-1))),
+    true,
+  );
+});
+
+test("같은 내용의 썸네일이 동시에 두 번 와도 먼저 쓴 하나만 남는다", async (t) => {
+  const { repository, directory, teamId, put } = store(t);
+  const content = slide("동시 썸네일");
+  await repository.create(put(content, { id: randomUUID(), title: "자료" }));
+  let moves = 0;
+  beforeMove(t, (to) => isThumbnail(to) && moves++);
+  const [first, second] = await Promise.all([
+    repository.putThumbnail(teamId, sha(content), Buffer.from("first")),
+    repository.putThumbnail(teamId, sha(content), Buffer.from("second")),
+  ]);
+  assert.deepEqual(
+    [first.toString(), second.toString()],
+    ["first", "first"],
+    "both are answered with the thumbnail that is kept",
+  );
+  const later = await repository.putThumbnail(
+    teamId,
+    sha(content),
+    Buffer.from("third"),
+  );
+  assert.equal(Buffer.from(later).toString(), "first");
+  assert.equal(moves, 1, "a stored thumbnail is never replaced");
+  assert.equal(
+    Buffer.from(await repository.thumbnail(teamId, sha(content))).toString(),
+    "first",
+  );
+  assert.deepEqual(readdirSync(join(directory, "tmp")), []);
+});
+
+test("썸네일을 쓰는 동안 팀이 영구 삭제되면 그 팀의 썸네일을 남기지 않는다", async (t) => {
+  let alive = true;
+  const { repository, directory, teamId, put } = store(t, {
+    teamExists: () => alive,
+  });
+  const content = slide("삭제될 팀의 자료");
+  await repository.create(put(content, { id: randomUUID(), title: "자료" }));
+  // This request has passed the permission check and is writing the picture.
+  const writing = repository.putThumbnail(teamId, sha(content), picture);
+  // The control repository deletes the team, then its slide files.
+  alive = false;
+  repository.removeTeam(teamId);
+
+  assert.equal(await writing, null);
+  assert.equal(existsSync(join(directory, "thumbnails", teamId)), false);
+  assert.deepEqual(readdirSync(join(directory, "tmp")), []);
+});
+
+test("다 쓴 썸네일을 옮기기 직전에 팀이 영구 삭제되면 남기지 않고, 팀이 그대로면 쓰기 오류를 그대로 알린다", async (t) => {
+  let alive = true;
+  const { repository, directory, teamId, put } = store(t, {
+    teamExists: () => alive,
+  });
+  const folder = join(directory, "thumbnails", teamId);
+  const content = slide("자료");
+  await repository.create(put(content, { id: randomUUID(), title: "자료" }));
+  let during;
+  beforeMove(t, (to) => isThumbnail(to) && during());
+  const write = () => repository.putThumbnail(teamId, sha(content), picture);
+
+  // Only the folder goes: the team is still there, so this is an I/O error,
+  // which the file service answers from memory.
+  during = () => rmSync(folder, { recursive: true, force: true });
+  await assert.rejects(write(), { code: "ENOENT" });
+  assert.deepEqual(readdirSync(join(directory, "tmp")), []);
+
+  // The control repository deletes the team, then its slide files.
+  during = () => {
+    alive = false;
+    repository.removeTeam(teamId);
+  };
+  assert.equal(await write(), null);
+  assert.equal(existsSync(folder), false);
+  assert.deepEqual(readdirSync(join(directory, "tmp")), []);
 });

@@ -50,7 +50,7 @@ npm run build
 | `DB_PATH`             | `data/weekly-plan.sqlite` | 데이터베이스 위치. 절대 경로 또는 실행 디렉터리 기준 상대 경로     |
 | `GRAEBOARD_LINK_TITLE_PRIVATE_HOSTS` | 없음(사설망 차단) | 링크 제목 조회에서 사설 IP를 허용할 호스트·접미사(쉼표 구분), 예: `somansa.com` |
 | `DOCUMENT_IMAGES_DIR` | `data/document-images`    | 문서 이미지 저장 경로. 절대 경로 또는 실행 디렉터리 기준 상대 경로 |
-| `SLIDE_FILES_DIR`     | `data/slide-files`        | 슬라이드 팀 자료 저장 경로(`slide-files.sqlite`와 `blobs/`). `DB_PATH`의 DB와 별개이며 릴리스 디렉터리 밖의 절대 경로 권장 |
+| `SLIDE_FILES_DIR`     | `data/slide-files`        | 슬라이드 팀 자료 저장 경로(`slide-files.sqlite`와 `blobs/`, 카드 썸네일 캐시 `thumbnails/`). `DB_PATH`의 DB와 별개이며 릴리스 디렉터리 밖의 절대 경로 권장 |
 | `NODE_ENV`            | 미지정                    | 운영에서는 `production`                                            |
 | `GRAEBOARD_SITE` | Node: `internal`, Edge: `external` | 내부·외부 배포 역할. 실제 호스트와 다른 값이면 실행 거절 |
 | `SETUP_TOKEN`         | 없음                      | 내부 빈 DB의 최초 관리자 생성용 설정 키                                 |
@@ -236,6 +236,8 @@ npm run migrate -- --engine sqlite-slides --database /절대경로/slide-files/s
 npm run migrate -- --engine sqlite-slides --database /절대경로/slide-files/slide-files.sqlite
 ```
 
+목록 카드의 썸네일(2026-11-26)은 사내 `SLIDE_FILES_DIR/thumbnails/<팀 ID>/`, 외부 R2의 `slides/<팀 ID>/<SHA-256>.v<그리기 버전>.thumbnail`에 사이트별로 보관합니다([데이터 형식](DATA_FORMAT.md#슬라이드-팀-자료)). DB 스키마·저장소 형식 버전·변환 명령이 없고 기존 자료를 옮길 것도 없습니다. 업데이트한 뒤 각 카드는 누군가 목록에서 처음 볼 때 한 번 그려져 저장되고, 그 뒤로는 서버를 재시작해도 다시 그리지 않습니다. 외부는 새 객체 이름을 gateway가 받아야 하므로 **Edge 함수와 gateway Worker를 모두 배포**합니다. 순서는 상관없고, gateway가 이전 버전인 동안에는 썸네일을 저장하지 못할 뿐 이전처럼 서버 메모리로 동작합니다. 이전 릴리스로 되돌리면 이 파일·객체는 읽히지 않고 남으며, 다시 만들 수 있는 캐시이므로 `thumbnails/` 폴더나 `.thumbnail` 객체는 지워도 자료에 영향이 없습니다.
+
 외부 사이트는 같은 PostgreSQL의 **별도 스키마 `graeboard_slides`**와 팀 R2 버킷의 `slides/<팀 ID>/` 접두를 씁니다. 기존 `graeboard` 스키마와 그 이력(team v4)은 바뀌지 않으므로 배포 순서에 제약이 없고, 슬라이드 도입 전 릴리스를 다시 배포해도 같은 DB에서 그대로 동작합니다(슬라이드 자료는 스키마와 버킷에 남습니다). 새 릴리스를 배포한 뒤 스키마를 만들 때까지는 슬라이드 요청만 503으로 답하고 업무 기능은 정상입니다. 외부 관리 화면에서 연결 해제된 팀을 삭제하면 제어 DB의 팀 등록을 지웁니다. 팀 DB의 슬라이드 자료와 R2 객체는 보존되므로 팀 데이터를 영구 폐기할 때는 백업과 함께 별도로 처리합니다.
 
 ```sh
@@ -259,7 +261,7 @@ PG_SITE_URL=… npm run migrate -- --engine postgres --scope slides --url-env PG
 
 기본 백업은 `backups/graeboard-시각.sqlite`에 생성합니다. 서버와 같은 `DB_PATH`·`DOCUMENT_IMAGES_DIR`을 사용하고, 백업 대상 DB와 호환되는 릴리스의 도구로 실행합니다. `.env`가 자동으로 읽히는지뿐 아니라 서비스에 직접 지정한 환경 변수와 일치하는지도 확인합니다.
 
-**백업 범위:** `npm run backup`은 내부 Node 서버의 `DB_PATH` SQLite와 그 DB가 참조하는 이미지, 그리고 `SLIDE_FILES_DIR`의 슬라이드 저장소를 보관합니다. 외부 Edge의 PostgreSQL·R2 자료는 `backup:external`·`restore:external` 절차로 별도 보존·복구합니다. 외부 백업은 `graeboard_slides` 스키마가 있으면 팀 폴더에 `slides.json`(자료·revision·동기화 기록 행)과 `slides/<SHA-256>.canvaslide`(참조하는 R2 원본)를 함께 담고, 이때 manifest 버전은 기존 배치 버전에 3을 더한 값(4·5·6)입니다. 슬라이드 도입 전 도구는 이 백업을 거절합니다. 외부 복구는 대상 DB에 슬라이드 스키마를 먼저 만들어야 하고, 대상 저장소에 이 팀의 다른 슬라이드 자료가 있으면 업무 자료를 넣기 전에 거절합니다. 같은 백업을 다시 실행하면 행은 다시 넣지 않고 R2 원본만 비교해 빠진 것을 채우며, 내용이 다른 객체가 있으면 덮어쓰지 않고 거절합니다. 버킷에 이미 있는 객체에는 저장된 SHA-256이 없으므로 내려받아 비교합니다. 외부 복구는 백업의 슬라이드 원본 전체의 해시를 먼저 확인한 뒤 한 번에 하나씩 읽어 넣습니다(원본마다 확인에 한 번, 넣을 때 한 번 읽음). 넣기 직전에도 해시를 다시 확인하므로 **복구가 끝날 때까지 백업 폴더를 바꾸지 않습니다.** 확인 뒤에 바뀐 원본을 만나면 그 원본부터 넣지 않고 중단합니다. 이때 앞선 원본은 버킷에 들어가 있고 슬라이드 행은 넣지 않은 상태이며, 백업 폴더를 원래대로 되돌리고 같은 복구를 다시 실행하면 이어서 끝납니다. 내부 SQLite 백업 성공을 외부 사이트까지 백업한 것으로 기록하지 않습니다. 내부 Node의 저장소는 SQLite로 고정하며 Node의 SQLite control과 PG 업무 저장소를 혼합하는 모드는 지원하지 않습니다.
+**백업 범위:** `npm run backup`은 내부 Node 서버의 `DB_PATH` SQLite와 그 DB가 참조하는 이미지, 그리고 `SLIDE_FILES_DIR`의 슬라이드 저장소를 보관합니다. 외부 Edge의 PostgreSQL·R2 자료는 `backup:external`·`restore:external` 절차로 별도 보존·복구합니다. 외부 백업은 `graeboard_slides` 스키마가 있으면 팀 폴더에 `slides.json`(자료·revision·동기화 기록 행)과 `slides/<SHA-256>.canvaslide`(참조하는 R2 원본)를 함께 담고, 이때 manifest 버전은 기존 배치 버전에 3을 더한 값(4·5·6)입니다. 슬라이드 도입 전 도구는 이 백업을 거절합니다. 외부 복구는 대상 DB에 슬라이드 스키마를 먼저 만들어야 하고, 대상 저장소에 이 팀의 다른 슬라이드 자료가 있으면 업무 자료를 넣기 전에 거절합니다. 같은 백업을 다시 실행하면 행은 다시 넣지 않고 R2 원본만 비교해 빠진 것을 채우며, 내용이 다른 객체가 있으면 덮어쓰지 않고 거절합니다. 버킷에 이미 있는 객체에는 저장된 SHA-256이 없으므로 내려받아 비교합니다. 외부 복구는 백업의 슬라이드 원본 전체의 해시를 먼저 확인한 뒤 한 번에 하나씩 읽어 넣습니다(원본마다 확인에 한 번, 넣을 때 한 번 읽음). 넣기 직전에도 해시를 다시 확인하므로 **복구가 끝날 때까지 백업 폴더를 바꾸지 않습니다.** 확인 뒤에 바뀐 원본을 만나면 그 원본부터 넣지 않고 중단합니다. 이때 앞선 원본은 버킷에 들어가 있고 슬라이드 행은 넣지 않은 상태이며, 백업 폴더를 원래대로 되돌리고 같은 복구를 다시 실행하면 이어서 끝납니다. 슬라이드 카드 썸네일은 다시 그릴 수 있는 캐시이므로 사내·외부 백업 모두 담지 않고, 복구한 사이트에서는 카드를 처음 볼 때 다시 만들어집니다. 외부 복구는 대상 버킷에 남아 있던 썸네일 객체를 검사하거나 바꾸지 않습니다(이름이 내용 해시여서 같은 내용에만 쓰입니다). 내부 SQLite 백업 성공을 외부 사이트까지 백업한 것으로 기록하지 않습니다. 내부 Node의 저장소는 SQLite로 고정하며 Node의 SQLite control과 PG 업무 저장소를 혼합하는 모드는 지원하지 않습니다.
 
 ```sh
 npm run backup
@@ -280,7 +282,7 @@ npm run backup -- backups/manual.sqlite
 DOCUMENT_IMAGES_DIR=data/restore-check/document-images npm run restore -- backups/manual.sqlite data/restore-check/weekly-plan.sqlite data/restore-check/slide-files
 ```
 
-세 번째 인자는 복구할 **새 슬라이드 폴더**이며 생략하면 `SLIDE_FILES_DIR`을 사용합니다. 이 폴더는 없거나 비어 있어야 합니다. 다른 시점의 슬라이드 자료가 남아 있으면 `.slides` 묶음이 있는 백업이든 슬라이드 도입 전의 백업이든 복구를 거절하고 DB·이미지·슬라이드 어느 것도 쓰지 않습니다. 슬라이드 도입 전 백업은 슬라이드 자료 없이 복구되며 빈 폴더에 저장소를 만들지 않습니다. 재시작할 때 `DB_PATH`와 함께 `SLIDE_FILES_DIR`도 복구한 폴더로 지정합니다.
+세 번째 인자는 복구할 **새 슬라이드 폴더**이며 생략하면 `SLIDE_FILES_DIR`을 사용합니다. 이 폴더는 없거나 비어 있어야 합니다(`thumbnails/`만 남아 있어도 비어 있지 않은 폴더입니다). 다른 시점의 슬라이드 자료가 남아 있으면 `.slides` 묶음이 있는 백업이든 슬라이드 도입 전의 백업이든 복구를 거절하고 DB·이미지·슬라이드 어느 것도 쓰지 않습니다. 슬라이드 도입 전 백업은 슬라이드 자료 없이 복구되며 빈 폴더에 저장소를 만들지 않습니다. 재시작할 때 `DB_PATH`와 함께 `SLIDE_FILES_DIR`도 복구한 폴더로 지정합니다.
 
 복구 명령은 **새 DB 파일**에만 쓰며 기존 대상 파일을 덮어쓰지 않습니다. 이미지 경로를 생략하면 `.env`의 폴더를 사용하므로 훈련에서는 반드시 분리합니다. 복구된 세션과 접속 토큰은 삭제되어 사용자가 다시 로그인하고 필요한 토큰을 재발급해야 합니다. 복구한 DB로 서버를 확인할 때도 별도 작업 경로·DB·이미지 설정과 로컬 바인딩·별도 포트를 사용합니다.
 

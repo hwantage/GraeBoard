@@ -1,12 +1,18 @@
 import { digest } from "../../../server/sync/core/protocol.mjs";
-import { SLIDE_FILE_EXTENSION } from "../../../shared/slides/slide-file-rules.js";
+import {
+  SLIDE_FILE_EXTENSION,
+  slideThumbnailName,
+} from "../../../shared/slides/slide-file-rules.js";
 import { assert } from "../../control/access.mjs";
 
 // Team slide bytes in the team's R2 bucket: immutable objects named by their
-// SHA-256, under a prefix separate from images and deployed assets.
+// SHA-256, under a prefix separate from images and deployed assets. Card
+// thumbnails of that content are objects of their own under the same prefix.
 export const slideObjectPrefix = (teamId) => `slides/${teamId}/`;
 export const slideObjectKey = (teamId, contentHash) =>
   `${slideObjectPrefix(teamId)}${contentHash}.${SLIDE_FILE_EXTENSION}`;
+export const slideThumbnailKey = (teamId, contentHash, version) =>
+  slideObjectPrefix(teamId) + slideThumbnailName(contentHash, version);
 
 export class R2SlideBlobStore {
   constructor(bucket, teamId) {
@@ -71,5 +77,24 @@ export class R2SlideBlobStore {
   }
   async unstage(hash) {
     await this.bucket.delete(this.#chunk(hash));
+  }
+  // Card thumbnails, named by the content they show and a drawing version.
+  // Unlike the content, one has no hash of its own to be verified by.
+  #thumbnail(contentHash, version) {
+    assert(/^[a-f0-9]{64}$/.test(contentHash), 400, "자료 해시를 확인하세요.");
+    return slideThumbnailKey(this.teamId, contentHash, version);
+  }
+  async thumbnail(contentHash, version) {
+    const object = await this.bucket.get(this.#thumbnail(contentHash, version));
+    return object ? new Uint8Array(await object.arrayBuffer()) : null;
+  }
+  async putThumbnail(contentHash, version, bytes) {
+    await this.bucket.put(this.#thumbnail(contentHash, version), bytes, {
+      httpMetadata: { contentType: "application/octet-stream" },
+      customMetadata: { teamId: this.teamId },
+    });
+  }
+  async removeThumbnail(contentHash, version) {
+    await this.bucket.delete(this.#thumbnail(contentHash, version));
   }
 }

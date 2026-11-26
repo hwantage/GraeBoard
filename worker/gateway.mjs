@@ -4,7 +4,10 @@ import {
   APP_POLICY,
   slideEditorAssetResponse,
 } from "../shared/slides/slide-editor-policy.js";
-import { MAX_SLIDE_FILE_BYTES } from "../shared/slides/slide-file-rules.js";
+import {
+  MAX_SLIDE_FILE_BYTES,
+  MAX_SLIDE_THUMBNAIL_LENGTH,
+} from "../shared/slides/slide-file-rules.js";
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 // Vite names every build file by its content hash, so a changed file gets a new
@@ -77,7 +80,11 @@ async function resource(request, env) {
     key.startsWith(slidePrefix) &&
     // `.chunk`: pieces of a file still being received from the other site.
     /^[a-f0-9]{64}\.(?:canvaslide|chunk)$/.test(key.slice(slidePrefix.length));
-  if (!validImage && !validProbe && !validSlide)
+  // A card thumbnail of a slide file's content (slideThumbnailName).
+  const validSlideThumbnail =
+    key.startsWith(slidePrefix) &&
+    /^[a-f0-9]{64}\.v[1-9]\d*\.thumbnail$/.test(key.slice(slidePrefix.length));
+  if (!validImage && !validProbe && !validSlide && !validSlideThumbnail)
     return failure(403, "다른 팀의 이미지입니다.");
   if (method === "GET" || method === "HEAD") {
     const object = await env.R2_TEAM[method === "HEAD" ? "head" : "get"](key);
@@ -97,7 +104,12 @@ async function resource(request, env) {
     if (
       !Number.isSafeInteger(length) ||
       length <= 0 ||
-      length > (validSlide ? MAX_SLIDE_FILE_BYTES : MAX_IMAGE_BYTES)
+      length >
+        (validSlide
+          ? MAX_SLIDE_FILE_BYTES
+          : validSlideThumbnail
+            ? MAX_SLIDE_THUMBNAIL_LENGTH
+            : MAX_IMAGE_BYTES)
     )
       return failure(413, "이미지 용량을 확인하세요.");
     const rawMetadata = request.headers.get("x-object-metadata") || "{}";

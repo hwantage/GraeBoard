@@ -24,6 +24,8 @@ import {
   restoreExternal,
 } from "../../server/storage/transfer/external-backup.mjs";
 import { S3SlideBlobStore } from "../../server/storage/slides/slide-file-external-backup.mjs";
+import { SLIDE_THUMBNAIL_VERSION } from "../../shared/slides/slide-file-rules.js";
+import { slideThumbnailKey } from "../../worker/storage/slides/r2-slide-blobs.mjs";
 
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const slide = (text) => Buffer.from(JSON.stringify({ version: 1, name: text }));
@@ -198,6 +200,13 @@ async function source(t, { slides = true } = {}) {
     `slides/${pg.teamId}/${"f".repeat(64)}.canvaslide`,
     slide("x"),
   );
+  // Neither are card thumbnails, which the browser draws again.
+  for (const bytes of [state.first, state.current])
+    await repository.putThumbnail(
+      pg.teamId,
+      sha(bytes),
+      Buffer.from("source thumbnail"),
+    );
   return { ...state, repository, put };
 }
 const restoreInto = (state, backup, target, options = {}) =>
@@ -246,12 +255,43 @@ test("외부 백업은 슬라이드 스키마의 행과 참조하는 R2 원본�
   assert.equal("slide_shares" in read.teams[0].slides.tables, false);
 
   const target = await state.target("team_restored");
+  // A thumbnail left in the target bucket by an earlier use is not slide
+  // data of another point in time: the restore neither refuses nor touches
+  // it. Its name is the content it shows, so it can only ever be served for
+  // that content.
+  const leftover = slideThumbnailKey(
+    state.teamId,
+    sha(state.current),
+    SLIDE_THUMBNAIL_VERSION,
+  );
+  await target.bucket.put(leftover, Buffer.from("target thumbnail"));
   assert.equal(
     (await restoreInto(state, backup, target, { dryRun: true })).verified,
     true,
   );
   assert.equal(target.bucket.puts, 0);
   await restoreInto(state, backup, target);
+  assert.deepEqual(
+    [...target.bucket.objects.keys()].sort(),
+    [
+      leftover,
+      ...[state.first, state.current, slide("삭제한 자료")].map(
+        (bytes) => `slides/${state.teamId}/${sha(bytes)}.canvaslide`,
+      ),
+    ].sort(),
+    "only the content of the backup was installed",
+  );
+  assert.equal(
+    await target.repository.thumbnail(state.teamId, sha(state.first)),
+    null,
+    "thumbnails are not restored",
+  );
+  assert.equal(
+    Buffer.from(
+      await target.repository.thumbnail(state.teamId, sha(state.current)),
+    ).toString(),
+    "target thumbnail",
+  );
   assert.deepEqual(
     await slideRows(target.pool),
     await slideRows(state.pg.pool),

@@ -78,6 +78,9 @@ async function fixture(t, { slides = true } = {}) {
   // Bytes no revision refers to are not part of a backup.
   mkdirSync(join(slideFilesDir, "tmp"), { recursive: true });
   writeFileSync(join(slideFilesDir, "tmp", "abandoned"), "partial");
+  // Neither are card thumbnails, which the browser draws again.
+  for (const bytes of [first, current])
+    await repository.putThumbnail(teamId, sha(bytes), Buffer.from("thumbnail"));
   repository.close();
   return { ...state, file, first, current };
 }
@@ -161,6 +164,20 @@ test("백업은 슬라이드 저장소와 참조하는 파일만 함께 묶고 �
   assert.equal(restored.file.contentHash, sha(state.current));
   assert.equal(Buffer.from(restored.bytes).equals(state.current), true);
   assert.equal(repository.list(state.teamId).length, 1);
+  // The restored store works without thumbnails and stores new ones.
+  assert.equal(existsSync(join(target.slideFilesDir, "thumbnails")), false);
+  assert.equal(
+    await repository.thumbnail(state.teamId, sha(state.current)),
+    null,
+  );
+  assert.deepEqual(
+    await repository.putThumbnail(
+      state.teamId,
+      sha(state.current),
+      Buffer.from("drawn again"),
+    ),
+    Buffer.from("drawn again"),
+  );
   assert.equal(
     repository.readShare(
       state.teamId,
@@ -237,6 +254,18 @@ test("복원 대상 슬라이드 폴더에 남은 자료가 있으면 섞지 않
       "nothing was mixed in",
     );
   }
+  // Thumbnails alone are also files of another point in time.
+  const leftover = join(state.directory, "only-thumbnails");
+  mkdirSync(join(leftover, "thumbnails", state.teamId), { recursive: true });
+  writeFileSync(join(leftover, "thumbnails", state.teamId, "left"), "x");
+  assert.throws(
+    () =>
+      restoreDatabase(withSlides, join(state.directory, "leftover.sqlite"), {
+        documentImagesDir: join(state.directory, "leftover-images"),
+        slideFilesDir: leftover,
+      }),
+    /슬라이드 저장소 경로에 기존 자료/,
+  );
   // The old backup restores next to an empty slide directory: no slide files.
   const target = options(state, "old");
   restoreDatabase(
