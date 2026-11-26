@@ -186,12 +186,14 @@ export default function SlideEditorFrame({
   };
   async function openFile(fileId: string, discard = false) {
     const file = await readSlideFile(teamId, fileId);
-    const result = await bridge.current!.request<{ outcome: string }>("open", {
-      teamId,
-      fileId,
-      ...file,
-      discard,
-    });
+    // Only the editor uses the bytes just read (up to 25 MB), so their buffer
+    // moves to the frame; `file.bytes` is empty from here on.
+    const result = await bridge.current!.request<{ outcome: string }>(
+      "open",
+      { teamId, fileId, ...file, discard },
+      0,
+      [file.bytes.buffer],
+    );
     return result.outcome;
   }
   async function begin() {

@@ -12,12 +12,14 @@ export const clientId = crypto.randomUUID();
 // device clock after login must not invalidate new edits or extend retries.
 let serverClock: { time: number; received: number; started: number } | null =
   null;
+// Milliseconds on that clock, for comparing times without building a string.
+export function serverNowMs() {
+  return serverClock
+    ? serverClock.time + performance.now() - serverClock.received
+    : Date.now();
+}
 export function serverNow() {
-  return new Date(
-    serverClock
-      ? serverClock.time + performance.now() - serverClock.received
-      : Date.now(),
-  ).toISOString();
+  return new Date(serverNowMs()).toISOString();
 }
 
 export class ApiError extends Error {

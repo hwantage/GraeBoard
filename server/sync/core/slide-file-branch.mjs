@@ -1,4 +1,5 @@
 import { canonical, digest } from "./protocol.mjs";
+import { slideContentHash } from "../../../shared/slides/slide-file-rules.js";
 
 // Team slide files travel between the internal and the external site on a
 // branch of their own in the team's data repository. It is not an input of the
@@ -24,11 +25,13 @@ export const slideChunkPath = (hash) => `chunks/${hash}`;
 const text = (bytes) =>
   typeof bytes === "string" ? bytes : new TextDecoder().decode(bytes);
 
-export function slideChunks(bytes) {
+// File bytes are hashed away from the calling thread (slideContentHash), so a
+// pass over large files does not hold up the internal site's other requests.
+export async function slideChunks(bytes) {
   const chunks = [];
   for (let offset = 0; offset < bytes.byteLength; offset += SLIDE_CHUNK_BYTES) {
     const part = bytes.subarray(offset, offset + SLIDE_CHUNK_BYTES);
-    chunks.push({ hash: digest(part), bytes: part });
+    chunks.push({ hash: await slideContentHash(part), bytes: part });
   }
   return chunks;
 }
@@ -155,10 +158,11 @@ export async function syncSlideFiles({
     raced: false,
   };
   // Nothing new on the branch and nothing to publish: the pass ends after the
-  // one request that read the head.
+  // one request that read the head. Whether a file is unpublished does not
+  // depend on its chunk list, so this read leaves the lists out.
   if (
     head === (state.head || null) &&
-    !(await store.syncFiles(teamId)).some(slideFileDirty)
+    !(await store.syncFiles(teamId, { chunks: false })).some(slideFileDirty)
   )
     return result;
   const tree = new Map();
@@ -190,7 +194,7 @@ export async function syncSlideFiles({
         bytes = new Uint8Array(
           await transport.readFile(head, slideChunkPath(hash)),
         );
-        if (digest(bytes) !== hash)
+        if ((await slideContentHash(bytes)) !== hash)
           throw new Error("Slide chunk does not match its SHA-256");
         await store.syncStage(teamId, hash, bytes);
         download--;
@@ -206,7 +210,10 @@ export async function syncSlideFiles({
       whole.set(part, offset);
       offset += part.byteLength;
     }
-    if (offset !== meta.byteLength || digest(whole) !== meta.contentHash)
+    if (
+      offset !== meta.byteLength ||
+      (await slideContentHash(whole)) !== meta.contentHash
+    )
       throw new Error("Slide file does not match its recorded SHA-256");
     return whole;
   }
@@ -378,7 +385,16 @@ export async function syncSlideFiles({
   for (const file of dirty) {
     let chunks = file.shared?.chunks;
     if (!chunks || file.contentHash !== file.shared.hash) {
-      const pieces = slideChunks(
+      // Which chunks the branch lacks is known only by reading and hashing the
+      // whole content (on the external site a download from the bucket), and
+      // without budget none of them could be uploaded. The file waits unread
+      // for a pass that still has budget when its turn comes, even if all of
+      // its chunks happen to be on the branch already.
+      if (upload <= 0) {
+        result.pending++;
+        continue;
+      }
+      const pieces = await slideChunks(
         await store.syncReadContent(teamId, file.contentHash),
       );
       chunks = pieces.map((piece) => piece.hash);

@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import postgres from "pg";
 import { postgresBusinessFixture } from "../support/business-storage-fixture.mjs";
 import { createExternalRouteApp } from "../support/external-route-fixture.mjs";
 import {
@@ -449,6 +450,85 @@ test("외부 썸네일은 팀 권한과 현재 파일 해시를 확인하고 원
     image: null,
   });
   assert.equal((await put(lead, file.contentHash, "")).status, 409);
+});
+test("외부 썸네일은 인스턴스가 바뀌어도 남고, 조회는 메모리에 없을 때만 R2를 한 번 읽으며 SQL 왕복은 늘지 않는다", async (t) => {
+  const site = await externalSite(t);
+  if (!site) return;
+  const { pg, lead, bucket } = site;
+  await migrateSlideSchema(pg.pool);
+  const { body: file } = await lead.upload(
+    pg.teamId,
+    "미리보기",
+    slide("미리보기"),
+  );
+  const metadata = `/teams/${pg.teamId}/slides/${file.id}`;
+  const path = `${metadata}/thumbnail`;
+  const image =
+    "data:image/jpeg;base64," +
+    Buffer.from("ffd8ffc0000b08005a00a001011100ffd9", "hex").toString("base64");
+
+  // Every SQL statement and every bucket request is a remote round trip for
+  // the external site.
+  let statements = 0;
+  const query = postgres.Client.prototype.query;
+  postgres.Client.prototype.query = function (...args) {
+    statements++;
+    return query.apply(this, args);
+  };
+  t.after(() => {
+    postgres.Client.prototype.query = query;
+  });
+  const objects = [];
+  for (const name of ["get", "head", "put", "delete"]) {
+    const request = bucket[name];
+    bucket[name] = (...args) => {
+      objects.push(name);
+      return request(...args);
+    };
+  }
+  const cost = async (client, ...request) => {
+    statements = 0;
+    objects.length = 0;
+    const { status, body } = await client.data(...request);
+    return { status, body, sql: statements, r2: [...objects] };
+  };
+
+  // What the thumbnail GET did before thumbnails were stored: the same
+  // statements as reading the file's metadata, and no bucket request.
+  const base = await cost(lead, metadata);
+  assert.deepEqual(base.r2, []);
+  const missing = await cost(lead, path);
+  assert.deepEqual(missing.body, { hash: file.contentHash, image: null });
+  assert.deepEqual([missing.sql, missing.r2], [base.sql, ["get"]]);
+  const put = await cost(lead, path, {
+    method: "PUT",
+    json: { hash: file.contentHash, image },
+  });
+  assert.deepEqual([put.status, put.r2], [200, ["get", "put"]]);
+  const remembered = await cost(lead, path);
+  assert.equal(remembered.body.image, image);
+  assert.deepEqual([remembered.sql, remembered.r2], [base.sql, []]);
+
+  // Another isolate has its own memory and the same database and bucket.
+  const other = clientAt(
+    await start(
+      t,
+      createExternalRouteApp({
+        env: { ...pg.env, PG_TEAM: { ...pg.env.PG_TEAM } },
+        defaultUserId: pg.user.id,
+      }),
+    ),
+    pg.user.id,
+  );
+  const cold = await cost(other, path);
+  assert.deepEqual(cold.body, { hash: file.contentHash, image });
+  assert.deepEqual([cold.sql, cold.r2], [base.sql, ["get"]]);
+  const warm = await cost(other, path);
+  assert.equal(warm.body.image, image);
+  assert.deepEqual([warm.sql, warm.r2], [base.sql, []]);
+  t.diagnostic(
+    `thumbnail GET: ${base.sql} SQL statements; bucket requests ${cold.r2.length} on a memory miss, ${warm.r2.length} on a hit; PUT: ${put.sql} SQL statements, bucket ${put.r2.join("+")}`,
+  );
 });
 test("외부 저장소도 사내와 같은 저장 계약을 지킨다", async (t) => {
   const site = await externalSite(t);

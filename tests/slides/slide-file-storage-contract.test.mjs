@@ -33,6 +33,10 @@ import {
 import { unpack } from "../../shared/formatting/compact.js";
 
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
+// The smallest card thumbnail the server accepts: a JPEG frame header.
+const THUMBNAIL =
+  "data:image/jpeg;base64," +
+  Buffer.from("ffd8ffc0000b08005a00a001011100ffd9", "hex").toString("base64");
 // A `.canvaslide` file is one JSON object; the server never reads inside it.
 const slide = (text, size = 0) => {
   const body = JSON.stringify({ version: 1, name: text, pad: "" });
@@ -313,7 +317,7 @@ test("팀 자료는 받은 바이트 그대로 저장되고 서버를 다시 열
     repository.close();
     db.close();
   });
-  const stored = repository.read(first.teamId, created.body.id);
+  const stored = await repository.read(first.teamId, created.body.id);
   assert.equal(stored.file.revision, 2);
   assert.equal(Buffer.from(stored.bytes).equals(edited), true);
   assert.deepEqual(
@@ -321,6 +325,50 @@ test("팀 자료는 받은 바이트 그대로 저장되고 서버를 다시 열
     [],
     "the task database has no slide table",
   );
+});
+
+test("카드 썸네일은 저장소에 남아 서버를 다시 열어도 다시 그리지 않는다", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "slides-"));
+  const first = await team(t, directory);
+  const { teamId } = first;
+  const file = (await first.lead.upload(teamId, "미리보기", slide("미리보기")))
+    .body;
+  const path = `/api/teams/${teamId}/slides/${file.id}/thumbnail`;
+  const viewer = await first.add("viewer");
+  assert.deepEqual((await viewer.data(path)).body, {
+    hash: file.contentHash,
+    image: null,
+  });
+  const put = (client, image, hash = file.contentHash) =>
+    client.data(path, { method: "PUT", json: { hash, image } });
+  assert.equal((await put(viewer, THUMBNAIL)).status, 403);
+  assert.equal((await put(first.lead, "data:image/svg+xml,abc")).status, 400);
+  assert.equal(
+    (await put(first.lead, THUMBNAIL, sha(slide("다른 내용")))).status,
+    409,
+  );
+  assert.equal(
+    existsSync(join(directory, "slide-files", "thumbnails")),
+    false,
+    "a refused request stores nothing",
+  );
+  assert.equal((await put(first.lead, THUMBNAIL)).status, 200);
+  assert.equal((await viewer.data(path)).body.image, THUMBNAIL);
+  await first.close();
+
+  // A new process on the same paths has nothing in memory.
+  const second = await site(t, directory);
+  const lead = await second.login("lead@example.com", "lead-password-1");
+  assert.deepEqual((await lead.data(path)).body, {
+    hash: file.contentHash,
+    image: THUMBNAIL,
+  });
+  // The picture of content the file no longer shows is not served for it.
+  const changed = await lead.save(teamId, file.id, 1, slide("둘째 내용"));
+  assert.deepEqual((await lead.data(path)).body, {
+    hash: changed.body.contentHash,
+    image: null,
+  });
 });
 
 test("기준 버전이 다르면 저장하지 않고 두 내용을 모두 보존하며 같은 요청은 한 번만 반영한다", async (t) => {
@@ -608,7 +656,7 @@ test("파일 한도 25MiB는 경계까지 저장하고 넘으면 거절한다", 
   );
 });
 
-test("바이트는 현재와 직전 10개 revision만 남기고 다른 자료가 쓰는 내용은 지우지 않는다", (t) => {
+test("바이트는 현재와 직전 10개 revision만 남기고 다른 자료가 쓰는 내용은 지우지 않는다", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "slides-"));
   const repository = new SqliteSlideFileRepository({ directory });
   t.after(() => {
@@ -626,10 +674,10 @@ test("바이트는 현재와 직전 10개 revision만 남기고 다른 자료가
     ...extra,
   });
   const first = slide("r1");
-  const file = repository.create(
+  const file = await repository.create(
     put(first, { id: randomUUID(), title: "자료" }),
   );
-  const shared = repository.create(
+  const shared = await repository.create(
     put(first, { id: randomUUID(), title: "같은 내용" }),
   );
   const hashes = [sha(first)];
@@ -637,8 +685,10 @@ test("바이트는 현재와 직전 10개 revision만 남기고 다른 자료가
     const bytes = slide(`r${revision + 1}`);
     hashes.push(sha(bytes));
     assert.equal(
-      repository.replace(
-        put(bytes, { fileId: file.id, baseRevision: revision }),
+      (
+        await repository.replace(
+          put(bytes, { fileId: file.id, baseRevision: revision }),
+        )
       ).saved,
       true,
     );
@@ -652,7 +702,7 @@ test("바이트는 현재와 직전 10개 revision만 남기고 다른 자료가
     ...Array(SLIDE_KEPT_REVISIONS + 1).fill(true),
   ]);
   assert.equal(
-    Buffer.from(repository.read(teamId, shared.id).bytes).equals(first),
+    Buffer.from((await repository.read(teamId, shared.id)).bytes).equals(first),
     true,
   );
   assert.equal(
@@ -662,7 +712,7 @@ test("바이트는 현재와 직전 10개 revision만 남기고 다른 자료가
 
   // A damaged file is reported, never returned as the team original.
   writeFileSync(slideBlobPath(directory, teamId, hashes.at(-1)), "{}");
-  assert.throws(() => repository.read(teamId, file.id), /해시/);
+  await assert.rejects(repository.read(teamId, file.id), /해시/);
 
   repository.removeTeam(teamId);
   assert.deepEqual(repository.list(teamId), []);
@@ -767,6 +817,21 @@ test("팀을 영구 삭제하면 그 팀의 슬라이드 자료와 파일도 함
     .body;
   const gone = await lead.upload(doomed, "지울 자료", slide("지울 자료"));
   assert.equal(gone.status, 201, JSON.stringify(gone.body));
+  const thumbnails = join(directory, "slide-files", "thumbnails");
+  for (const [team, file] of [
+    [teamId, keep],
+    [doomed, gone.body],
+  ])
+    assert.equal(
+      (
+        await lead.data(`/api/teams/${team}/slides/${file.id}/thumbnail`, {
+          method: "PUT",
+          json: { hash: file.contentHash, image: THUMBNAIL },
+        })
+      ).status,
+      200,
+    );
+  assert.deepEqual(readdirSync(thumbnails).sort(), [teamId, doomed].sort());
   const removed = await lead.data(`/api/admin/teams/${doomed}`, {
     method: "DELETE",
     json: { confirmed: true },
@@ -780,5 +845,6 @@ test("팀을 영구 삭제하면 그 팀의 슬라이드 자료와 파일도 함
   assert.deepEqual(readdirSync(join(directory, "slide-files", "blobs")), [
     teamId,
   ]);
+  assert.deepEqual(readdirSync(thumbnails), [teamId]);
   assert.equal((await lead.bytes(teamId, keep.id)).status, 200);
 });

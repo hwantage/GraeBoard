@@ -47,7 +47,9 @@ export function restoreDatabase(
   // directory belong to another point in time and are never mixed in.
   const slides = backup + ".slides";
   assertEmptySlideTarget(slideFilesDir);
-  if (existsSync(slides)) verifySlideBackup(slides);
+  // Every slide file is hashed here, before anything is written, and once
+  // more while it is copied below.
+  const slideBlobs = existsSync(slides) ? verifySlideBackup(slides) : null;
   const source = new DatabaseSync(backup, { readOnly: true });
   try {
     if (
@@ -86,7 +88,7 @@ export function restoreDatabase(
       }
     // Validate the entire bundle before publishing a database or any assets.
     for (const url of urls) readDocumentImage(backup + ".images", url);
-    if (existsSync(slides)) restoreSlideStore(slides, slideFilesDir);
+    if (slideBlobs) restoreSlideStore(slides, slideFilesDir, slideBlobs);
     for (const url of urls.filter(
       (url) =>
         !activeByTeam.has(url.split("/")[3]) ||

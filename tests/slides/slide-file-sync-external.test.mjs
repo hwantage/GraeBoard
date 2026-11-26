@@ -8,9 +8,11 @@ import { join } from "node:path";
 import { postgresBusinessFixture } from "../support/business-storage-fixture.mjs";
 import { githubEmulator } from "../support/worker-github-fixture.mjs";
 import {
+  settle,
   sha,
   slide,
   slideSyncContract,
+  twoPeers,
 } from "../support/slide-sync-fixture.mjs";
 import { SLIDE_BRANCH } from "../../server/sync/core/slide-file-branch.mjs";
 import { syncTeamSlides } from "../../worker/sync/sync-slides.mjs";
@@ -197,4 +199,158 @@ test("외부 서버의 예약 실행은 연결이 활성일 때만, 한 번에 �
       .mode,
     "active",
   );
+});
+
+// The external site pays a remote round trip for every statement, and the
+// Cron runs a pass for every active team every minute: what a pass with
+// nothing to do sends is counted here, at the team connection and at GitHub.
+test("외부 서버의 변화 없는 예약 실행은 DB 왕복 4회와 GitHub 요청 1건으로 끝나고, 변화가 있으면 받고 게시한다", async (t) => {
+  let pg, github;
+  const bucket = memoryBucket();
+  const peers = await twoPeers(t, async (t, directory, remote) => {
+    pg = await postgresBusinessFixture(t);
+    if (!pg) return null;
+    await migrateSlideSchema(pg.pool);
+    const internal = new SqliteSlideFileRepository({
+      directory: join(directory, "internal-store"),
+    });
+    t.after(() => internal.close());
+    github = githubEmulator(remote);
+    return {
+      teamId: pg.teamId,
+      internal,
+      external: new PostgresSlideFileRepository({
+        pool: pg.pool,
+        bucket,
+        teamId: pg.teamId,
+      }),
+    };
+  });
+  if (!peers) return;
+  const { inside, outside, teamId } = peers;
+  await pg.pool.query("UPDATE graeboard.team_sync_links SET mode='active'");
+  pg.env.BUCKET = bucket;
+  // Every statement sent on the team connection. The hosted site's pool
+  // checks a connection once, when it opens it; those checks belong to the
+  // connection and not to a pass.
+  const statements = [];
+  pg.env.PG_TEAM.pool = {
+    async connect() {
+      const client = await pg.pool.connect();
+      return Object.assign(Object.create(client), {
+        query: (sql, params) => {
+          const text = typeof sql === "string" ? sql : sql.text;
+          if (!/schema_migrations/.test(text)) statements.push(text);
+          return client.query(sql, params);
+        },
+        release: (error) => client.release(error),
+      });
+    },
+  };
+  const profile = JSON.parse(pg.env.SYNC_PROFILES)[0];
+  // One scheduled pass, with what it sent.
+  const pass = async () => {
+    statements.length = 0;
+    github.calls.length = 0;
+    const result = await syncTeamSlides(pg.env, profile, {
+      transport: new GitHubApiTransport({
+        repository: "fixture/team",
+        token: "fixture-secret",
+        fetch: github.fetch,
+      }),
+    });
+    return {
+      result,
+      // The transaction that opens with the two gates, then the slide store.
+      database: statements.map((sql) => /^\w+/.exec(sql.trim())[0]),
+      lists: statements.filter((sql) => /FULL JOIN/.test(sql)),
+      github: github.calls.map((call) => `${call.method} ${call.path}`),
+    };
+  };
+  const head = `GET /git/ref/heads/${SLIDE_BRANCH}`;
+  const rows = async (table) =>
+    Number(
+      (
+        await pg.pool.query(
+          `SELECT count(*) AS n FROM graeboard_slides.${table}`,
+        )
+      ).rows[0].n,
+    );
+
+  // A team that has never used slides: no state is created for it.
+  const unused = await pass();
+  assert.deepEqual(unused.result, {
+    head: null,
+    received: 0,
+    published: 0,
+    conflicts: 0,
+    pending: 0,
+    raced: false,
+  });
+  assert.deepEqual(unused.database, ["BEGIN", "COMMIT", "SELECT"]);
+  assert.deepEqual(unused.github, [head]);
+  assert.equal(await rows("slide_sync_state"), 0);
+
+  // The first file is published; the other site receives it.
+  const file = await outside.create("외부 자료", slide("처음"));
+  assert.equal((await pass()).result.published, 1);
+  await settle(inside);
+  assert.equal((await inside.read(file.id)).equals(slide("처음")), true);
+
+  // Nothing to do: two round trips for the gates, the cursor and one list of
+  // the files without their chunk lists. Nothing is written.
+  const idle = await pass();
+  assert.deepEqual(
+    [idle.result.received, idle.result.published, idle.result.pending],
+    [0, 0, 0],
+  );
+  assert.deepEqual(idle.database, ["BEGIN", "COMMIT", "SELECT", "SELECT"]);
+  assert.equal(idle.lists.length, 1);
+  assert.doesNotMatch(idle.lists[0], /shared_chunks/);
+  assert.deepEqual(idle.github, [head]);
+
+  // The same for more files, deleted ones included.
+  const second = await outside.create("둘째 자료", slide("둘째"));
+  await outside.create("셋째 자료", slide("셋째"));
+  assert.equal((await pass()).result.published, 2);
+  await outside.remove(second.id);
+  assert.equal((await pass()).result.published, 1);
+  assert.equal(await rows("slide_files"), 3);
+  const more = await pass();
+  assert.deepEqual(more.database, idle.database);
+  assert.deepEqual(more.github, [head]);
+
+  // A pass with work on both sides: a file from the other site arrives and
+  // a rename made here, which publishes the chunk list it already shared,
+  // goes out. The files are listed with their chunk lists before receiving
+  // and again after it wrote them.
+  await settle(inside);
+  const arrived = await inside.create("사내 자료", slide("사내에서"));
+  assert.equal((await inside.sync()).published, 1);
+  await outside.rename(file.id, "외부에서 바꾼 이름");
+  const busy = await pass();
+  assert.deepEqual(
+    [
+      busy.result.received,
+      busy.result.published,
+      busy.result.conflicts,
+      busy.result.pending,
+      busy.result.raced,
+    ],
+    [1, 1, 0, 0, false],
+  );
+  assert.equal(busy.lists.length, 2);
+  for (const list of busy.lists) assert.match(list, /shared_chunks/);
+  await settle(inside);
+  assert.deepEqual(await inside.list(), await outside.list());
+  assert.equal(
+    (await outside.read(arrived.id)).equals(slide("사내에서")),
+    true,
+  );
+  assert.equal(
+    (await inside.store.get(teamId, file.id)).title,
+    "외부에서 바꾼 이름",
+  );
+  assert.equal((await inside.read(file.id)).equals(slide("처음")), true);
+  assert.deepEqual((await pass()).database, idle.database);
 });

@@ -48,7 +48,14 @@ export class SlideFrameBridge {
       waiting.reject(new Error("편집기를 닫았습니다."));
     this.#pending.clear();
   }
-  request<T>(action: string, payload: object = {}, timeoutMs = 0): Promise<T> {
+  // Buffers in `transfer` move to the frame instead of being copied, so the
+  // caller's views of them are empty afterwards.
+  request<T>(
+    action: string,
+    payload: object = {},
+    timeoutMs = 0,
+    transfer: Transferable[] = [],
+  ): Promise<T> {
     const target = this.frame();
     if (!target || this.#disposed)
       return Promise.reject(new Error("편집기가 준비되지 않았습니다."));
@@ -73,6 +80,7 @@ export class SlideFrameBridge {
       target.postMessage(
         slideFrameMessage(this.session, "request", { id, action, payload }),
         location.origin,
+        transfer,
       );
     });
   }

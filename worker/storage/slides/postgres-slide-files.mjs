@@ -2,6 +2,7 @@ import {
   SLIDE_SCHEMA,
   slideSchemaReady,
 } from "../../../shared/slides/slide-store-version.js";
+import { SLIDE_THUMBNAIL_VERSION } from "../../../shared/slides/slide-file-rules.js";
 import { requireThat } from "../../../shared/validation.js";
 import { assert } from "../../control/access.mjs";
 import { R2SlideBlobStore } from "./r2-slide-blobs.mjs";
@@ -9,6 +10,9 @@ import { R2SlideBlobStore } from "./r2-slide-blobs.mjs";
 // Bytes of the current revision and this many revisions before it are kept
 // (the same rule as the internal site's SQLite store).
 export const SLIDE_KEPT_REVISIONS = 10;
+// How many revisions before the one that left the kept window a change of a
+// file cleans up again; see the SQLite repository.
+export const SLIDE_PRUNE_LOOKBACK = 2;
 const S = SLIDE_SCHEMA;
 
 const meta = (row) =>
@@ -45,7 +49,9 @@ const syncFile = (row) => ({
         hash: row.shared_hash,
         title: row.shared_title,
         deletedAt: row.shared_deleted_at,
-        chunks: JSON.parse(row.shared_chunks),
+        ...(row.shared_chunks !== undefined && {
+          chunks: JSON.parse(row.shared_chunks),
+        }),
         metaOid: row.meta_oid,
       }
     : null,
@@ -89,11 +95,20 @@ export async function slideFileTitles(tx, teamId, fileIds) {
 // Slide files of the external site: metadata in the graeboard_slides schema of
 // the team database and immutable bytes in the team's R2 bucket. Bytes are
 // uploaded before the transaction; inside it only an existence check and, when
-// a concurrent delete won, one repeated upload touch R2.
+// a concurrent delete won, one repeated upload touch R2. Card thumbnails of
+// kept content are objects in the same bucket, which no row refers to.
 export class PostgresSlideFileRepository {
-  constructor({ pool, bucket, teamId }) {
+  // `thumbnailVersion` is the drawing version thumbnails are read and written
+  // under.
+  constructor({
+    pool,
+    bucket,
+    teamId,
+    thumbnailVersion = SLIDE_THUMBNAIL_VERSION,
+  }) {
     this.pool = pool;
     this.teamId = teamId;
+    this.thumbnailVersion = thumbnailVersion;
     this.blobs = new R2SlideBlobStore(bucket, teamId);
   }
   #team(teamId) {
@@ -177,21 +192,49 @@ export class PostgresSlideFileRepository {
     if (!(await this.blobs.has(contentHash)))
       await this.blobs.write(contentHash, bytes);
   }
-  // Removes bytes no kept revision of any file of the team refers to. A
-  // failure or a restart leaves an unreferenced object, never a referenced
-  // one missing.
+  // The contents among `hashes` that no kept revision of any file of the team
+  // refers to, in one statement.
+  async #unkept(client, hashes) {
+    return (
+      await client.query(
+        `SELECT DISTINCT hash FROM unnest($2::text[]) AS hash WHERE NOT EXISTS (
+           SELECT 1 FROM ${S}.slide_file_revisions r JOIN ${S}.slide_files f ON f.id=r.file_id
+           WHERE f.team_id=$1 AND r.content_hash=hash AND r.revision >= f.revision-$3)`,
+        [this.teamId, hashes, SLIDE_KEPT_REVISIONS],
+      )
+    ).rows.map((row) => row.hash);
+  }
+  // Content that may have lost its last reference when the file reached
+  // `revision`; see the SQLite repository.
+  async #expired(client, fileId, revision) {
+    const left = revision - SLIDE_KEPT_REVISIONS - 1;
+    return (
+      await client.query(
+        `SELECT content_hash FROM ${S}.slide_file_revisions WHERE file_id=$1 AND revision BETWEEN $2 AND $3`,
+        [fileId, left - SLIDE_PRUNE_LOOKBACK, left],
+      )
+    ).rows.map((row) => row.content_hash);
+  }
+  // Removes, among `hashes`, the bytes no kept revision of any file of the
+  // team refers to, and the thumbnails of that content under every drawing
+  // version. Every transaction is a connection of its own here, so one
+  // team-locked transaction decides for all of them and stays open while they
+  // are removed: nothing can start referring to one in between (#ensureBlob,
+  // putThumbnail). A failure or a restart leaves an unreferenced object,
+  // never a referenced one missing, and a content that could not be removed
+  // does not stop the others; the next changes of the file try again
+  // (SLIDE_PRUNE_LOOKBACK).
   async #prune(hashes) {
-    for (const hash of new Set(hashes))
-      await this.#transaction(async (client) => {
-        const kept = (
-          await client.query(
-            `SELECT 1 FROM ${S}.slide_file_revisions r JOIN ${S}.slide_files f ON f.id=r.file_id
-             WHERE f.team_id=$1 AND r.content_hash=$2 AND r.revision >= f.revision-$3 LIMIT 1`,
-            [this.teamId, hash, SLIDE_KEPT_REVISIONS],
-          )
-        ).rowCount;
-        if (!kept) await this.blobs.remove(hash);
-      }).catch(() => {});
+    if (!hashes.length) return;
+    await this.#transaction(async (client) => {
+      for (const hash of await this.#unkept(client, hashes))
+        await this.#remove(hash).catch(() => {});
+    }).catch(() => {});
+  }
+  async #remove(hash) {
+    await this.blobs.remove(hash);
+    for (let version = 1; version <= this.thumbnailVersion; version++)
+      await this.blobs.removeThumbnail(hash, version);
   }
   async list(teamId) {
     this.#team(teamId);
@@ -327,12 +370,7 @@ export class PostgresSlideFileRepository {
           requestId,
         ],
       );
-      expired = (
-        await client.query(
-          `SELECT content_hash FROM ${S}.slide_file_revisions WHERE file_id=$1 AND revision < $2`,
-          [fileId, revision - SLIDE_KEPT_REVISIONS],
-        )
-      ).rows.map((row) => row.content_hash);
+      expired = await this.#expired(client, fileId, revision);
       return { saved: true, file: meta(await this.#live(client, fileId)) };
     });
     await this.#prune(expired);
@@ -359,22 +397,55 @@ export class PostgresSlideFileRepository {
       ),
     );
   }
+  // --- Card thumbnails: a cache the browser can draw again, so no row refers
+  // to one and a backup leaves them out.
+  // The stored thumbnail of a content under this drawing version, or null:
+  // one request to the bucket and none to the database.
+  async thumbnail(teamId, contentHash) {
+    this.#team(teamId);
+    return this.blobs.thumbnail(contentHash, this.thumbnailVersion);
+  }
+  // Stores a thumbnail unless the content already has one, and answers with
+  // the one that is kept; null when the content is no longer kept. Like the
+  // bytes (#ensureBlob), storing and pruning are serialized by the team lock:
+  // a thumbnail is stored only while its content is kept, and a later prune
+  // of that content sees and removes it. The same lock puts members who send
+  // the same card at once in an order, so the first one's picture stays.
+  async putThumbnail(teamId, contentHash, bytes) {
+    this.#team(teamId);
+    return this.#transaction(async (client) => {
+      if ((await this.#unkept(client, [contentHash])).length) return null;
+      const earlier = await this.blobs.thumbnail(
+        contentHash,
+        this.thumbnailVersion,
+      );
+      if (earlier) return earlier;
+      await this.blobs.putThumbnail(contentHash, this.thumbnailVersion, bytes);
+      return bytes;
+    });
+  }
   // --- Synchronization with the other site (server/sync/core/slide-file-branch.mjs).
   // The same contract as the SQLite repository's sync methods.
   async syncState(teamId) {
     this.#team(teamId);
-    return this.#transaction(async (client) => {
-      await client.query(
-        `INSERT INTO ${S}.slide_sync_state VALUES($1,NULL,$2,1) ON CONFLICT(team_id) DO NOTHING`,
-        [teamId, crypto.randomUUID()],
-      );
-      return (
+    const read = async (client) =>
+      (
         await client.query(
           `SELECT head,epoch FROM ${S}.slide_sync_state WHERE team_id=$1`,
           [teamId],
         )
       ).rows[0];
-    });
+    // The row is there after the team's first pass, so a pass only reads it.
+    return (
+      (await this.#read(read)) ||
+      this.#transaction(async (client) => {
+        await client.query(
+          `INSERT INTO ${S}.slide_sync_state VALUES($1,NULL,$2,1) ON CONFLICT(team_id) DO NOTHING`,
+          [teamId, crypto.randomUUID()],
+        );
+        return read(client);
+      })
+    );
   }
   async syncHasFiles(teamId) {
     this.#team(teamId);
@@ -403,13 +474,15 @@ export class PostgresSlideFileRepository {
         ).rowCount === 1,
     );
   }
-  async syncFiles(teamId) {
+  // `chunks: false` leaves out the shared chunk lists; see the SQLite
+  // repository.
+  async syncFiles(teamId, { chunks = true } = {}) {
     this.#team(teamId);
     return this.#read(async (client) =>
       (
         await client.query(
           `SELECT f.*, COALESCE(f.id, s.file_id) AS sync_id, s.shared_version, s.shared_hash, s.shared_title,
-                  s.shared_deleted_at, s.shared_chunks, s.meta_oid, s.pending_version
+                  s.shared_deleted_at, ${chunks ? "s.shared_chunks, " : ""}s.meta_oid, s.pending_version
            FROM (SELECT * FROM ${S}.slide_files WHERE team_id=$1) f
            FULL JOIN (SELECT * FROM ${S}.slide_sync_files WHERE team_id=$1) s ON s.file_id=f.id`,
           [teamId],
@@ -490,7 +563,8 @@ export class PostgresSlideFileRepository {
   async syncApply(teamId, { meta, metaOid, bytes, take, copy, expect }) {
     this.#team(teamId);
     if (bytes) await this.blobs.write(meta.contentHash, bytes);
-    return this.#transaction(async (client) => {
+    let expired = [];
+    const result = await this.#transaction(async (client) => {
       const file = (
         await client.query(
           `SELECT * FROM ${S}.slide_files WHERE id=$1 AND team_id=$2`,
@@ -582,6 +656,7 @@ export class PostgresSlideFileRepository {
               `sync:${meta.version}`,
             ],
           );
+          expired = await this.#expired(client, meta.id, revision);
         }
         if (take.title)
           await client.query(
@@ -604,6 +679,9 @@ export class PostgresSlideFileRepository {
       });
       return true;
     });
+    // A received version moves the kept window as a save does.
+    await this.#prune(expired);
+    return result;
   }
   // Chunks received so far wait in the bucket until their file is complete.
   syncStage(teamId, hash, bytes) {

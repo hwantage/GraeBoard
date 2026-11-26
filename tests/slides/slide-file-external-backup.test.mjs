@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import {
+import fs, {
   existsSync,
   mkdtempSync,
   readFileSync,
@@ -9,6 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Pool } from "pg";
@@ -23,6 +24,8 @@ import {
   restoreExternal,
 } from "../../server/storage/transfer/external-backup.mjs";
 import { S3SlideBlobStore } from "../../server/storage/slides/slide-file-external-backup.mjs";
+import { SLIDE_THUMBNAIL_VERSION } from "../../shared/slides/slide-file-rules.js";
+import { slideThumbnailKey } from "../../worker/storage/slides/r2-slide-blobs.mjs";
 
 const sha = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const slide = (text) => Buffer.from(JSON.stringify({ version: 1, name: text }));
@@ -31,6 +34,9 @@ const slide = (text) => Buffer.from(JSON.stringify({ version: 1, name: text }));
 class MemoryBucket {
   objects = new Map();
   puts = 0;
+  downloads = 0;
+  // Downloads collected into one array instead of read in pieces.
+  buffered = 0;
   async send(command) {
     const { Key, Body } = command.input;
     if (command.constructor.name === "PutObjectCommand") {
@@ -41,9 +47,20 @@ class MemoryBucket {
     const bytes = this.objects.get(Key);
     if (!bytes)
       throw Object.assign(new Error("missing"), { name: "NoSuchKey" });
+    this.downloads++;
     return {
       ContentLength: bytes.length,
-      Body: { transformToByteArray: async () => bytes },
+      Body: {
+        transformToByteArray: async () => {
+          this.buffered++;
+          return bytes;
+        },
+        // In Node the SDK's body is also a stream of pieces.
+        async *[Symbol.asyncIterator]() {
+          yield bytes.subarray(0, 8);
+          yield bytes.subarray(8);
+        },
+      },
     };
   }
   put = async (key, bytes) =>
@@ -60,6 +77,26 @@ const noImages = {
   read: async () => null,
   install: async () => {},
 };
+// Whole slide files of a backup in memory at once. readFile is the call that
+// loads a complete file, and a loaded file is needed until the bucket has
+// stored it.
+function trackSlideLoads(t, bucket) {
+  const readFile = fs.promises.readFile;
+  const loads = { count: 0, peak: 0 };
+  fs.promises.readFile = (path, ...rest) => {
+    if (String(path).endsWith(".canvaslide")) {
+      loads.count++;
+      loads.peak = Math.max(loads.peak, loads.count - bucket.puts);
+    }
+    return readFile(path, ...rest);
+  };
+  syncBuiltinESMExports();
+  t.after(() => {
+    fs.promises.readFile = readFile;
+    syncBuiltinESMExports();
+  });
+  return loads;
+}
 
 async function source(t, { slides = true } = {}) {
   const pg = await postgresBusinessFixture(t);
@@ -163,6 +200,13 @@ async function source(t, { slides = true } = {}) {
     `slides/${pg.teamId}/${"f".repeat(64)}.canvaslide`,
     slide("x"),
   );
+  // Neither are card thumbnails, which the browser draws again.
+  for (const bytes of [state.first, state.current])
+    await repository.putThumbnail(
+      pg.teamId,
+      sha(bytes),
+      Buffer.from("source thumbnail"),
+    );
   return { ...state, repository, put };
 }
 const restoreInto = (state, backup, target, options = {}) =>
@@ -211,12 +255,43 @@ test("외부 백업은 슬라이드 스키마의 행과 참조하는 R2 원본�
   assert.equal("slide_shares" in read.teams[0].slides.tables, false);
 
   const target = await state.target("team_restored");
+  // A thumbnail left in the target bucket by an earlier use is not slide
+  // data of another point in time: the restore neither refuses nor touches
+  // it. Its name is the content it shows, so it can only ever be served for
+  // that content.
+  const leftover = slideThumbnailKey(
+    state.teamId,
+    sha(state.current),
+    SLIDE_THUMBNAIL_VERSION,
+  );
+  await target.bucket.put(leftover, Buffer.from("target thumbnail"));
   assert.equal(
     (await restoreInto(state, backup, target, { dryRun: true })).verified,
     true,
   );
   assert.equal(target.bucket.puts, 0);
   await restoreInto(state, backup, target);
+  assert.deepEqual(
+    [...target.bucket.objects.keys()].sort(),
+    [
+      leftover,
+      ...[state.first, state.current, slide("삭제한 자료")].map(
+        (bytes) => `slides/${state.teamId}/${sha(bytes)}.canvaslide`,
+      ),
+    ].sort(),
+    "only the content of the backup was installed",
+  );
+  assert.equal(
+    await target.repository.thumbnail(state.teamId, sha(state.first)),
+    null,
+    "thumbnails are not restored",
+  );
+  assert.equal(
+    Buffer.from(
+      await target.repository.thumbnail(state.teamId, sha(state.current)),
+    ).toString(),
+    "target thumbnail",
+  );
   assert.deepEqual(
     await slideRows(target.pool),
     await slideRows(state.pg.pool),
@@ -418,4 +493,94 @@ test("백업의 슬라이드 원본이 손상됐거나 빠졌으면 읽기에서
   await assert.rejects(state.backup(failed), /current revision is unavailable/);
   assert.equal(existsSync(failed), false);
   assert.equal(existsSync(failed + ".partial"), false);
+});
+
+test("현재 revision의 R2 원본 내용이 해시와 다르면 백업을 만들지 않는다", async (t) => {
+  const state = await source(t);
+  if (!state) return;
+  state.bucket.objects.set(
+    `slides/${state.teamId}/${sha(state.current)}.canvaslide`,
+    new TextEncoder().encode("{}"),
+  );
+  const failed = join(state.directory, "failed");
+  await assert.rejects(state.backup(failed), /integrity failure/);
+  assert.equal(existsSync(failed), false);
+  assert.equal(existsSync(failed + ".partial"), false);
+});
+
+test("복원은 슬라이드 원본을 한 번에 하나만 올리고, 이미 있는 객체는 조각으로 받아 비교한다", async (t) => {
+  const state = await source(t);
+  if (!state) return;
+  const backup = join(state.directory, "backup");
+  await state.backup(backup);
+  const target = await state.target("team_bounded");
+  const loads = trackSlideLoads(t, target.bucket);
+
+  // Reading the backup hashes every slide file and keeps none of them.
+  const read = await readExternalBackup(backup);
+  assert.equal(read.teams[0].slides.blobs.size, 3);
+  assert.equal(loads.count, 0);
+  assert.equal(
+    [...read.teams[0].slides.blobs.values()].some(
+      (value) => value instanceof Uint8Array,
+    ),
+    false,
+  );
+
+  // Each file is loaded only when it is installed.
+  await restoreInto(state, backup, target);
+  assert.equal(target.bucket.puts, 3);
+  assert.equal(loads.count, 3);
+  assert.equal(loads.peak, 1);
+  assert.equal(target.bucket.downloads, 0);
+
+  // A second run finds every object in place. Each is downloaded once to be
+  // compared, in pieces, and none is rewritten.
+  await restoreInto(state, backup, target);
+  assert.equal(target.bucket.puts, 3);
+  assert.equal(target.bucket.downloads, 3);
+  assert.equal(target.bucket.buffered, 0);
+});
+
+test("백업을 확인한 뒤 원본 파일이 바뀌면 그 파일부터 넣지 않고 슬라이드 행도 넣지 않는다", async (t) => {
+  const state = await source(t);
+  if (!state) return;
+  const backup = join(state.directory, "backup");
+  await state.backup(backup);
+  const target = await state.target("team_changed");
+  const folder = join(backup, state.teamId, "slides");
+  const intact = new Map(
+    readdirSync(folder).map((name) => [name, readFileSync(join(folder, name))]),
+  );
+  // The backup folder is damaged while the restore runs: right after the
+  // first object is stored, every other slide file changes.
+  const send = target.bucket.send.bind(target.bucket);
+  target.bucket.send = async (command) => {
+    const result = await send(command);
+    if (
+      command.constructor.name === "PutObjectCommand" &&
+      target.bucket.puts === 1
+    )
+      for (const name of intact.keys())
+        if (!command.input.Key.endsWith(name))
+          writeFileSync(join(folder, name), "{}");
+    return result;
+  };
+  await assert.rejects(
+    restoreInto(state, backup, target),
+    /Backup slide file checksum mismatch/,
+  );
+  assert.equal(target.bucket.puts, 1);
+  for (const [key, bytes] of target.bucket.objects)
+    assert.equal(key, `slides/${state.teamId}/${sha(bytes)}.canvaslide`);
+  assert.deepEqual(await slideRows(target.pool), []);
+
+  // With the backup folder intact again, the same restore completes.
+  for (const [name, bytes] of intact) writeFileSync(join(folder, name), bytes);
+  await restoreInto(state, backup, target);
+  assert.equal(target.bucket.puts, 3);
+  assert.deepEqual(
+    await slideRows(target.pool),
+    await slideRows(state.pg.pool),
+  );
 });
