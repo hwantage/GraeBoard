@@ -21,6 +21,7 @@ import {
   sampleProperties,
   displayValue,
 } from "../../shared/domain.js";
+import { replayedResult } from "../support/cell-batch-replay-helper.mjs";
 
 const dir = mkdtempSync(join(tmpdir(), "weekly-plan-test-"));
 let db, server, base, admin, member, viewer, other, teamId, memberId, task;
@@ -862,7 +863,7 @@ test("2,000셀을 넘는 전체 서식은 권한·충돌·재시도를 검사하
   assert.equal(result.data.cells.length, changes.length);
   assert.deepEqual(
     (await batch(changes, member, operationId)).data,
-    result.data,
+    replayedResult(result.data),
   );
   for (const t of tasks) {
     const saved = getTask(db, t.id);
@@ -1897,7 +1898,7 @@ test("수식 문자열은 평가하지 않고 저장하며 같은 요청 재시�
   const a = await batch(changes, admin, operationId),
     b = await batch(changes, admin, operationId);
   assert.equal(a.status, 200);
-  assert.deepEqual(a.data, b.data);
+  assert.deepEqual(replayedResult(a.data), b.data);
   assert.equal(getTask(db, task.id).cells["2026-10-05"].value, "=SUM(A1:A9)");
   assert.equal(a.data.cells[0].version, 1);
   assert.equal((await batch(changes, member, operationId)).status, 403);

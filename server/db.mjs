@@ -224,6 +224,15 @@ export function pruneStyles(db, candidates) {
       remove.run(data);
   } else db.exec(`DELETE FROM styles WHERE ${unused}`);
 }
+// Each row's stamp before a save touched it, returned beside the new stamps:
+// the client moves a change it queued on a row it saw at that stamp, and
+// leaves one that saw an older row for the server to refuse. Live responses
+// only; replayed operations do not carry it.
+export function previousStamps(tasks) {
+  const stamps = {};
+  for (const t of tasks) stamps[t.id] = t.updatedAt;
+  return stamps;
+}
 // 업무의 수정 시각을 이전 값보다 뒤로 올린다. 같은 밀리초에 바뀌어도 값이 달라진다.
 export function touchTasks(db, tasks) {
   const put = cachedStatement(db, "UPDATE tasks SET updated_at=? WHERE id=?");

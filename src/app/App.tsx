@@ -137,7 +137,6 @@ import type {
   BatchResult,
   HistoryEntry,
   SheetClone,
-  SavedCell,
   Property,
   FormatRule,
   Style,
@@ -368,10 +367,6 @@ function Workspace({
       initial?: string;
       task: Task;
     } | null>(null),
-    [pendingEdit, setPendingEdit] = useState<{
-      point: Point;
-      value: SavedCell["value"];
-    } | null>(null),
     [selection, setSelection] = useState<Selection | null>(null),
     [error, setError] = useState(""),
     // 삭제 알림은 해당 작업이 여전히 최근 기록일 때만 행 실행취소를 제공한다.
@@ -413,13 +408,19 @@ function Workspace({
     startMonth: view.startMonth,
     onStart: () => taskData.invalidate(),
     onSnapshot: (tasks) => taskData.replace(tasks),
-    onResult(result, mode, selected) {
+    onResult(result, mode, selected, token) {
       const rules = taskData.snapshot()[0]?.formatting?.rules;
       applyResult(result);
       recordResult(result, mode);
       if (mode !== "normal") revealResult(result, rules, selected);
+      // The painting the notice is about is saved: its record comes next.
+      if (token)
+        setUndoToast((toast) =>
+          toast?.kind === "work" && toast.token === token
+            ? { ...toast, token: undefined }
+            : toast,
+        );
     },
-    onSettled: () => setPendingEdit(null),
     onError: setError,
   });
   const { pending, failed } = operations;
@@ -615,6 +616,13 @@ function Workspace({
     for (const entry of [...openDetails.current].reverse())
       if (!(await entry.close())) return;
     if (annualMemoRef.current && !(await annualMemoRef.current.flush())) return;
+    // Moving to another team drops the cell changes still waiting to be
+    // saved (useSheetOperations), so the move waits for them as a copy
+    // switch does (prepareCopySwitch), with the windows closed to show why.
+    if (editorRef.current || operations.isPending() || operations.failure()) {
+      setError("현재 셀 입력과 저장을 마친 뒤 전환해 주세요.");
+      return;
+    }
     setLinkNavigation({ target, teamId });
   }
   // A slide opens in the slides screen of its team, the way a file opens from
@@ -831,10 +839,12 @@ function Workspace({
     notice: filterUpdateNotice,
     deletingId: deletingFilterId,
   } = filters;
+  // The sheet a command is made on: what its author sees, queued changes
+  // included.
   function editTasks() {
     return sheetCloneRef.current
       ? sheetCloneDraft.ref.current?.tasks || sheetCloneRef.current.tasks
-      : taskData.snapshot();
+      : operations.project(taskData.snapshot());
   }
   async function prepareCopySwitch() {
     if (annualMemoRef.current && !(await annualMemoRef.current.flush()))
@@ -1048,7 +1058,7 @@ function Workspace({
       layout.cancel();
       setEditor(null);
       editorRef.current = null;
-      operations.clearFailure();
+      operations.clearFailure({ discard: true });
       setError("");
       setViewError("");
       setTeamId(boot.teams[0]?.id || "");
@@ -1083,6 +1093,7 @@ function Workspace({
     if (
       undoToast?.kind === "work" &&
       !undoToast.target &&
+      !undoToast.token &&
       undoToast.sheet === sheetKey &&
       historyTop &&
       historyTop !== undoToast.before
@@ -1176,7 +1187,6 @@ function Workspace({
     sheetCloneDraft.cancel();
     sheetCloneScroll.current = null;
     sheetHistory.reset();
-    setPendingEdit(null);
     rowCommands.clearCopiedRow();
     setJump(null);
     const navigation = calendarNavigation.current;
@@ -1383,22 +1393,10 @@ function Workspace({
   }
   const allTasks = useMemo(() => {
     if (sheetClone) return sheetCloneDraft.draft?.tasks || sheetClone.tasks;
-    if (!pendingEdit) return tasks;
-    const { point, value } = pendingEdit;
-    // 편집창을 닫는 렌더에서 확정한 값을 바로 표시한다. 서버 버전과
-    // 저장 원본은 tasks에 유지해 충돌 검사·실행취소에 그대로 사용한다.
-    return tasks.map((task) =>
-      task.id === point.taskId
-        ? {
-            ...task,
-            cells: {
-              ...task.cells,
-              [point.key]: { ...cell(task, point.key), value },
-            },
-          }
-        : task,
-    );
-  }, [tasks, sheetClone, sheetCloneDraft.draft, pendingEdit]);
+    // 저장을 기다리는 변경은 바로 보인다. 서버 버전과 저장 원본은 tasks에
+    // 그대로 두어 충돌 검사·실행취소에 사용한다(useSheetOperations).
+    return operations.project(tasks);
+  }, [tasks, sheetClone, sheetCloneDraft.draft, operations.queued]);
   // 행 높이·열 너비 같은 표시 설정이 바뀔 때는 업무를 다시 거르지 않는다.
   const filterView = useMemo(
     () => view,
@@ -1720,7 +1718,6 @@ function Workspace({
     editor,
     workspaceRef,
     editable,
-    pending,
     failed,
     range,
     count,
@@ -1798,10 +1795,14 @@ function Workspace({
       before = historyTop,
       hex = normalizeHex(color) || color,
       work = colors.find((entry) => entry.color === hex),
-      changed = plainFillChanges(hex, target);
+      changed = plainFillChanges(hex, target),
+      // The original sheet saves the painting in its queue and hands the
+      // token back with the result (onResult). A copy's draft records it at
+      // once, so its notice binds to the next history entry as before.
+      token = sheetClone ? undefined : crypto.randomUUID();
     // 바뀌는 칸이 없으면 실행취소 기록도 생기지 않으므로 알리지 않는다.
     if (
-      !applyStyle(part, false, target) ||
+      !applyStyle(part, false, target, token) ||
       !changed ||
       !work ||
       !target ||
@@ -1813,6 +1814,7 @@ function Workspace({
       kind: "work",
       sheet: sheetKey,
       before,
+      token,
       message: `일반 배경색은 ‘${work.name || work.color}’ 업무로 집계되지 않습니다.`,
       mark: { color: work.color, selection: target },
     });
@@ -2116,7 +2118,7 @@ function Workspace({
               target.closest(".inline-editor,.cell-input-ready"))
           ) {
             e.preventDefault();
-            if (!e.repeat && editable && !pending)
+            if (!e.repeat && editable)
               applyStyle({ bold: !selectedCell?.style.bold });
             return;
           }
@@ -2681,7 +2683,7 @@ function Workspace({
                   formatPainting={!!formatBrush}
                   canCopyFormat={!editor}
                   onPaintFormat={copyFormat}
-                  disabled={!editable || !!pending}
+                  disabled={!editable}
                   onStyle={applyToolbarStyle}
                   onBorder={applyBorder}
                   onUndo={() => undo()}
@@ -2956,7 +2958,7 @@ function Workspace({
                       setEditor(null);
                       return true;
                     }
-                    if (operations.isPending() || operations.failure()) {
+                    if (operations.failure() || operations.isRowPending()) {
                       setError(
                         "앞선 변경을 처리한 뒤 저장하세요. 입력은 셀에 남아 있습니다.",
                       );
@@ -2968,16 +2970,22 @@ function Workspace({
                       );
                       return false;
                     }
+                    // The version seen when the editor opened guards against
+                    // someone else's change meanwhile; own changes saved or
+                    // still waiting move it (useSheetOperations.watchCell).
                     if (
-                      !mutate([point], () => ({
-                        value: v,
-                        ...(baseline
-                          ? { expectedVersion: baseline.version }
-                          : {}),
-                      }))
+                      !mutate(
+                        [point],
+                        () => ({
+                          value: v,
+                          ...(baseline
+                            ? { expectedVersion: baseline.version }
+                            : {}),
+                        }),
+                        { editor: true },
+                      )
                     )
                       return false;
-                    if (!sheetClone) setPendingEdit({ point, value: v });
                     editorRef.current = null;
                     setEditor(null);
                     return true;
@@ -3431,15 +3439,19 @@ function Workspace({
           )}
           <footer className="form-actions">
             <Button
-              disabled={!!pending}
+              disabled={operations.sending}
               onClick={async () => {
                 if (
                   !confirm(
-                    "저장되지 않은 입력을 버리고 최신 업무를 불러올까요?",
+                    operations.queued.length
+                      ? `저장되지 않은 입력과 그 뒤에 기다리던 변경 ${operations.queued.length}건을 버리고 최신 업무를 불러올까요?`
+                      : "저장되지 않은 입력을 버리고 최신 업무를 불러올까요?",
                   )
                 )
                   return;
-                operations.clearFailure();
+                operations.clearFailure({ discard: true });
+                // The dropped changes leave the queue before the sheet reloads.
+                await operations.idle();
                 // 버린 칠하기에 묶이지 않은 일반 배경색 안내가 다음 변경에 붙지 않게 한다.
                 setUndoToast((toast) =>
                   toast?.kind === "work" && !toast.target ? null : toast,
@@ -3451,14 +3463,16 @@ function Workspace({
               입력 취소·최신 내용 보기
             </Button>
             <Button
-              disabled={!!pending || (failed.error as ApiError).status === 410}
+              disabled={
+                operations.sending || (failed.error as ApiError).status === 410
+              }
               onClick={() => retryFailed(false)}
             >
               다시 시도
             </Button>
             {(failed.error as ApiError).status === 409 && (
               <Button
-                disabled={!!pending}
+                disabled={operations.sending}
                 className="primary"
                 onClick={() => retryFailed(true)}
               >

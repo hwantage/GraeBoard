@@ -6,6 +6,7 @@ import {
   getTasksById,
   upsertCellStatement,
   pruneStyles,
+  previousStamps,
   touchTasks,
 } from "../../db.mjs";
 import { requireThat, validateCellValue } from "../../../shared/validation.js";
@@ -193,15 +194,15 @@ export class SqliteTaskRepository extends SqliteTaskCommands {
         db,
         before.map((c) => c.style),
       );
-      const updatedAt = touchTasks(db, [
-        ...new Set(after.map((c) => tasks.get(c.taskId))),
-      ]);
+      const touched = [...new Set(after.map((c) => tasks.get(c.taskId)))];
+      const updatedAt = touchTasks(db, touched);
       const result = {
         cells: after,
         before,
         operationId: d.operationId,
         savedAt: now(),
         updatedAt,
+        previousUpdatedAt: previousStamps(touched),
         ...(tasks.size &&
         new Set([...tasks.values()].map((t) => t.teamId)).size === 1
           ? { formatRevision: [...tasks.values()][0].formatting?.revision ?? 0 }

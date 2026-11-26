@@ -200,6 +200,9 @@ export type BatchResult = {
   cells: SavedCell[];
   before: SavedCell[];
   updatedAt?: Record<string, string>;
+  // Each touched row's stamp before this save. Live responses only: a
+  // replayed operation and an older server leave it out.
+  previousUpdatedAt?: Record<string, string>;
   operationId: string;
   savedAt: string;
   formatting?: Formatting;

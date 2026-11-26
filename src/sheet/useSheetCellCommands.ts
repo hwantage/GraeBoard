@@ -66,7 +66,6 @@ export default function useSheetCellCommands({
   editor,
   workspaceRef,
   editable,
-  pending,
   failed,
   range,
   count,
@@ -101,7 +100,6 @@ export default function useSheetCellCommands({
   editor: SheetEditor | null;
   workspaceRef: RefObject<HTMLDivElement | null>;
   editable: boolean;
-  pending: number;
   failed: ReturnType<typeof useSheetOperations>["failed"];
   range: ReturnType<typeof rangeOf>;
   count: number;
@@ -131,16 +129,22 @@ export default function useSheetCellCommands({
     return selectedPoints(selection, visibleTasks, columns);
   }
 
-  function rejectPendingChanges() {
-    if (!operations.isPending()) return false;
-    setError("앞선 변경을 저장 중입니다. 잠시 후 다시 적용하세요.");
+  // Row commands, the task panel and a format undo/redo are not part of the
+  // cell queue: a cell change made while one is saved is refused as before.
+  function rejectRowCommand(message = "잠시 후 다시 적용하세요.") {
+    if (sheetClone || !operations.isRowPending()) return false;
+    setError(`앞선 변경을 저장 중입니다. ${message}`);
     return true;
   }
 
+  // A change made while an earlier one is being saved waits its turn (see
+  // useSheetOperations). `token` names it for the caller's onResult; `editor`
+  // marks the edit committed in the open cell editor.
   function submitChanges(
     build: () => CellChange[],
     mode: CellFailure["mode"] = "normal",
     buildFormat?: () => FormatChange,
+    options: { token?: string; editor?: boolean } = {},
   ) {
     if (sheetClone) {
       if (!editingSheetClone || !canAdd || presentation) return false;
@@ -170,41 +174,53 @@ export default function useSheetCellCommands({
       }
     }
     if (sheetClone || presentation || operations.failure()) return false;
-    if (rejectPendingChanges()) return false;
+    if (rejectRowCommand()) return false;
     return operations.submit(
       () => ({ changes: build(), format: buildFormat?.() }),
       mode,
       selectionEpoch.current,
+      options,
     );
   }
 
   function mutate(
     points: Point[],
     transform: (t: Task, key: string) => Partial<CellChange>,
+    options: { token?: string; editor?: boolean } = {},
   ) {
     if (!points.length) return false;
-    return submitChanges(() => {
-      const tasksById = new Map(editTasks().map((t) => [t.id, t]));
-      return points.map((p) => {
-        const task = tasksById.get(p.taskId);
-        if (!task) throw new Error("편집할 업무를 찾지 못했습니다.");
-        if (!(sheetClone ? canAdd : canEdit(user, task)))
-          throw new Error(
-            "선택 범위에 편집 권한이 없는 업무가 포함되어 있습니다.",
-          );
-        return {
-          ...p,
-          expectedVersion: cell(task, p.key).version,
-          expectedFormatRevision: task.formatting?.revision ?? 0,
-          ...transform(task, p.key),
-        };
-      });
-    });
+    return submitChanges(
+      () => {
+        const tasksById = new Map(editTasks().map((t) => [t.id, t]));
+        return points.map((p) => {
+          const task = tasksById.get(p.taskId);
+          if (!task) throw new Error("편집할 업무를 찾지 못했습니다.");
+          if (!(sheetClone ? canAdd : canEdit(user, task)))
+            throw new Error(
+              "선택 범위에 편집 권한이 없는 업무가 포함되어 있습니다.",
+            );
+          return {
+            ...p,
+            expectedVersion: cell(task, p.key).version,
+            expectedFormatRevision: task.formatting?.revision ?? 0,
+            ...transform(task, p.key),
+          };
+        });
+      },
+      "normal",
+      undefined,
+      options,
+    );
   }
 
-  function applyStyle(part: Partial<Style>, reset = false, target = selection) {
+  function applyStyle(
+    part: Partial<Style>,
+    reset = false,
+    target = selection,
+    token?: string,
+  ) {
     try {
-      if (applyCommonStyle(part, reset, undefined, target)) return true;
+      if (applyCommonStyle(part, reset, undefined, target, token)) return true;
       return mutate(
         selectedPoints(target, matchingTasks, columnOrder, MAX_STYLE_CELLS),
         (t, k) => ({
@@ -212,6 +228,7 @@ export default function useSheetCellCommands({
             ? resetCellStyle(t, k)
             : { ...cell(t, k).style, ...part },
         }),
+        { token },
       );
     } catch (e) {
       setError((e as Error).message);
@@ -256,7 +273,7 @@ export default function useSheetCellCommands({
       setFormatBrush(null);
       return;
     }
-    if (!editable || pending || editor || presentation) return;
+    if (!editable || editor || presentation) return;
     try {
       if (selection?.areas?.length)
         throw new Error("서식을 복사할 때는 하나의 연속된 영역을 선택하세요.");
@@ -289,7 +306,7 @@ export default function useSheetCellCommands({
 
   function paintFormat(target: Selection | null) {
     if (!formatBrush || !target || editor || presentation || failed) return;
-    if (!sheetClone && rejectPendingChanges()) return;
+    if (rejectRowCommand()) return;
     try {
       const { styles, repeat } = formatBrush;
       const ranges = rangesOf(target, matchingTasks, columnOrder);
@@ -351,6 +368,7 @@ export default function useSheetCellCommands({
     reset = false,
     border?: { preset: BorderPreset; border: Border | null },
     target = selection,
+    token?: string,
   ) {
     const ranges = rangesOf(target, matchingTasks, columnOrder);
     if (!ranges.length || ranges.some((r) => !r.kind || r.kind === "cells"))
@@ -387,6 +405,7 @@ export default function useSheetCellCommands({
           ),
         };
       },
+      { token },
     );
     return true;
   }
@@ -433,10 +452,7 @@ export default function useSheetCellCommands({
       failed
     )
       return false;
-    if (operations.isPending()) {
-      setError("앞선 변경을 저장 중입니다. 잠시 후 편집하세요.");
-      return false;
-    }
+    if (rejectRowCommand("잠시 후 편집하세요.")) return false;
     if (!(sheetClone ? canAdd : canEdit(user, task))) {
       setError("이 업무를 편집할 권한이 없습니다.");
       return false;
@@ -451,6 +467,8 @@ export default function useSheetCellCommands({
     const next = { point: p, initial, task };
     editorRef.current = next;
     setEditor(next);
+    if (!sheetClone)
+      operations.watchCell(p.taskId, p.key, cell(task, p.key).version);
     return true;
   }
 

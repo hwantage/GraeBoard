@@ -4139,7 +4139,7 @@ test("진척률을 텍스트로 편집·붙여넣고 여섯 자리 이슈 번호
   });
 });
 
-test("짧은 셀 저장은 툴바를 깜빡이지 않고 긴 저장과 실패는 표시한다", async ({
+test("셀 저장 중에도 서식 툴바는 쓸 수 있고 긴 저장과 실패는 표시한다", async ({
   page,
 }) => {
   const cell = page.locator(`[data-cell="${taskIds[0]}:title"]`);
@@ -4155,16 +4155,18 @@ test("짧은 셀 저장은 툴바를 깜빡이지 않고 긴 저장과 실패는
   });
   try {
     await bold.click();
-    await expect(bold).toBeDisabled();
+    // The toolbar stays usable while the save is on its way: the next
+    // change waits behind it.
+    await expect(bold).toBeEnabled();
     expect(await bold.evaluate((el) => getComputedStyle(el).opacity)).toBe("1");
     await expect(page.locator(".save-status")).toHaveCount(0);
     await expect(page.locator(".save-status")).toHaveText("저장 중");
-    await expect(bold).toHaveCSS("opacity", "0.45");
-    expect(await page.getByRole("grid").boundingBox()).toEqual(gridBox);
-    release();
     await expect(bold).toBeEnabled();
     await expect(bold).toHaveCSS("opacity", "1");
+    expect(await page.getByRole("grid").boundingBox()).toEqual(gridBox);
+    release();
     await expect(page.locator(".save-status")).toHaveCount(0);
+    await expect(bold).toBeEnabled();
   } finally {
     release();
     await page.unroute("**/api/cells/batch");
@@ -4689,14 +4691,12 @@ for (const lastAction of ["셀 편집", "업무 추가"]) {
     await pasteContents(page, { "text/plain": "가장 오래된 편집" });
     await expect(first).toHaveText("가장 오래된 편집");
     await expect(bold).toBeEnabled();
-    for (let i = 0; i < 49; i++) {
-      await bold.click();
-      await expect(bold).toBeEnabled();
-    }
+    // Each click toggles what the clicks before it left, saved or not.
+    for (let i = 0; i < 49; i++) await bold.click();
     let created: Locator | undefined;
     if (lastAction === "셀 편집") {
       await bold.click();
-      await expect(bold).toBeEnabled();
+      await expect(undo).toBeEnabled();
     } else {
       const [response] = await Promise.all([
         page.waitForResponse(
