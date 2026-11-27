@@ -17,6 +17,7 @@ import {
   stringify,
   parseCompact,
 } from "../../shared/formatting/compact.js";
+import { replayedResult } from "../support/cell-batch-replay-helper.mjs";
 
 async function fixture(t) {
   const db = openDatabase(":memory:"),
@@ -290,7 +291,8 @@ test("3천 셀 서식은 DB·요청·응답·이력에 한 번만 저장하고 �
     1,
     "사전으로 저장한 이력도 업무별로 검색한다",
   );
-  assert.deepEqual((await f.request("/cells/batch", body)).data, saved.data);
+  const stored = replayedResult(saved.data);
+  assert.deepEqual((await f.request("/cells/batch", body)).data, stored);
   const undone = await f.request(`/audit/${history.id}/restore`, {
     versions: Object.fromEntries(
       changes.map((c) => [`${c.taskId}:${c.key}`, 1]),
@@ -306,7 +308,7 @@ test("3천 셀 서식은 DB·요청·응답·이력에 한 번만 저장하고 �
   );
   assert.deepEqual(
     (await f.request("/cells/batch", body)).data,
-    saved.data,
+    stored,
     "사전 정리 후에도 이력 자체로 최초 응답을 재생한다",
   );
   assert.equal(
@@ -344,7 +346,12 @@ test("동일한 값·서식 저장은 셀·버전·업무시각·감사 기록�
     baseline,
   );
   assert.equal(f.db.prepare("SELECT COUNT(*) n FROM audit").get().n, 0);
-  assert.deepEqual((await f.save(changes, id)).data, saved.data);
+  // A save that changes nothing touches no row.
+  assert.deepEqual(saved.data.previousUpdatedAt, {});
+  assert.deepEqual(
+    (await f.save(changes, id)).data,
+    replayedResult(saved.data),
+  );
   const events = [];
   const publish = f.app.locals.cellEvents.publish;
   f.app.locals.cellEvents.publish = (result, tasks) => {

@@ -5,6 +5,7 @@ import {
   json,
   now,
   parse,
+  previousStamps,
   pruneStyles,
   readFormatting,
   touchTasks,
@@ -269,6 +270,7 @@ export function applyFormatting(db, user, request, team, restoreEntry) {
     ...before.map((c) => c.style),
   ]);
   const updatedAt = touchTasks(db, [...tasks.values()]),
+    previousUpdatedAt = previousStamps(tasks.values()),
     savedAt = now();
   const auditId = audit(
     db,
@@ -301,5 +303,6 @@ export function applyFormatting(db, user, request, team, restoreEntry) {
     operationId: request.operationId,
     savedAt,
     updatedAt,
+    previousUpdatedAt,
   };
 }

@@ -19,6 +19,9 @@ export type SheetUndoNotice =
           sheet: string;
           before: HistoryEntry | Task[] | undefined;
           target?: HistoryEntry | Task[];
+          // The change that painted, while it waits to be saved: the record
+          // to bind is the one its own save makes.
+          token?: string;
           mark: { color: string; selection: Selection };
         }
     ))

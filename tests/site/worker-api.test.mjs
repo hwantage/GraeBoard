@@ -40,6 +40,7 @@ import {
   assertStateCapacity,
   assertDatabaseCapacity,
 } from "../../worker/storage/capacity.mjs";
+import { replayedResult } from "../support/cell-batch-replay-helper.mjs";
 const pgBin = process.env.TEST_PG_BIN || "/tmp/graeboard-pg18/bin";
 test(
   "Worker real PostgreSQL API: setup, invitation, all shared domains, atomic retries, tenant isolation and events",
@@ -293,7 +294,13 @@ test(
       const saved = await request("/cells/batch", op);
       assert.equal(saved.status, 200);
       assert.equal(saved.body.cells[0].value, "Saved outside");
-      assert.deepEqual((await request("/cells/batch", op)).body, saved.body);
+      // The row's stamp before the save comes with the live answer only.
+      assert.deepEqual(saved.body.previousUpdatedAt, {
+        [task.id]: task.updatedAt,
+      });
+      assert.notEqual(saved.body.updatedAt[task.id], task.updatedAt);
+      const stored = replayedResult(saved.body);
+      assert.deepEqual((await request("/cells/batch", op)).body, stored);
       assert.equal(
         (await request("/cells/batch", { ...op, operationId: randomUUID() }))
           .status,
@@ -1179,7 +1186,7 @@ test(
           200,
         );
       }
-      assert.deepEqual((await request("/cells/batch", op)).body, saved.body);
+      assert.deepEqual((await request("/cells/batch", op)).body, stored);
       await Promise.allSettled(work);
       assert.equal(
         headChecks,

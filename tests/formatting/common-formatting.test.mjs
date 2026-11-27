@@ -26,6 +26,7 @@ import {
 } from "../../server/sheet-clones/sheet-clones.mjs";
 import { formatScopes } from "../../src/sheet/format-selection.js";
 import { applyBorderPreset } from "../../shared/formatting/borders.js";
+import { replayedResult } from "../support/cell-batch-replay-helper.mjs";
 
 async function fixture(t) {
   const db = openDatabase(":memory:"),
@@ -354,7 +355,7 @@ test("열 공통 서식·셀 예외·속성별 재적용과 실행취소는 서�
   assert.equal(redone.status, 200, JSON.stringify(redone.data));
   assert.equal(cell(getTask(f.db, a.id), key).style.backgroundColor, "#ffe599");
   const replay = await f.request("/cells/batch", yellow.body);
-  assert.deepEqual(replay.data, yellow.data);
+  assert.deepEqual(replay.data, replayedResult(yellow.data));
   assert.equal(cell(getTask(f.db, a.id), key).style.backgroundColor, "#ffe599");
 });
 
@@ -457,6 +458,32 @@ test("서식 요청은 낡은 업무·잘못된 열·타 팀 업무를 원자적
   assert.equal(
     f.db.prepare("SELECT count(*) n FROM audit WHERE action='format'").get().n,
     0,
+  );
+});
+
+test("저장 결과는 바꾼 행의 저장 전 갱신 시각을 함께 돌려준다", async (t) => {
+  const f = await fixture(t),
+    a = f.task({ note: { value: "", style: { bold: true } } }),
+    b = f.task();
+  // A queued change moves what it expects past an own save only when the
+  // save replaced what it saw (src/sheet/cell-save-queue.js).
+  const seen = getTask(f.db, a.id).updatedAt;
+  const cellSave = await f.saveCell(a.id, "title", { italic: true });
+  assert.equal(cellSave.status, 200);
+  assert.deepEqual(cellSave.data.previousUpdatedAt, { [a.id]: seen });
+  assert.equal(cellSave.data.updatedAt[a.id], getTask(f.db, a.id).updatedAt);
+  assert.notEqual(cellSave.data.updatedAt[a.id], seen);
+  const before = Object.fromEntries(
+    [a, b].map((t) => [t.id, getTask(f.db, t.id).updatedAt]),
+  );
+  const format = await f.sendFormat([
+    { rows: [a.id, b.id], keys: null, style: { bold: false } },
+  ]);
+  assert.equal(format.status, 200);
+  assert.deepEqual(format.data.previousUpdatedAt, before);
+  assert.deepEqual(
+    Object.keys(format.data.updatedAt).sort(),
+    Object.keys(before).sort(),
   );
 });
 

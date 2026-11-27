@@ -216,9 +216,14 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
         : await ctx.locate("task", d.changes[0]?.taskId, { write: true }),
       teamId = first.teamId,
       allowed = await assignable(ctx, teamId);
-    return ctx.data(
+    // Each touched row's stamp before this save (see previousStamps in
+    // server/db.mjs). It joins the live response only: the stored response a
+    // replayed operation returns keeps its format.
+    let live = null;
+    const saved = await ctx.data(
       teamId,
       async (s) => {
+        const previousUpdatedAt = {};
         const settings = await settingsFor(s),
           before = [],
           cells = [],
@@ -448,6 +453,8 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
           }
         }
         for (const id of new Set(cells.map((c) => c.taskId))) {
+          // `touch` reads the same row through the session cache.
+          previousUpdatedAt[id] = stamp(await s.get("task", [id]));
           await s.touch("task", [id]);
           updatedAt[id] = stamp(await s.get("task", [id]));
         }
@@ -476,9 +483,13 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
             operationId: d.operationId,
             updatedAt,
           });
+        live = { result, previousUpdatedAt };
         return result;
       },
       { write: true, body: d, action: d.format ? "format" : "cells" },
     );
+    return saved === live?.result
+      ? { ...saved, previousUpdatedAt: live.previousUpdatedAt }
+      : saved;
   }
 }

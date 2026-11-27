@@ -12,6 +12,7 @@ import {
   now,
 } from "../../server/db.mjs";
 import { DEFAULT_SETTINGS, todayKey } from "../../shared/domain.js";
+import { replayedResponse } from "../support/cell-batch-replay-helper.mjs";
 
 const DAY = 86400000;
 const ago = (days) => new Date(Date.now() - days * DAY).toISOString();
@@ -395,7 +396,7 @@ test("재시도는 원래 시각으로 7일 내 응답을 재생하고 만료·�
       { taskId: f.task.id, key: "title", value: "수정", expectedVersion: 1 },
     ],
   };
-  const saved = await f.request("/cells/batch", payload);
+  const saved = replayedResponse(await f.request("/cells/batch", payload));
   assert.equal(saved.status, 200);
   t.mock.timers.setTime(start + 6 * DAY);
   assert.deepEqual(await f.request("/cells/batch", payload), saved);
@@ -449,7 +450,7 @@ test("여러 팀을 수정한 유효한 셀 요청은 정리 후에도 전후 �
       expectedVersion: 1,
     })),
   };
-  const saved = await f.request("/cells/batch", payload);
+  const saved = replayedResponse(await f.request("/cells/batch", payload));
   assert.equal(saved.status, 200);
   // Exercise protection independently of the normal timestamp ordering.
   f.db
