@@ -30,6 +30,47 @@
 
 - `tests/browser/documents/document-input.spec.ts`에 글머리·번호·체크리스트 항목 안 코드 블록에서 Enter·Shift+Enter로 세 줄을 쓰고 항목이 하나로 남는지, 저장한 Markdown의 들여쓴 세 줄, ⌘/Ctrl+Enter가 같은 항목 안 코드 블록 아래 문단으로 나가는지를 추가했습니다. 수정 전 코드(빌드 후 Chromium)에서는 세 검사 모두 항목이 2개가 되어 실패했고, 수정 후 Chromium·Firefox·WebKit 9건 통과했습니다.
 - `E2E_PORT=4383 npx playwright test tests/browser/documents/`(Chromium·Firefox·WebKit): 801건 중 778 통과, 8 실패, 15 skip(56.9분, 다른 브라우저 검사 2개와 동시 실행). 실패 중 `document-toc.spec.ts:380`(일정 문서와 메모 카드 목차) 3건은 origin/main `4f2a8d9` 빌드에서도 Chromium에서 같은 위치로 실패하는 기존 실패입니다. 나머지 5건(`task-documents.spec.ts`의 2385·3959·1100·3276행, Firefox·WebKit)은 같은 소스로 단독 재실행해 10건 모두 통과했습니다.
+
+## 2026-11-28 — 저장한 Markdown의 `[`는 필요할 때만 이스케이프
+
+리치 문서의 `[공통]`이 원문에서 `\[공통]`으로, 직접 입력한 `\[공통]`은 `\\\[공통]`으로 보였습니다. 다른 Markdown 편집기는 입력한 그대로 둡니다.
+
+원인:
+
+- 리치 편집은 저장마다 문서 트리에서 Markdown 전체를 새로 씁니다. mdast-util-to-markdown 2.2.0은 글 속 `[`가 링크·참조·정의를 시작할 수 있다며 문맥과 관계없이 모두 `\[`로 쓰고, `[` 앞의 역슬래시도 `\\`로 씁니다. `\[`는 CommonMark의 정상 이스케이프라 화면은 같았지만 원문과 복사한 글이 지저분했습니다.
+- 함께 찾은 결함: Milkdown의 `text` 핸들러는 `*`·`_`·`\` 없이 공백으로 끝나는 글을 이스케이프 없이 그대로 씁니다. Backspace로 되돌린 `1. `이나 끝에 공백이 있는 `[a](b) `는 다시 열면 번호 목록·링크가 되었습니다.
+
+변경(`src/documents/editor/document-markdown.ts`의 `configureTextEscapes`, DB 변경 지침에 따라 사용자 승인):
+
+- `root` 핸들러에서 문서 트리를 한 번 훑어 문단·제목·표 칸·토글 제목 단위로 판단합니다. 링크·이미지·참조 노드를 중립 문자 하나로 바꾼 블록 글(코드·HTML 포함)에 `](`·`][`가 있거나, `[`로 시작하는 문단·토글 제목에 `]:`가 있거나(정의 이름은 여러 줄일 수 있음), 줄바꿈 뒤 `[`로 시작하는 줄 안에 `]:`가 있거나(각주 정의는 문단 중간 줄에서도 시작), 목록 항목 첫 문단이 `[ ]`·`[x]`로 시작하면 기존 이스케이프를 유지합니다. 나머지 블록의 글자 노드만 `state.unsafe`에서 `[` 규칙을 빼고 직렬화합니다. 링크 글자 안은 기존 이스케이프를 유지합니다.
+- 같은 `text` 래퍼가 끝 공백을 떼어 앞 글자는 일반 경로로 이스케이프하고 공백만 그대로 붙입니다.
+- 저장·변환 보존 검사·클립보드 Markdown이 같은 직렬화기를 씁니다. 일괄 변환은 없습니다. 리치 편집은 저장마다 문서 전체를 다시 쓰므로 다음 저장에서 문서 안의 필요 없는 `\[`가 모두 `[`로 바뀝니다. 이전 버전 화면은 다시 `\[`로 쓰므로 사내·외부 서버를 함께 업데이트해야 같은 문서를 양쪽에서 고칠 때 대괄호 줄이 번갈아 바뀌며 겹치는 수정이 충돌 화면이 되는 일을 피합니다. 토글 제목 직렬화가 이스케이프를 하도록 고친 `fix/toggle-title-markdown` 위에 쌓았습니다.
+
+검증:
+
+- `tests/browser/documents/task-documents.spec.ts`에 다섯 검사를 추가했습니다. 기존 이스케이프로 저장된 15가지 줄(링크·참조·정의·체크리스트·각주·표·제목·링크 옆 대괄호)을 편집해 정확한 저장 원문과 다시 연 화면·복사한 Markdown을 비교합니다. 공백으로 끝나는 `[a](b) `·되돌린 `1. `이 다시 열어도 링크·목록이 아닌지, 대괄호·역슬래시를 섞은 31줄을 입력해 다시 열어도 같은 글인지, 토글 제목의 `**[소식]**`은 그대로·`[a]: b`는 이스케이프되는지 봅니다. 원문의 소프트 줄바꿈 뒤 `\[^1]: 출처`, Shift+Enter 뒤 입력한 `[^2]: 다른 출처`, Shift+Enter로 두 줄에 걸쳐 입력한 `[참고`·`자료]: 링크`가 역슬래시를 유지해 정의가 되지 않는지 봅니다(리뷰에서 찾은 결함 두 건, 각 수정 전 규칙에서 Chromium 실패 확인). 기존 두 검사(복사한 일반 텍스트, 닫는 태그 없는 토글)의 기대 원문을 바꿨습니다.
+- 수정 전 코드에서 앞의 두 새 검사가 실패했고(Chromium), 수정 후 새 검사 네 개와 기존 대괄호·토글 검사 네 개(`document-editor-blocks.spec.ts`의 닫는 태그 없는 토글과 토글 제목 두 검사 포함)가 Chromium·Firefox·WebKit 24건 모두 통과했습니다.
+- 통합 검증(2026-11-28): 같은 날의 문서 편집기 브랜치 6개(토글 제목·`[` 이스케이프·목록 코드 블록 Enter·모드 전환 위치·코드 블록 복사·슬래시 메뉴)를 origin/main `4f2a8d9`에 합친 `44416fc`에서 `npm run check:structure`(817개 파일, 오류 0)·`check:architecture`(487개 모듈, 위반 0)·`npm run build`·`npm run build:edge` 통과, `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 1,033건 통과(실패·취소·skip 0, 1,001초), `npx playwright test tests/browser/documents/`(Chromium·Firefox·WebKit) 876건 중 855 통과·15 skip·6 실패. 실패는 origin/main에서도 실패하는 `document-toc.spec.ts:380` 3건과, 단독 재실행에서 6건 모두 통과한 `task-documents.spec.ts`의 사본 문서 개수(Firefox·WebKit)·편집기 코드 로딩 실패(WebKit) 3건입니다. 사용자가 같은 통합본을 개발 DB 사본으로 띄운 시험 서버(4341)에서 확인했습니다.
+- 영향 측정(사용자 요청): 저장 직렬화 시간은 18KB 3.2→3.5ms, 64KB 9.8→11.5ms, 256KB 39.8→46.4ms(약 11% 증가, 같은 로직의 Node 벤치마크). 운영 스냅샷인 개발 DB 사본의 비어 있지 않은 문서 2,335개 중 `\[`가 있는 문서는 418개, 한 문서의 `\[`는 최대 69개이고 실제로 빠지는 것은 최대 10개였습니다. 이 문서들로 동시 편집 병합(`mergeDocument`)을 재면 모두 2ms 안에 성공했습니다. 64KB 이상이면서 `\[` 수백 개가 빠지는 합성 문서에서는 문자 비교가 50ms 제한을 넘어 두 사람이 동시에 입력할 때 충돌 안내(입력 보존)가 뜰 수 있으나, 해당하는 실제 문서는 없었습니다. 동기화는 문서 본문 전체를 문서 단위로 주고받으므로 전송량·충돌 판정은 다른 편집과 같습니다.
+
+## 2026-11-28 — 번호·기호로 시작하는 토글 제목
+
+`<summary><h2>10. 참고</h2></summary>`처럼 토글 제목이 번호·기호로 시작하는 문서가 리치 편집으로 열리지 않고 "HTML·각주·참조 링크 등은 Markdown 원문에서 편집하세요" 안내와 함께 원문 전용이 되었습니다. 사용자 문서(합성 재현만 검사에 포함)에서 제목만 `참고`로 바꾸면 문서 전체가 리치로 열렸습니다. 링크가 없는 문서라 열린 PR #110(파일 경로 링크 허용)과는 관계가 없습니다.
+
+원인:
+
+- `parseSummary`는 제목을 한 줄짜리 Markdown 문서로 따로 파싱해 문단 하나일 때만 토글로 묶습니다. `10. 참고`는 10부터 시작하는 번호 목록이 되므로 `<details>`가 html 노드로 남고 `checkMarkdown`이 리치 편집을 막았습니다.
+- 이 원문은 리치 편집이 만들었습니다. `detailsToMarkdown`이 제목을 `phrasing` 구성에 들어가지 않은 채 앞뒤를 `>`·`<`로 두고 직렬화해 줄 맨 앞(`10.`·`-`·`#`·`>`)과 글 속(`*`·`[`·`<`) 이스케이프가 전혀 없었습니다. 원문에서 `10\. 참고`로 고쳐도 다음 저장이 `10. 참고`로 되돌려 변환 보존 검사에서 막혔습니다.
+
+변경(`src/documents/editor/DocumentToggle.ts`, DB 변경 지침에 따라 사용자 승인):
+
+- 제목을 `phrasing` 안에서 앞뒤를 줄바꿈으로 둔 문단 줄처럼 직렬화해 `10\. 참고`·`\- 항목`·`\*별\*`·`\[a]\(b)`로 씁니다. 이 형태는 이전 버전도 같은 제목으로 읽습니다.
+- 한 문단으로 파싱되지 않는 기존 제목은 `literalStart`가 앞 공백을 지우고 맨 앞 번호의 `.`/`)` 또는 `#`·`>`·`+`·`-`·`*`·`_`·`` ` ``·`~`·`[` 앞에 역슬래시를 붙여 다시 파싱합니다. HTML로 시작하는 제목은 그대로 원문 전용입니다. 일괄 변환은 하지 않고 리치 편집의 다음 저장에서 이스케이프한 형태로 바뀝니다.
+
+검증:
+
+- `tests/browser/documents/document-editor-blocks.spec.ts`에 두 검사를 추가했습니다. 이스케이프 없이 저장된 `<h2>10. 참고</h2>`·`- 항목`·`# 해시`·`> 인용`·`[a]: b` 제목 다섯 토글이 안내 없이 리치로 열리고, 편집 후 이스케이프한 제목으로 저장되며 다시 열어도 같은 제목인지 봅니다. 토글 제목에 입력한 ` *별* [a](b) <i></summary>끝`이 `\*별\* \[a]\(b) \<i>\</summary>끝`으로 저장되고 다시 열어도 강조·링크 없이 글자로 남는지 봅니다. 수정 전 코드에서는 두 검사 모두 실패했고(Chromium), 수정 후 Chromium·Firefox·WebKit 6건 통과했습니다. 최종 커밋에서 `document-editor-blocks.spec.ts`의 토글 검사 전체(기존 포함 6개)가 세 엔진 18건 통과했습니다.
+- 사용자 문서(`draft/mdsample/problem.txt`, 저장소 미포함)를 수정 후 빌드에 저장해 리치 편집이 안내 없이 열리는 것을 확인했습니다.
 - `npm run check:structure`(815개 파일, 오류 0)·`check:architecture`(485개 모듈, 위반 0)·`npm run build`·`npm run build:edge` 통과.
 - 통합 검증(2026-11-28): 같은 날의 문서 편집기 브랜치 6개(토글 제목·`[` 이스케이프·목록 코드 블록 Enter·모드 전환 위치·코드 블록 복사·슬래시 메뉴)를 origin/main `4f2a8d9`에 합친 `44416fc`에서 `npm run check:structure`(817개 파일, 오류 0)·`check:architecture`(487개 모듈, 위반 0)·`npm run build`·`npm run build:edge` 통과, `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 1,033건 통과(실패·취소·skip 0, 1,001초), `npx playwright test tests/browser/documents/`(Chromium·Firefox·WebKit) 876건 중 855 통과·15 skip·6 실패. 실패는 origin/main에서도 실패하는 `document-toc.spec.ts:380` 3건과, 단독 재실행에서 6건 모두 통과한 `task-documents.spec.ts`의 사본 문서 개수(Firefox·WebKit)·편집기 코드 로딩 실패(WebKit) 3건입니다. 사용자가 같은 통합본을 개발 DB 사본으로 띄운 시험 서버(4341)에서 확인했습니다.
 
@@ -42,7 +83,8 @@
 - 화면: 저장을 기다리는 변경은 바로 보입니다(`project`: 값·셀 서식·공통 서식 규칙, 셀 버전은 그 변경이 기대하는 값). 툴바 토글·서식 복사·업무 표시 잠금도 이 화면을 기준으로 합니다. 저장이 실패하면 뒤의 변경은 재시도가 성공하거나 입력 취소할 때까지 기다립니다. "입력 취소"는 실패한 입력과 그 뒤에 기다리던 변경을 함께 버립니다(뒤 변경은 앞 변경을 반영한 화면에서 만들어졌으므로, 보내면 버린 내용이 실려 저장됨). "내 변경 다시 적용"은 실패한 변경만 덮어쓰고, 그 위에 만든 변경은 원래 본 버전을 유지해 충돌로 남깁니다. 실패 창의 버튼은 요청을 보내거나 재시도를 준비하는 동안에만 막습니다. 원본의 일반 배경색 안내는 자기 칠하기의 저장 기록에 묶습니다(`token`, 사본은 초안 기록에 바로 묶이므로 쓰지 않음). 팀 접근을 잃으면 기다리던 변경은 보내지 않고 버립니다.
 - 그대로 둔 것: 행 추가·삭제·이동, 실행취소·재실행, 연도·화면 이동, 로그아웃, 업무 상세 속성 저장은 저장이 끝난 뒤에만 됩니다. 반대로 행 명령·상세 속성 저장, 서식 실행취소·재실행이 진행 중일 때는 셀 변경을 이전처럼 받지 않습니다(`isRowPending`). 서식 실행취소·재실행은 기록된 상태로 되돌리므로 결과 전에는 화면에 미리 그릴 수 없어, 그 뒤에 만든 변경이 되돌리기 전 서식을 셀 고유 서식으로 저장할 수 있었습니다(Fable 리뷰 지적). DB 스키마·저장 형식은 바꾸지 않았습니다.
 - 리뷰: 독립 리뷰 2회와 Fable 5.2(xhigh) 리뷰를 반영했습니다. 1차는 행 갱신 시각 흡수(→ `previousUpdatedAt`과 "바꾸기 전 값이 본 값과 같을 때만 옮김" 규칙)와 다른 팀 사본 열기의 대기 변경 유실, 2차는 미리보기 계산 범위, Fable 리뷰는 사본에서 일반 배경색 안내의 "업무 표시로 바꾸기"가 비활성으로 남던 문제(토큰은 원본에만), 서식 실행취소·재실행 뒤에 만든 변경이 되돌리기 전 서식을 저장하던 문제(그동안 셀 변경 거절), 오래된 문서 문구, 테스트 공백을 지적했습니다.
-- 검증: `npm test` 1,032건 통과(`tests/sheet/cell-save-queue.test.mjs` 11건, SQLite·PostgreSQL 응답의 `previousUpdatedAt`과 재시도 응답 검사 포함, 재시도 응답 비교는 `tests/support/cell-batch-replay-helper.mjs`). `npm run build`·`npm run build:edge`·`check:structure`·`check:architecture` 통과. 브라우저: Chromium 전체 881건 중 863 통과·1 건너뜀·17 실패, 실패 17건을 리뷰 반영 빌드로 다시 실행해 8건 통과(전체 실행 부하), 남은 9건(`monthly-calendar:175`·`:1586`, `document-toc:380`, `color-picker:486`, `mobile:356`·`:482`·`:1604`, `sheet-format-memo:158`, `team-sync-indicator:313`)은 main `30b51a8`에서도 같은 방식으로 실패. 리뷰 반영 뒤 관련 파일(`edit-while-saving`·`sheet-format-memo`·`workspace`·`insights`·`selection-copy-undo`·`sheet-clone-editing`·`sheet-sync`) Chromium 228 통과·1 실패(`sheet-format-memo:158`), `edit-while-saving`·`sheet-format-memo` Firefox·WebKit 46 통과·2 실패(같은 검사, main에서도 실패). `edit-while-saving.spec.ts` 12건에 같은 행의 셀 입력·행 서식 순서 2건, 다른 사람의 같은 행 변경 충돌, 서식 실행취소 저장 중 거절을 더했고, `insights.spec.ts`에 사본의 업무 표시로 바꾸기를 더했습니다.
+- CodeRabbit 리뷰(3건, #257 병합 뒤 후속 PR에서 모두 반영): ① 원본의 일반 배경색 안내가 칠하기를 대기열에 넣은 순간부터 8초를 세어, 앞선 저장이 길면 **업무 표시로 바꾸기**를 한 번도 누르지 못하고 사라질 수 있었습니다. `token`이 남아 있는 동안은 시간을 재지 않고, 저장 결과가 오면 그때부터 셉니다. ② 셀 편집창이 열린 채 실패 창의 "입력 취소·최신 내용 보기"를 누르면 편집창 때문에 `useTaskData`가 조회를 막아 최신 업무를 불러오지 못했습니다. 편집 중인 입력도 버린 변경 위에서 만들어졌으므로 대기 변경과 같이 버리고(확인 창에 함께 표시) 편집창을 닫은 뒤 불러옵니다. ③ 같은 팀 사본으로 전환할 때 사본을 받는 동안 원본 셀을 고치면 그 저장이 진행 중인 채 사본이 열렸습니다. 사본을 받은 뒤 셀 입력·저장 상태를 다시 확인합니다(`cellWorkNotice`, 다른 팀 사본 열기·`prepareCopySwitch`와 공유). 세 경우의 브라우저 검사를 더했고, 수정 전 코드에서는 모두 실패합니다.
+- 검증: `npm test` 1,032건 통과(`tests/sheet/cell-save-queue.test.mjs` 11건, SQLite·PostgreSQL 응답의 `previousUpdatedAt`과 재시도 응답 검사 포함, 재시도 응답 비교는 `tests/support/cell-batch-replay-helper.mjs`). `npm run build`·`npm run build:edge`·`check:structure`·`check:architecture` 통과. 브라우저: Chromium 전체 881건 중 863 통과·1 건너뜀·17 실패, 실패 17건을 리뷰 반영 빌드로 다시 실행해 8건 통과(전체 실행 부하), 남은 9건(`monthly-calendar:175`·`:1586`, `document-toc:380`, `color-picker:486`, `mobile:356`·`:482`·`:1604`, `sheet-format-memo:158`, `team-sync-indicator:313`)은 main `30b51a8`에서도 같은 방식으로 실패. 리뷰 반영 뒤 관련 파일(`edit-while-saving`·`sheet-format-memo`·`workspace`·`insights`·`selection-copy-undo`·`sheet-clone-editing`·`sheet-sync`) Chromium 228 통과·1 실패(`sheet-format-memo:158`), `edit-while-saving`·`sheet-format-memo` Firefox·WebKit 46 통과·2 실패(같은 검사, main에서도 실패). `edit-while-saving.spec.ts` 12건에 같은 행의 셀 입력·행 서식 순서 2건, 다른 사람의 같은 행 변경 충돌, 서식 실행취소 저장 중 거절을 더했고, `insights.spec.ts`에 사본의 업무 표시로 바꾸기를 더했습니다. CodeRabbit 반영 뒤 관련 파일 Chromium 231 통과·1 실패(`sheet-format-memo:158`, main에서도 실패), 새 검사를 포함한 `edit-while-saving`·`insights` Firefox·WebKit 62 통과.
 
 ## 2026-11-26 — 슬라이드 보관 정리를 자료의 revision 수와 무관하게 (#253)
 
@@ -471,6 +513,7 @@ PR #205가 `Grid.tsx`의 `GridCell`에 `useNewTask(c.key === "title" ? task : nu
 - 탈퇴자의 마지막 아바타 표시. bootstrap이 이미 읽는 계정 목록에서 채우므로 control 트랜잭션 수가 탈퇴자가 있어도 2회로 main과 같음(리뷰 반영, 별도 조회를 넣은 이전 구현은 3회).
 
 외부 모드 화면은 내부 서버의 실제 값으로 bootstrap 응답만 외부 모드로 바꿔 구성원 목록의 이미지·글자·색과 읽기 전용 프로필 창을 확인했습니다(`tests/browser/sync/data-sync.spec.ts`, Chromium·Firefox·WebKit). 실행 결과: `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 960건 통과(건너뜀 0), `npm run build`, `npm run build:edge`, `npm run check:structure`(오류 0), `npm run check:architecture`(위반 0), 관련 브라우저 검사 Chromium 41건·Firefox/WebKit 24건 통과. 리뷰 반영(탈퇴자 아바타를 이미 읽은 계정 목록에서 채움) 뒤 `npm test` 960건, `npm run build`, `npm run build:edge`, `team-site`, 팀 사이트 브라우저 검사를 다시 통과했습니다.
+
 ## 2026-11-24 — 외부 사이트 휴대폰에서 지금 동기화 찾기와 팀장의 연결 조회
 
 운영 외부 사이트를 휴대폰으로 연 시스템 관리자가 설정에서 **지금 동기화**를 찾지 못했습니다. 버튼은 팀 설정의 **외부 동기화** 탭에 그대로 있었고, 외부·휴대폰 폭에서도 표시·실행됩니다. 원인은 두 가지였습니다. ① 760px 이하에서 설정 메뉴의 묶음 제목(팀·시스템)을 숨겨, 이름이 같은 시스템 **외부 동기화**(팀 가져오기 화면)와 팀 탭이 구분되지 않았습니다. ② 390px에서 팀 탭 줄의 마지막 **외부 동기화**가 '외'까지만 보였습니다. 그래서 사용자는 메뉴 줄의 시스템 항목을 눌렀습니다. 화면 이름·탭 구조는 바꾸지 않고 CSS만 고쳤습니다. 760px 이하에서는 묶음 제목을 메뉴 줄에 표시하고, 700px 이하에서는 묶음마다 한 줄로 두어 제목 옆의 항목만 가로로 스크롤합니다. 같은 폭에서 팀 탭의 좌우 여백을 18px에서 8px로 줄여 360px에서도 다섯 탭이 모두 보입니다. 데스크톱 배치는 그대로입니다.
@@ -478,6 +521,7 @@ PR #205가 `Grid.tsx`의 `GridCell`에 `useNewTask(c.key === "title" ? task : nu
 재현 중 시스템 관리자가 아닌 외부 팀장의 문제도 확인했습니다. `TeamSyncSettings`는 팀장에게 상태 조회와 연결 조회(`GET /api/admin/teams/:id/connection`)를 함께 요청합니다. 사내 서버는 팀장을 허용하지만 외부 서버는 시스템 관리자만 허용해 403을 돌려줬습니다. 그 결과 처음 5초 동안 상태·실행 버튼이 보이지 않았고, 지금 동기화를 누르면 실행 뒤 다시 조회할 때 "동기화 실행 후 상태 조회 실패: 시스템 관리자만 사용할 수 있습니다."가 표시됐습니다. 사내·외부 동일 원칙에 따라 외부 서버의 연결 조회만 사내처럼 그 팀의 팀장에게 허용했습니다(`ctx.team`의 `manage` 검사, 다른 팀 팀장·팀원은 403). 연결 변경(`PUT`)과 이관은 계속 시스템 관리자 전용입니다. 외부 조회 응답은 `switchJob`·`teamId`·`profileId`·`revision`과 프로필별 `profileId`·`name`·`teamId`·`replaces`·`repository`만 담고 토큰·바인딩·비밀값은 없습니다. 이관 중(`switchJob.hasMore`)에는 팀장도 실행 버튼 대신 진행 안내를 보고, **이어서 연결 이관**·**중단**은 이관 API를 쓰는 시스템 관리자에게만 표시합니다. 사내 연결 조회에는 `switchJob`이 없어 사내 화면은 바뀌지 않습니다. 이관 중 외부 서버의 실행 API를 코드로 확인했습니다. `POST …/sync/run`은 거절 상태 코드를 주지 않습니다. 대신 동기화 lease 획득(`worker/sync/sync-store.mjs`의 `acquire`)이 열린 유지보수 작업(`profile-switch`) 때문에 실패해 `busy`로 아무 작업도 하지 않습니다. 일시정지·재개는 409 "정리가 진행 중입니다."로 거절합니다. 이번에는 고치지 않았습니다. DB·저장·동기화 형식은 바뀌지 않았습니다. 배포 안내: 팀장 연결 조회는 외부 서버(Supabase Edge) 코드 변경이므로 외부 사이트도 함께 배포해야 반영됩니다.
 
 검증: Node.js 22.23.1·PostgreSQL 17.11에서 `TEST_PG_BIN=… npm test` 958건 통과. `tests/site/worker-api.test.mjs`는 이관 중의 팀장 조회 허용·응답 필드 전체·다른 팀 팀장과 팀원 403·팀장 `PUT` 403을 확인하며, 수정 전 worker 코드에서는 403으로 실패합니다. `npm run build`·`npm run build:edge` 통과. `mobile`·`external-loading`·`data-sync`·`team-sync-indicator`·`sync-setup`·`sync-log`·`settings` 브라우저 검사를 세 브라우저에서 실행해 246건 통과·6건 skip·15건 실패였습니다. 실패 중 12건(`mobile` 일정 추가 간격·모드 전환 빈 줄·꼬리 메모 전체 화면, `team-sync-indicator` 휴대폰 한 줄)은 `origin/main`(443f9e1)에서도 같은 브라우저에서 실패합니다. 나머지 3건(`sync-setup` 885·565, `sync-log` 406, 각각 한 브라우저)은 `server/slides/slide-file-sync.mjs`의 타이머가 닫힌 시험 DB를 읽은 "database is not open"이었고, 세 번씩 다시 실행해 27건 모두 통과했습니다. 새 `mobile` 검사 3건(외부 관리자의 묶음 구분·탭 폭·지금 동기화, 팀장의 연결 설정·지금 동기화, 팀장의 이관 중 안내)은 세 브라우저에서 통과합니다. 수정 전 화면에서는 앞의 두 검사가 실패합니다. 외부 응답은 route fixture이며, 실제 외부 배포와 휴대폰 실기기 확인은 하지 않았습니다.
+
 ## 2026-11-25 — 업무 상세 헤더 제목에 입력 커서가 생기던 문제
 
 PR #229 확인 중, 스크롤해 헤더에 나타난 업무 제목을 누르면 말줄임 뒤에 입력 커서가 깜박이고 방향키로 움직인다는 지적이 있었습니다. 헤더 제목(`.task-detail-header-title`)은 편집할 수 없는 일반 글자였지만 선택할 수 있었습니다. 누르면 세 엔진 모두 그 글자 안에 접힌 선택(`Selection.type` "Caret")이 생기고 포커스는 대화상자로 갑니다. 이 선택은 평소에는 그려지지 않습니다. 그러나 브라우저의 캐럿 브라우징(Chrome·Edge·Brave·Firefox의 F7)이 켜져 있으면 커서로 그려지고 방향키로 움직입니다. Chromium·Firefox에서 캐럿 브라우징을 켜고 재현했습니다. 커서가 잘린 글자로 들어가면 `overflow: hidden` 칸이 옆으로 밀려(`scrollLeft` 65) 제목과 커서 사이가 비어 보였습니다. 같은 설정에서는 main의 **업무 상세** 글자도 눌러서 방향키로 커서를 옮길 수 있어, 이번 변경이 기존 동작을 잘린 긴 제목에서 드러나게 한 것입니다. 표시 전용인 헤더 제목에만 `user-select: none`을 주어, 눌러도 선택·커서가 제목 안에 생기지 않게 했습니다. 공용 `Modal`의 h2와 다른 대화상자, 대화상자 이름·포커스(Esc 닫기, Tab 이동), 본문 제목·문서 편집은 바뀌지 않았습니다. 화면의 new 표시가 없던 것은 그 업무가 만든 지 12시간이 지났기 때문입니다.
@@ -489,6 +533,7 @@ PR #229 확인 중, 스크롤해 헤더에 나타난 업무 제목을 누르면 
 업무 상세에서 아래로 스크롤하면 본문 맨 위의 제목이 사라져 어떤 업무인지 알기 어려웠습니다. 본문 제목 영역(`.task-detail-title`)이 완전히 가려지면 헤더의 **업무 상세** 자리에 저장된 업무 제목을 한 줄로 보이고, 제목이 다시 보이면 **업무 상세**로 돌아갑니다. `Panels.tsx`의 `TaskDetailHeaderTitle`이 `RowPanel`의 `titleAction` 맨 앞에서 `IntersectionObserver`로 가려짐만 감지해 자기 상태를 바꾸므로, 스크롤마다 다시 그리지 않고 속성·문서 편집기도 다시 그리지 않습니다. 대화상자 이름은 화면에서만 숨긴 `Modal`의 h2가 계속 맡아 항상 **업무 상세**이며, 헤더 제목은 `aria-hidden`입니다. 표시 중에는 제목 묶음의 `flex-basis`를 0으로 바꿔 원래 차지하던 폭 안에서만 말줄임하므로 오른쪽 버튼은 움직이거나 줄바꿈하지 않습니다. 링크 복사·전체 페이지 버튼은 제목 바로 뒤를 따릅니다. 전체 제목은 `title` 속성으로, 빈 제목은 **제목 없는 업무**로 보입니다. `Modal`·일정 상세·꼬리 메모 전체 페이지는 바뀌지 않았고 서버·저장 형식도 그대로입니다. 휴대폰 폭(390px)에서는 업무 동작 세 버튼이 같은 줄에 있어 제목이 앞 몇 글자만 보입니다.
 
 검증: 스크롤 전·후 표시, 버튼 위치 유지, 본문에서 고친 제목·긴 제목·빈 제목, 전체 페이지(`tests/browser/documents/task-documents.spec.ts`), 720·480·390·360·320px(360px 이하 두 줄 헤더 포함, `tests/browser/platform/mobile.spec.ts`), 사본 업무 상세(`tests/browser/sheet-clones/sheet-clone-editing.spec.ts`). 실행 환경과 건수는 PR에 기록합니다.
+
 ## 2026-11-24 — 슬라이드 편집 화면 상단의 링크 복사와 제목 길이만큼의 제목 칸
 
 - 요청(2026-11-24, 사용자): CanvaSlide **Share → 링크 복사**로 복사한 주소가 사내에서만 열리므로, 외부에서도 열리는 공유 링크 복사 버튼을 상단 제목 오른쪽에 두고 누르면 목록에서 연 것과 같은 상세 화면으로 들어오게 하기. 상단 제목을 고칠 때 입력 칸이 제목 길이만큼만 차지하게 하기. 버튼은 업무 상세의 링크 복사와 같은 방식(`/links/slide/<팀>/<자료>`)으로 정했습니다.
@@ -513,6 +558,7 @@ PR #229 확인 중, 스크롤해 헤더에 나타난 업무 제목을 누르면 
 카드 메뉴에 **일정 복제 (본문 포함)**을 더했습니다. 기존 복제 요청의 선택 값 `includeDocument`로 두 저장소가 본문을 복제본의 문서로 함께 저장하며 저장 형식 변경은 없습니다. 복제는 두 방식 모두 시각·알림을 복사합니다.
 
 검증: 발송 시각·유예·대상·재시도·여러 알림·상태 판정·주소 자동 등록은 시계와 허브를 대역으로(`tests/calendar/calendar-reminder-push.test.mjs`), 시각·알림 저장·충돌·복제는 SQLite·PostgreSQL 공통 계약과 사내 HTTP로, v34 → v35와 전환 도구 결과의 v35 승격·중단 롤백·신규 설치와의 스키마 일치는 `tests/sync/recovery/sync-migrations.test.mjs`로, 본문 포함 복제의 양방향 동기화는 `tests/sync/integration/sync-calendar-documents.test.mjs`로 검사합니다. 개발 PC(Windows)에서는 공식 실행기가 고정 소스의 심볼릭 링크·`npm` 실행·PostgreSQL 실행 파일 이름 때문에 돌지 않아, Node 22·PostgreSQL 18.7 Linux 컨테이너에서 `TEST_PG_BIN=… npm test`와 `npm run build:edge`를 실행했습니다. 실제 건수는 PR에 기록합니다. `npm run build`는 `tsc`·Vite 빌드까지 통과했고 CanvaSlide 편집기 배포본 단계는 컨테이너의 외부 접속 차단(내려받기 실패)과 Windows 줄바꿈으로 달라진 빌드 ID 때문에 확인하지 못했습니다. 브라우저 검사는 설치된 Chrome으로 `calendar-reminders.spec.ts`·`calendar-improvements.spec.ts` 10건을 실행했고 Firefox·WebKit은 실행하지 못했습니다. 실제 다바다허브로의 발송은 읽기 전용 응답 확인만 했으며 운영 DB migration과 배포는 수행하지 않았습니다.
+
 ## 2026-11-23 — 업무 링크가 보던 문서를 가리킴
 
 문서가 여러 개인 업무 상세에서 **링크 복사**를 누르면 항상 첫 문서가 열리던 것을, 보고 있던 문서가 열리도록 했습니다. 사용자 승인에 따라 저장되는 링크 경로에 선택 항목인 문서 ID를 더했습니다(`/links/task/<업무>/<문서>`, 사본 업무도 같음). 문서가 하나인 업무와 기존 링크는 그대로입니다. 링크 제목은 업무 제목을 유지합니다. 같은 업무의 다른 문서를 가리키는 링크들은 한 상세 창을 공유해, 이미 열린 업무면 그 창에서 문서만 바꿉니다. 경로 해석은 `shared/documents/document-links.js` 한 곳이며 두 서버의 제목 조회는 업무 ID만 사용하므로 서버 저장 코드는 바뀌지 않았습니다.
