@@ -7,9 +7,18 @@ import {
   type NodeView,
 } from "@milkdown/kit/prose/view";
 import { $prose } from "@milkdown/kit/utils";
+import { copyToClipboard } from "../document-links";
+import { iconButton, lineIcon } from "./DocumentImageView";
 
 const isMermaid = (node: Node) =>
   node.type.name === "code_block" && node.attrs.language === "mermaid";
+
+// The lucide Copy (its rect drawn as a path) and Check icons.
+const COPY_ICON = [
+  "M10 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z",
+  "M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2",
+];
+const CHECK_ICON = ["M20 6 9 17l-5-5"];
 
 // Keep source editing in ProseMirror so copying, history and remote changes
 // use exactly the same code-block document and transactions as before.
@@ -137,6 +146,7 @@ export function documentCodeBlockView(
   initial: Node,
   view: EditorView,
   getPos: () => number | undefined,
+  notify: (message: string, failed?: boolean) => void,
 ): NodeView {
   let node = initial;
   const mermaid = isMermaid(node);
@@ -225,6 +235,29 @@ export function documentCodeBlockView(
     dom.append(pre, preview, error);
     schedule();
   }
+  // Copies the code, or a diagram's source, as it is in the document. The
+  // button belongs to this view only, so saves, downloads and the editor's
+  // own copy never contain it, and the caret and focus stay in the text.
+  const copy = iconButton("코드 복사", COPY_ICON);
+  copy.className = "document-code-copy";
+  copy.contentEditable = "false";
+  let copiedTimer: ReturnType<typeof setTimeout> | undefined;
+  copy.addEventListener("mousedown", (event) => event.preventDefault());
+  copy.addEventListener("click", () => {
+    copyToClipboard(node.textContent).then(
+      () => {
+        notify("코드를 복사했습니다.");
+        clearTimeout(copiedTimer);
+        copy.replaceChildren(lineIcon(CHECK_ICON));
+        copiedTimer = setTimeout(
+          () => copy.replaceChildren(lineIcon(COPY_ICON)),
+          1500,
+        );
+      },
+      () => notify("코드를 복사하지 못했습니다. 다시 시도해 주세요.", true),
+    );
+  });
+  dom.append(copy);
   const update = (next: Node) => {
     if (next.type !== node.type || isMermaid(next) !== mermaid) return false;
     const changed = next.textContent !== node.textContent;
@@ -241,15 +274,18 @@ export function documentCodeBlockView(
     dom,
     contentDOM,
     update,
+    stopEvent: (event) => copy.contains(event.target as globalThis.Node),
     ignoreMutation: (mutation) =>
       mutation.type !== "selection" &&
       (preview.contains(mutation.target) ||
         error.contains(mutation.target) ||
+        copy.contains(mutation.target) ||
         (mutation.type === "attributes" &&
           (mutation.target === dom || mutation.target === pre))),
     destroy: () => {
       generation++;
       clearTimeout(timer);
+      clearTimeout(copiedTimer);
       themeObserver?.disconnect();
     },
   };

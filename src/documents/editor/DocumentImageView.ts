@@ -158,6 +158,13 @@ export function iconButton(label: string, paths: string[]) {
   button.type = "button";
   button.setAttribute("aria-label", label);
   button.dataset.tooltip = label;
+  button.append(lineIcon(paths));
+  return button;
+}
+
+// A 16px outline icon in the style of the lucide icons, for node views, which
+// draw their DOM without React.
+export function lineIcon(paths: string[]) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   for (const [key, value] of Object.entries({
     viewBox: "0 0 24 24",
@@ -176,8 +183,7 @@ export function iconButton(label: string, paths: string[]) {
     path.setAttribute("d", d);
     svg.append(path);
   }
-  button.append(svg);
-  return button;
+  return svg;
 }
 
 // A touch screen has no pointer to rest on an image, so the image tapped last

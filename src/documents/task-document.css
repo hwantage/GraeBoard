@@ -309,6 +309,7 @@
   font-size: 0.9em;
 }
 .document-prose pre {
+  position: relative;
   padding: 14px;
   overflow: auto;
   white-space: pre-wrap;
@@ -317,8 +318,45 @@
   padding: 0;
 }
 .document-mermaid {
+  position: relative;
   margin: 16px 0;
   min-width: 0;
+}
+/* The copy button of a code block or diagram (documentCodeBlockView) shows on
+   hover and keyboard focus. A touch screen has no hover, so it stays shown. */
+.document-code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: white;
+  color: var(--muted);
+  box-shadow: 0 2px 8px #0002;
+  opacity: 0;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.document-code-copy:hover {
+  color: var(--ink);
+}
+.document-prose :is(pre, .document-mermaid):hover > .document-code-copy,
+.document-code-copy:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .document-code-copy {
+    opacity: 1;
+  }
+}
+@media print {
+  .document-code-copy {
+    display: none;
+  }
 }
 .document-mermaid.has-preview:not(.has-error) > pre {
   display: none;
