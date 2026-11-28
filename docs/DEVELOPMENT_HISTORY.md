@@ -37,6 +37,7 @@
 - `tests/browser/documents/document-editor-blocks.spec.ts`에 두 검사를 추가했습니다. 이스케이프 없이 저장된 `<h2>10. 참고</h2>`·`- 항목`·`# 해시`·`> 인용`·`[a]: b` 제목 다섯 토글이 안내 없이 리치로 열리고, 편집 후 이스케이프한 제목으로 저장되며 다시 열어도 같은 제목인지 봅니다. 토글 제목에 입력한 ` *별* [a](b) <i></summary>끝`이 `\*별\* \[a]\(b) \<i>\</summary>끝`으로 저장되고 다시 열어도 강조·링크 없이 글자로 남는지 봅니다. 수정 전 코드에서는 두 검사 모두 실패했고(Chromium), 수정 후 Chromium·Firefox·WebKit 6건 통과했습니다. 최종 커밋에서 `document-editor-blocks.spec.ts`의 토글 검사 전체(기존 포함 6개)가 세 엔진 18건 통과했습니다.
 - 사용자 문서(`draft/mdsample/problem.txt`, 저장소 미포함)를 수정 후 빌드에 저장해 리치 편집이 안내 없이 열리는 것을 확인했습니다.
 - `npm run check:structure`(815개 파일, 오류 0)·`check:architecture`(485개 모듈, 위반 0)·`npm run build`·`npm run build:edge` 통과.
+- 통합 검증(2026-11-28): 같은 날의 문서 편집기 브랜치 6개(토글 제목·`[` 이스케이프·목록 코드 블록 Enter·모드 전환 위치·코드 블록 복사·슬래시 메뉴)를 origin/main `4f2a8d9`에 합친 `44416fc`에서 `npm run check:structure`(817개 파일, 오류 0)·`check:architecture`(487개 모듈, 위반 0)·`npm run build`·`npm run build:edge` 통과, `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 1,033건 통과(실패·취소·skip 0, 1,001초), `npx playwright test tests/browser/documents/`(Chromium·Firefox·WebKit) 876건 중 855 통과·15 skip·6 실패. 실패는 origin/main에서도 실패하는 `document-toc.spec.ts:380` 3건과, 단독 재실행에서 6건 모두 통과한 `task-documents.spec.ts`의 사본 문서 개수(Firefox·WebKit)·편집기 코드 로딩 실패(WebKit) 3건입니다. 사용자가 같은 통합본을 개발 DB 사본으로 띄운 시험 서버(4341)에서 확인했습니다.
 
 ## 2026-11-26 — 원본 화면에서 저장 중에도 셀 편집
 
