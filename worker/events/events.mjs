@@ -51,14 +51,14 @@ async function readFeed(ctx, teamId, channels) {
   });
 }
 // Whether anything this stream shows may have changed since its cursor.
-function changedFor(channel, feed) {
+function changedFor(channel, feed, scope = channel.scope) {
   const at = position(channel.cursor);
   if (at === feed.cursor) return false;
   if (at === null || at > feed.cursor || at < feed.oldest - 1 || at < feed.from)
     return true;
   if (feed.until !== undefined) return true;
   return feed.events.some(
-    (event) => event.cursor > at && eventTouches(channel.scope, event),
+    (event) => event.cursor > at && eventTouches(scope, event),
   );
 }
 export async function eventResponse(
@@ -220,7 +220,14 @@ export async function eventResponse(
                       {},
                       channel.url.searchParams,
                     );
-                  else payload = { revision: feed.cursor };
+                  else {
+                    payload = { revision: feed.cursor };
+                    if (
+                      channel.scope.kind === "team" &&
+                      !changedFor(channel, feed, { kind: "originalSheet" })
+                    )
+                      payload.originalSheetChanged = false;
+                  }
                   if (channel.lastRevision !== payload.revision)
                     write(
                       channel,

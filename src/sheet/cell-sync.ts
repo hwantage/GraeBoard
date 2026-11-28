@@ -9,6 +9,7 @@ export function subscribeCellChanges({
   year,
   startMonth = 1,
   cursor,
+  onReady,
   onActivity,
   onChanges,
   onSnapshot,
@@ -18,6 +19,7 @@ export function subscribeCellChanges({
   year: number;
   startMonth?: number;
   cursor: string;
+  onReady?: () => void;
   onActivity: () => void;
   onChanges: (changes: CellUpdates) => void;
   onSnapshot: (tasks: Task[]) => void;
@@ -76,7 +78,10 @@ export function subscribeCellChanges({
       }
     });
     source.addEventListener("ready", () => {
-      if (!recovering) retryDelay = 1000;
+      if (!recovering) {
+        retryDelay = 1000;
+        onReady?.();
+      }
     });
     source.addEventListener("rejected", (event: MessageEvent) => {
       if (retryableRejection(event.data)) {

@@ -10,11 +10,15 @@ import { useEffect, useRef } from "react";
 // local writes are in flight. A reconnect invalidates only if its cursor changed.
 const subscriptions = new Map<
   string,
-  { source: EventStream; listeners: Set<(initial?: boolean) => void> }
+  {
+    source: EventStream;
+    listeners: Set<(initial?: boolean, originalSheetChanged?: boolean) => void>;
+  }
 >();
 export default function useResourceSync(
   path: string | null,
   refresh: (signal: AbortSignal) => Promise<boolean>,
+  originalSheetOnly = false,
 ) {
   const latest = useRef(refresh);
   latest.current = refresh;
@@ -25,7 +29,8 @@ export default function useResourceSync(
     let running = false,
       dirty = false;
     let delay = 150;
-    const schedule = (initial = false) => {
+    const schedule = (initial = false, originalSheetChanged = true) => {
+      if (originalSheetOnly && !originalSheetChanged) return;
       dirty = true;
       if (!running && !timer) timer = setTimeout(run, initial ? 0 : delay);
     };
@@ -49,17 +54,23 @@ export default function useResourceSync(
     const connected = !!subscription;
     if (!subscription) {
       const source = new EventStream(`/api${path}/events`);
-      const listeners = new Set<(initial?: boolean) => void>();
+      const listeners = new Set<
+        (initial?: boolean, originalSheetChanged?: boolean) => void
+      >();
       let initial = true;
       subscription = { source, listeners };
       subscriptions.set(path, subscription);
       source.addEventListener("document", (event: MessageEvent) => {
+        let originalSheetChanged = true;
         try {
-          if (JSON.parse(event.data).clientId === clientId) return;
+          const payload = JSON.parse(event.data);
+          if (payload.clientId === clientId) return;
+          originalSheetChanged = payload.originalSheetChanged !== false;
         } catch {
           /* refetch malformed invalidations */
         }
-        for (const listener of listeners) listener(initial);
+        for (const listener of listeners)
+          listener(initial, originalSheetChanged);
         initial = false;
       });
       const denied = () => {
@@ -86,5 +97,5 @@ export default function useResourceSync(
         subscriptions.delete(path);
       }
     };
-  }, [path]);
+  }, [path, originalSheetOnly]);
 }
