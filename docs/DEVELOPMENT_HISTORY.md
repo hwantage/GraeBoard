@@ -31,6 +31,7 @@
 - `tests/browser/documents/document-input.spec.ts`에 글머리·번호·체크리스트 항목 안 코드 블록에서 Enter·Shift+Enter로 세 줄을 쓰고 항목이 하나로 남는지, 저장한 Markdown의 들여쓴 세 줄, ⌘/Ctrl+Enter가 같은 항목 안 코드 블록 아래 문단으로 나가는지를 추가했습니다. 수정 전 코드(빌드 후 Chromium)에서는 세 검사 모두 항목이 2개가 되어 실패했고, 수정 후 Chromium·Firefox·WebKit 9건 통과했습니다.
 - `E2E_PORT=4383 npx playwright test tests/browser/documents/`(Chromium·Firefox·WebKit): 801건 중 778 통과, 8 실패, 15 skip(56.9분, 다른 브라우저 검사 2개와 동시 실행). 실패 중 `document-toc.spec.ts:380`(일정 문서와 메모 카드 목차) 3건은 origin/main `4f2a8d9` 빌드에서도 Chromium에서 같은 위치로 실패하는 기존 실패입니다. 나머지 5건(`task-documents.spec.ts`의 2385·3959·1100·3276행, Firefox·WebKit)은 같은 소스로 단독 재실행해 10건 모두 통과했습니다.
 - `npm run check:structure`(815개 파일, 오류 0)·`check:architecture`(485개 모듈, 위반 0)·`npm run build`·`npm run build:edge` 통과.
+- 통합 검증(2026-11-28): 같은 날의 문서 편집기 브랜치 6개(토글 제목·`[` 이스케이프·목록 코드 블록 Enter·모드 전환 위치·코드 블록 복사·슬래시 메뉴)를 origin/main `4f2a8d9`에 합친 `44416fc`에서 `npm run check:structure`(817개 파일, 오류 0)·`check:architecture`(487개 모듈, 위반 0)·`npm run build`·`npm run build:edge` 통과, `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 1,033건 통과(실패·취소·skip 0, 1,001초), `npx playwright test tests/browser/documents/`(Chromium·Firefox·WebKit) 876건 중 855 통과·15 skip·6 실패. 실패는 origin/main에서도 실패하는 `document-toc.spec.ts:380` 3건과, 단독 재실행에서 6건 모두 통과한 `task-documents.spec.ts`의 사본 문서 개수(Firefox·WebKit)·편집기 코드 로딩 실패(WebKit) 3건입니다. 사용자가 같은 통합본을 개발 DB 사본으로 띄운 시험 서버(4341)에서 확인했습니다.
 
 ## 2026-11-26 — 원본 화면에서 저장 중에도 셀 편집
 
