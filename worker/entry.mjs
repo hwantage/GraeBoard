@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createLinkTitleService } from "../shared/http/link-title.mjs";
 import { accessTokenRoutes } from "./control/access-tokens.mjs";
 import {
@@ -47,8 +48,15 @@ const security = {
   "X-Frame-Options": "DENY",
   "Cache-Control": "no-store",
 };
-export const json = (value, status = 200, headers = {}) =>
-  new Response(JSON.stringify(pack(value)), {
+export function json(value, status = 200, headers = {}, ifNoneMatch) {
+  const body = JSON.stringify(pack(value));
+  if (ifNoneMatch !== undefined) {
+    // Hash the authorized response including membership, avatars and years.
+    const etag = '"' + createHash("sha256").update(body).digest("hex") + '"';
+    headers = { ...headers, ETag: etag };
+    if (ifNoneMatch?.replace(/^W\//, "") === etag) status = 304;
+  }
+  return new Response(status === 304 ? null : body, {
     status,
     headers: {
       ...security,
@@ -57,6 +65,7 @@ export const json = (value, status = 200, headers = {}) =>
       ...headers,
     },
   });
+}
 async function boundedRequest(request) {
   if (!request.body) return request;
   const limit =
@@ -321,6 +330,13 @@ export function createWorker({
               );
             if (result instanceof Response) return result;
             let headers = {};
+            if (path === "/bootstrap" && method === "GET")
+              return json(
+                result,
+                200,
+                headers,
+                request.headers.get("if-none-match"),
+              );
             if (path === "/tasks" && method === "GET") {
               headers = {
                 "X-Cell-Event-ID": result.cellEventId,

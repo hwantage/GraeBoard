@@ -159,7 +159,10 @@ test(
           env,
           { waitUntil: (p) => work.push(p) },
         );
-        const json = unpack(await response.json());
+        const json =
+          response.status === 304
+            ? await response.text()
+            : unpack(await response.json());
         if (response.status >= 500 && response.status !== 503)
           throw errors.at(-1);
         return { status: response.status, body: json, response };
@@ -268,7 +271,29 @@ test(
         beforeCursor,
       );
       await guardedStore.release("stale-head-check");
-      const bootstrap = (await request("/bootstrap")).body;
+      const bootResponse = await request("/bootstrap");
+      const bootstrap = bootResponse.body;
+      const bootTag = bootResponse.response.headers.get("etag");
+      assert.ok(bootTag);
+      const conditional = { "If-None-Match": "W/" + bootTag };
+      const unchangedBoot = await request(
+        "/bootstrap",
+        undefined,
+        "GET",
+        conditional,
+      );
+      assert.equal(unchangedBoot.status, 304);
+      assert.equal(unchangedBoot.body, "");
+      assert.equal(
+        (
+          await request("/bootstrap", undefined, "GET", {
+            ...conditional,
+            "test-subject": "stranger",
+            "test-email": "stranger@example.com",
+          })
+        ).status,
+        403,
+      );
       assert.equal((await request("/admin/users")).body.teams[0].id, teamId);
       assert.equal(bootstrap.teams[0].id, teamId);
       const task = (

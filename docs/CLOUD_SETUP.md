@@ -880,7 +880,7 @@ dry-run은 manifest·모든 자료/이미지 해시·대상 DB 형식·팀 UUID�
 
 업무 API·Git 계산은 Supabase Edge에서, HTTP 전달·정적 파일·R2/Images 처리는 Cloudflare gateway에서 실행합니다. Hyperdrive를 통한 DB 요청은 없습니다. 각 서비스의 CPU·메모리·요청량 한도는 별개이며, 네트워크 대기까지 포함한 wall time과 CPU 시간을 구분합니다. 최신 수치는 [Supabase Edge 제한](https://supabase.com/docs/guides/functions/limits)과 [Cloudflare Workers 제한](https://developers.cloudflare.com/workers/platform/limits/)을 확인합니다.
 
-Edge SSE는 CPU 한도를 위해 2초 polling과 15초 연결 수명으로 마지막 커서부터 재연결합니다. 전체 업무 목록의 보완 조회는 외부망에서 30초, 내부망에서 기존 7초로 동작합니다. 외부 GET 업무 조회는 저장된 DB 응답을 바로 제공하고 Git 최신화를 백그라운드로 예약합니다. 쓰기 전 Git 확인은 API 서버가 수행하며 브라우저의 중복 사전 요청은 보내지 않습니다. 기존 화면으로 돌아오는 focus/visibility 갱신은 짧은 중복 호출을 합칩니다. 429 이후 목록 조회와 SSE 재연결은 Retry-After를 지킵니다. 열린 화면이 많아지면 함수 호출·DB 조회도 늘어납니다. 배포 후 실제 동시 사용자·팀 자료로 Edge 로그, gateway 로그, PostgreSQL 연결 수, GitHub 요청량과 미전송 지연을 함께 측정합니다. 무료 요금제의 무제한 동작이나 일정한 반영 시간을 보장하지 않습니다.
+Edge SSE는 CPU 한도를 위해 2초 polling과 15초 연결 수명으로 마지막 커서부터 재연결합니다. 외부망의 전체 업무 목록은 셀 스트림에서 최근 1분 안에 커서를 확인하면 5분마다 보완 조회하고, 확인이 끊기면 30초마다 조회합니다. 내부망의 주기는 7초입니다. 외부 GET 업무 조회는 저장된 DB 응답을 바로 제공하고 Git 최신화를 백그라운드로 예약합니다. 쓰기 전 Git 확인은 API 서버가 수행하며 브라우저의 중복 사전 요청은 보내지 않습니다. 기존 화면으로 돌아오는 focus/visibility 갱신은 짧은 중복 호출을 합칩니다. 429 이후 목록 조회와 SSE 재연결은 Retry-After를 지킵니다. 열린 화면이 많아지면 함수 호출·DB 조회도 늘어납니다. 배포 후 실제 동시 사용자·팀 자료로 Edge 로그, gateway 로그, PostgreSQL 연결 수, GitHub 요청량과 미전송 지연을 함께 측정합니다. 무료 요금제의 무제한 동작이나 일정한 반영 시간을 보장하지 않습니다.
 
 ### 자동 검사와 과거 workerd 측정의 범위
 

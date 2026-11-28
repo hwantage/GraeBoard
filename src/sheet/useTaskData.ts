@@ -76,11 +76,12 @@ export default function useTaskData(options: {
   }
   const queryPolicy = queryPolicyFor(site);
   const querySchedule = useRef<{
-    nextPollAt: number;
+    lastReadAt: number;
     retryAt: number;
     failures: number;
     status?: number;
-  }>({ nextPollAt: 0, retryAt: 0, failures: 0 });
+  }>({ lastReadAt: 0, retryAt: 0, failures: 0 });
+  const lastStreamReady = useRef(0);
   const queryGeneration = useRef(0);
   const refreshWork = useRef<{
     scope: string;
@@ -96,7 +97,7 @@ export default function useTaskData(options: {
   }, []);
   function querySucceeded() {
     querySchedule.current = {
-      nextPollAt: Date.now() + queryPolicy.pollMs,
+      lastReadAt: Date.now(),
       retryAt: 0,
       failures: 0,
     };
@@ -112,7 +113,6 @@ export default function useTaskData(options: {
       failure instanceof ApiError ? failure : {},
     );
     schedule.retryAt = Date.now() + delay;
-    schedule.nextPollAt = schedule.retryAt;
     setQueryError(failure.message);
   }
   const refresh = useCallback(
@@ -257,7 +257,7 @@ export default function useTaskData(options: {
     setLoaded(false);
     setTasks([]);
     setQueryError("");
-    querySchedule.current = { nextPollAt: 0, retryAt: 0, failures: 0 };
+    querySchedule.current = { lastReadAt: 0, retryAt: 0, failures: 0 };
     return () => {
       boardKey.current = "";
       queryGeneration.current++;
@@ -282,7 +282,7 @@ export default function useTaskData(options: {
     cellEventCursor.current = null;
     latest.current.onScopeChange();
     setQueryError("");
-    querySchedule.current = { nextPollAt: 0, retryAt: 0, failures: 0 };
+    querySchedule.current = { lastReadAt: 0, retryAt: 0, failures: 0 };
     api(taskQuery(teamId, year, scopeMonth))
       .then((r) => {
         if (cancelled || taskScopeRef.current !== taskScope) return;
@@ -302,11 +302,15 @@ export default function useTaskData(options: {
   useEffect(() => {
     if (!active || !ready || copy || !cellEventCursor.current) return;
     const key = `${teamId}:${year}`;
+    lastStreamReady.current = 0;
     return subscribeCellChanges({
       teamId,
       year,
       startMonth: scopeMonth,
       cursor: cellEventCursor.current,
+      onReady: () => {
+        lastStreamReady.current = Date.now();
+      },
       onActivity: () => {
         remoteEpoch.current++;
       },
@@ -341,19 +345,26 @@ export default function useTaskData(options: {
   }, [teamId, year, scopeMonth, ready, copy, active]);
   useEffect(() => {
     const timer = setInterval(() => {
+      const now = Date.now();
+      const { lastReadAt, retryAt, failures } = querySchedule.current;
+      // Hosted Edge streams confirm their cursor on every 15-second reconnect.
+      const live = now - lastStreamReady.current < 60_000;
+      const dueAt = failures
+        ? retryAt
+        : lastReadAt + (live ? queryPolicy.livePollMs : queryPolicy.pollMs);
       if (
         active &&
         loaded &&
         !copy &&
         !blocked() &&
         !refreshWork.current &&
-        Date.now() >= querySchedule.current.nextPollAt &&
+        now >= dueAt &&
         document.visibilityState === "visible"
       )
         refresh();
     }, 1000);
     return () => clearInterval(timer);
-  }, [refresh, copy, active, loaded]);
+  }, [refresh, copy, active, loaded, queryPolicy]);
   async function initialize(month: number, signal: AbortSignal) {
     const key = `${teamId}:${year}`;
     const generation = queryGeneration.current;
