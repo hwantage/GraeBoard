@@ -7,6 +7,7 @@ import {
   parserCtx,
   serializerCtx,
   remarkCtx,
+  remarkStringifyOptionsCtx,
 } from "@milkdown/kit/core";
 import { codeBlockSchema } from "@milkdown/kit/preset/commonmark";
 
@@ -83,6 +84,136 @@ export const codeBlockMetaSchema = codeBlockSchema.extendSchema(
     };
   },
 );
+type StringifyNode = {
+  type: string;
+  value?: string;
+  children?: StringifyNode[];
+};
+type StringifyState = {
+  unsafe: { character: string }[];
+  containerFlow: (node: StringifyNode, info: unknown) => string;
+};
+type StringifyHandle = (
+  node: StringifyNode,
+  parent: StringifyNode | undefined,
+  state: StringifyState,
+  info: unknown,
+) => string;
+const PHRASING_BLOCKS = new Set([
+  "paragraph",
+  "heading",
+  "tableCell",
+  "summary",
+]);
+const LINK_NODES = new Set([
+  "link",
+  "image",
+  "linkReference",
+  "imageReference",
+  "footnoteReference",
+]);
+// The text nodes of blocks whose "[" cannot start a link, a reference, a
+// definition or a task marker, so they need no "\[" escape.
+function plainBracketTexts(root: StringifyNode) {
+  const plain = new WeakSet<StringifyNode>();
+  const visit = (node: StringifyNode, parent?: StringifyNode, index = 0) => {
+    if (!PHRASING_BLOCKS.has(node.type)) {
+      node.children?.forEach((child, i) => visit(child, node, i));
+      return;
+    }
+    // The block's characters as written, code and HTML included, so any "]"
+    // that could close a link label is seen. A link stands for one neutral
+    // character: a link cannot contain links, and without definitions a "]"
+    // before one only closes plain text. Its own label keeps its escapes.
+    let text = "";
+    const texts: StringifyNode[] = [];
+    const read = (child: StringifyNode) => {
+      if (LINK_NODES.has(child.type)) text += "\uFFFC";
+      else if (child.type === "break") text += "\n";
+      else {
+        if (typeof child.value === "string") {
+          if (child.type === "text") texts.push(child);
+          text += child.value;
+        }
+        child.children?.forEach(read);
+      }
+    };
+    node.children?.forEach(read);
+    const paragraph = node.type === "paragraph";
+    // A toggle's title is read back as a Markdown document of its own.
+    const lineStart = paragraph || node.type === "summary";
+    if (
+      // Inline links and full or collapsed references, also around a link
+      // or an image, which a link can hold.
+      /\][([]/.test(text) ||
+      // A definition can start a paragraph, its label running over lines,
+      // and a footnote definition also any later line of one.
+      (lineStart &&
+        ((/^\s*\[/.test(text) && text.includes("]:")) ||
+          /\n[ \t]*\[[^\n]*\]:/.test(text))) ||
+      // The first line of a list item can be read as a checklist marker.
+      (paragraph &&
+        parent?.type === "listItem" &&
+        index === 0 &&
+        /^\s*\[[ \txX]\]/.test(text))
+    )
+      return;
+    for (const child of texts) plain.add(child);
+  };
+  visit(root);
+  return plain;
+}
+// mdast-util-to-markdown escapes every "[" in text (`\[공통]`), since one could
+// start a link, a reference or a definition, and so a typed `\[` becomes
+// `\\\[`. Keep the default escapes wherever a block could form one of those,
+// and write other brackets as typed, as source editors do. A shortcut
+// reference (`[공통]`) needs a definition, which stays escaped here and makes
+// a document Markdown-source only (`checkMarkdown`).
+export function configureTextEscapes(ctx: Ctx) {
+  const plainTexts = new WeakMap<StringifyState, WeakSet<StringifyNode>>();
+  ctx.update(remarkStringifyOptionsCtx, (options) => {
+    const handlers = options.handlers as Record<string, StringifyHandle>;
+    const text = handlers.text;
+    const root: StringifyHandle = (node, _parent, state, info) => {
+      plainTexts.set(state, plainBracketTexts(node));
+      // As mdast-util-to-markdown's root handler: the editor's root holds
+      // blocks only.
+      return state.containerFlow(node, info);
+    };
+    // Milkdown's text handler writes text that ends with whitespace and has
+    // no "*", "_" or "\\" as is, to keep spaces beside marks unencoded, so
+    // `1. ` or `[a](b) ` would be read back as a list or a link. Escape the
+    // text before the whitespace as usual and keep only the whitespace as is.
+    const escapedText: StringifyHandle = (node, parent, state, info) => {
+      const unsafe = state.unsafe;
+      if (plainTexts.get(state)?.has(node))
+        state.unsafe = unsafe.filter((pattern) => pattern.character !== "[");
+      try {
+        const value = node.value ?? "";
+        const space = /\s+$/.exec(value)?.[0];
+        if (!space || space === value || /[*_\\]/.test(value))
+          return text(node, parent, state, info);
+        const body = { ...node, value: value.slice(0, -space.length) };
+        return (
+          text(body, parent, state, {
+            ...(info as object),
+            after: space[0],
+          }) + space
+        );
+      } finally {
+        state.unsafe = unsafe;
+      }
+    };
+    return {
+      ...options,
+      handlers: {
+        ...handlers,
+        root,
+        text: escapedText,
+      } as unknown as typeof options.handlers,
+    };
+  });
+}
 export function safeDocumentLink(url: string) {
   return (
     (/^(https?:|mailto:)/i.test(url) ||

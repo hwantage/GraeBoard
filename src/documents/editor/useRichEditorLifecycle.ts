@@ -67,6 +67,7 @@ import {
   isPlainLineBreak,
   remarkTableShape,
   checkMarkdown,
+  configureTextEscapes,
 } from "./document-markdown";
 import { deleteTableRow } from "./document-editor-commands";
 import type useDocumentLinkActions from "./useDocumentLinkActions";
@@ -137,6 +138,7 @@ export default function useRichEditorLifecycle(
           getNode: (state) => state.schema.nodes.paragraph.create(),
         });
         configureDocumentInputRules(ctx);
+        configureTextEscapes(ctx);
         ctx.set(editorViewOptionsCtx, {
           ...documentEditorInput(ctx, {
             latest,

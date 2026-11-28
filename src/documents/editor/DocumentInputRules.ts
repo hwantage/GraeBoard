@@ -14,6 +14,7 @@ import {
   undoInputRule,
   wrappingInputRule,
 } from "@milkdown/kit/prose/inputrules";
+import { newlineInCode } from "@milkdown/kit/prose/commands";
 import { liftListItem, sinkListItem } from "@milkdown/kit/prose/schema-list";
 import { goToNextCell, isInTable } from "@milkdown/kit/prose/tables";
 import type { EditorState, Transaction } from "@milkdown/kit/prose/state";
@@ -311,11 +312,14 @@ export function documentInputKeydown(view: EditorView, event: KeyboardEvent) {
     return undoInputRule(view.state, view.dispatch);
   if (
     event.key === "Enter" &&
-    !event.shiftKey &&
     !event.ctrlKey &&
     !event.metaKey &&
     !event.altKey &&
-    fenceEnter(view)
+    // Enter and Shift+Enter add a line inside a code block. Milkdown's list
+    // keymap would otherwise split a list item holding the code block and
+    // move the rest of the code into a new item's paragraph.
+    (newlineInCode(view.state, view.dispatch) ||
+      (!event.shiftKey && fenceEnter(view)))
   )
     return true;
   if (event.key !== "Tab" || event.ctrlKey || event.metaKey || event.altKey)
