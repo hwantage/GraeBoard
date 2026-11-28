@@ -2192,6 +2192,32 @@ test("대괄호·역슬래시를 섞어 입력한 글은 저장 후 다시 열�
   ).toHaveCount(0);
 });
 
+test("토글 제목의 대괄호도 필요할 때만 역슬래시를 붙인다", async ({ page }) => {
+  await save(
+    page,
+    taskIds[0],
+    [
+      "<details open>\n<summary>**\\[소식]** 정리</summary>\n\n본문\n\n</details>",
+      "<details open>\n<summary>\\[a]: b</summary>\n\n본문\n\n</details>",
+    ].join("\n\n"),
+  );
+  await open(page);
+  await rich(page).locator(".document-toggle-content p").first().click();
+  await page.keyboard.insertText("편집 ");
+  const saved = async () =>
+    (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown;
+  await expect.poll(saved).toContain("<summary>**[소식]** 정리</summary>");
+  // A definition would end the toggle's title.
+  expect(await saved()).toContain("<summary>\\[a]: b</summary>");
+  await close(page);
+  await open(page);
+  await expect(detail(page).locator(".document-notice")).toHaveCount(0);
+  await expect(rich(page).locator(".document-toggle-summary")).toHaveText([
+    "[소식] 정리",
+    "[a]: b",
+  ]);
+});
+
 test("공백으로 끝나는 글도 기호를 이스케이프해 다시 열면 링크·목록이 되지 않는다", async ({
   page,
 }) => {

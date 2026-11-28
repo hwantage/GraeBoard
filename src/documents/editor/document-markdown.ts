@@ -140,12 +140,14 @@ function plainBracketTexts(root: StringifyNode) {
     };
     node.children?.forEach(read);
     const paragraph = node.type === "paragraph";
+    // A toggle's title is read back as a Markdown document of its own.
+    const lineStart = paragraph || node.type === "summary";
     if (
       // Inline links and full or collapsed references, also around a link
       // or an image, which a link can hold.
       /\][([]/.test(text) ||
       // A definition or footnote definition can start only a paragraph.
-      (paragraph && /^\s*\[/.test(text) && text.includes("]:")) ||
+      (lineStart && /^\s*\[/.test(text) && text.includes("]:")) ||
       // The first line of a list item can be read as a checklist marker.
       (paragraph &&
         parent?.type === "listItem" &&
