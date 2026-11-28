@@ -15,6 +15,8 @@ export type DocumentPlace = {
   anchor: number;
   head: number;
   view: { offset: number; top: number };
+  // Put the keyboard caret there: the switch was clicked while editing.
+  focus?: boolean;
 };
 export type RichEditorProps = {
   label?: string;

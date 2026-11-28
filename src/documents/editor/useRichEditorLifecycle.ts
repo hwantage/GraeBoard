@@ -132,7 +132,9 @@ export default function useRichEditorLifecycle(
   const applyingRemote = useRef(false);
   const appliedRemote = useRef(props.remoteMarkdown);
   // The text to bring back to its height on screen once the editor shows.
-  const shownAt = useRef<{ pos: number; top: number } | null>(null);
+  const shownAt = useRef<{ pos: number; top: number; focus: boolean } | null>(
+    null,
+  );
   const [ready, setReady] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -365,8 +367,12 @@ export default function useRichEditorLifecycle(
               );
               if (anchor != null && head != null)
                 tr.setSelection(TextSelection.create(tr.doc, anchor, head));
-              if (shown != null)
-                shownAt.current = { pos: shown, top: place.view.top };
+              if (shown != null || place.focus)
+                shownAt.current = {
+                  pos: shown ?? tr.selection.head,
+                  top: shown != null ? place.view.top : NaN,
+                  focus: !!place.focus,
+                };
             }
             view.dispatch(tr);
           });
@@ -402,7 +408,11 @@ export default function useRichEditorLifecycle(
       editorRef.current?.action((ctx) => {
         const view = ctx.get(editorViewCtx);
         if (shown.pos > view.state.doc.content.size) return;
-        scrollAround(view.dom, view.coordsAtPos(shown.pos).top, shown.top);
+        if (!Number.isNaN(shown.top))
+          scrollAround(view.dom, view.coordsAtPos(shown.pos).top, shown.top);
+        // The caret stays where the selection was placed; focusing does not
+        // scroll to it.
+        if (shown.focus && view.editable) view.focus();
       }),
     );
     return () => cancelAnimationFrame(frame);

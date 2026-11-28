@@ -2103,6 +2103,10 @@ test("원문과 리치 문서를 오가도 커서와 그 줄의 화면 위치를
   const line = await sourceLine(page, start);
   expect(line.text).toBe("문단 35 **굵게 35** 끝");
   expect(Math.abs(line.top - box.y)).toBeLessThan(line.height);
+  // The click on the switch leaves the keyboard caret there: typing goes on.
+  await expect(source(page)).toBeFocused();
+  await page.keyboard.insertText("Y");
+  await expect(source(page)).toHaveValue(/\*\*굵Y게 35\*\*/);
 
   // Back in the rich view at another place in the source.
   const offset = longDocument.indexOf("**굵게 33**") + 4;
@@ -2119,8 +2123,8 @@ test("원문과 리치 문서를 오가도 커서와 그 줄의 화면 위치를
   expect((await bold(33).boundingBox())!.y).toBeLessThan(
     shown.top + shown.height,
   );
-  // Focus returns to the editor at that offset.
-  await rich(page).focus();
+  // The keyboard caret is in the editor at that offset.
+  await expect(rich(page)).toBeFocused();
   await page.keyboard.insertText("X");
   await expect
     .poll(
@@ -2164,7 +2168,7 @@ for (const [name, before, typed] of [
       offset,
     );
     await richMode(page);
-    await rich(page).focus();
+    await expect(rich(page)).toBeFocused();
     await page.keyboard.insertText("X");
     await expect
       .poll(

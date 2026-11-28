@@ -248,13 +248,16 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
       // Within the textarea first, then the panel around it.
       input.scrollTop += sourceLineTop(input, view.offset) - view.top;
       scrollAround(input, sourceLineTop(input, view.offset), view.top);
+      if (target.focus) input.focus({ preventScroll: true });
     }, [mode, loaded]);
-    function changeMode(value: DocumentMode) {
-      if (value !== mode)
+    function changeMode(value: DocumentMode, focus = false) {
+      if (value !== mode) {
         place.current =
           mode === "rich"
             ? (richEditor.current?.place(current.current.markdown) ?? null)
             : sourcePlace();
+        if (place.current) place.current.focus = focus;
+      }
       if (value === "rich" && mode !== value) {
         setEditorReady(false);
         setEditorFailed(false);
@@ -668,13 +671,17 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
       <DocumentModeToggle
         mode={mode}
         disabled={!!uploadCount}
-        onChange={(value) => {
+        onChange={(value, pointer) => {
           if (composing.current) return;
-          modeFocus.current = !!section.current
-            ?.querySelector(".document-modes")
-            ?.contains(document.activeElement);
+          // A click continues typing at the caret in the other mode. Enter or
+          // Space on the switch keeps keyboard focus on the switch.
+          modeFocus.current =
+            !pointer &&
+            !!section.current
+              ?.querySelector(".document-modes")
+              ?.contains(document.activeElement);
           setNotice("");
-          changeMode(value);
+          changeMode(value, pointer && !docReadOnly && !mobile);
         }}
       />
     );
