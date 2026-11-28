@@ -327,6 +327,79 @@ test("토글은 / 메뉴와 문서 블록으로 만들고 접고 펼치며 detai
   await expect(detail(page).locator(".document-notice")).toContainText("원문");
 });
 
+test("번호·기호로 시작하는 토글 제목도 리치로 열고 줄 맨 앞 이스케이프로 저장한다", async ({
+  page,
+}) => {
+  // Titles as written before 2026-11-28, without line-start escapes.
+  const titles = ["<h2>10. 참고</h2>", "- 항목", "# 해시", "> 인용", "[a]: b"];
+  const shown = ["10. 참고", "- 항목", "# 해시", "> 인용", "[a]: b"];
+  await save(
+    page,
+    taskIds[0],
+    titles
+      .map(
+        (title) =>
+          `<details open>\n<summary>${title}</summary>\n\n본문\n\n</details>`,
+      )
+      .join("\n\n"),
+  );
+  await open(page);
+  await expect(detail(page).locator(".document-notice")).toHaveCount(0);
+  await expect(rich(page).locator(".document-toggle-summary")).toHaveText(
+    shown,
+  );
+  await expect(rich(page).locator("h2.document-toggle-summary")).toHaveCount(1);
+  await rich(page).locator(".document-toggle-content p").first().click();
+  await page.keyboard.insertText("편집 ");
+  const written = [
+    "<summary><h2>10\\. 참고</h2></summary>",
+    "<summary>\\- 항목</summary>",
+    "<summary>\\# 해시</summary>",
+    "<summary>\\> 인용</summary>",
+    "<summary>\\[a]: b</summary>",
+  ];
+  await expect
+    .poll(async () => (await document(page)).markdown)
+    .toContain(written[0]);
+  const markdown = (await document(page)).markdown;
+  for (const title of written) expect(markdown).toContain(title);
+  await close(page);
+  await open(page);
+  await expect(detail(page).locator(".document-notice")).toHaveCount(0);
+  await expect(rich(page).locator(".document-toggle-summary")).toHaveText(
+    shown,
+  );
+});
+
+test("토글 제목에 입력한 기호는 다시 열어도 글자로 남는다", async ({
+  page,
+}) => {
+  await save(
+    page,
+    taskIds[0],
+    "<details open>\n<summary>제목</summary>\n\n본문\n\n</details>",
+  );
+  await open(page);
+  const toggle = rich(page).locator(":scope > .document-toggle");
+  await toggle.locator(".document-toggle-title").click();
+  await settleRichSelection(page);
+  await page.keyboard.press("End");
+  // Typed text is not parsed as Markdown.
+  await page.keyboard.insertText(" *별* [a](b) <i></summary>끝");
+  await expect
+    .poll(async () => (await document(page)).markdown)
+    .toContain(
+      "<summary>제목 \\*별\\* \\[a]\\(b) \\<i>\\</summary>끝</summary>",
+    );
+  await close(page);
+  await open(page);
+  await expect(detail(page).locator(".document-notice")).toHaveCount(0);
+  await expect(toggle.locator(".document-toggle-summary")).toHaveText(
+    "제목 *별* [a](b) <i></summary>끝",
+  );
+  await expect(toggle.locator(".document-toggle-summary em, a")).toHaveCount(0);
+});
+
 test("닫는 태그가 없는 토글도 표·링크를 표시하며 편집 전 원문을 보존한다", async ({
   page,
 }) => {
