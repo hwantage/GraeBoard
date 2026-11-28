@@ -29,6 +29,26 @@
 - 리뷰: 독립 리뷰 2회와 Fable 5.2(xhigh) 리뷰를 반영했습니다. 1차는 행 갱신 시각 흡수(→ `previousUpdatedAt`과 "바꾸기 전 값이 본 값과 같을 때만 옮김" 규칙)와 다른 팀 사본 열기의 대기 변경 유실, 2차는 미리보기 계산 범위, Fable 리뷰는 사본에서 일반 배경색 안내의 "업무 표시로 바꾸기"가 비활성으로 남던 문제(토큰은 원본에만), 서식 실행취소·재실행 뒤에 만든 변경이 되돌리기 전 서식을 저장하던 문제(그동안 셀 변경 거절), 오래된 문서 문구, 테스트 공백을 지적했습니다.
 - 검증: `npm test` 1,032건 통과(`tests/sheet/cell-save-queue.test.mjs` 11건, SQLite·PostgreSQL 응답의 `previousUpdatedAt`과 재시도 응답 검사 포함, 재시도 응답 비교는 `tests/support/cell-batch-replay-helper.mjs`). `npm run build`·`npm run build:edge`·`check:structure`·`check:architecture` 통과. 브라우저: Chromium 전체 881건 중 863 통과·1 건너뜀·17 실패, 실패 17건을 리뷰 반영 빌드로 다시 실행해 8건 통과(전체 실행 부하), 남은 9건(`monthly-calendar:175`·`:1586`, `document-toc:380`, `color-picker:486`, `mobile:356`·`:482`·`:1604`, `sheet-format-memo:158`, `team-sync-indicator:313`)은 main `30b51a8`에서도 같은 방식으로 실패. 리뷰 반영 뒤 관련 파일(`edit-while-saving`·`sheet-format-memo`·`workspace`·`insights`·`selection-copy-undo`·`sheet-clone-editing`·`sheet-sync`) Chromium 228 통과·1 실패(`sheet-format-memo:158`), `edit-while-saving`·`sheet-format-memo` Firefox·WebKit 46 통과·2 실패(같은 검사, main에서도 실패). `edit-while-saving.spec.ts` 12건에 같은 행의 셀 입력·행 서식 순서 2건, 다른 사람의 같은 행 변경 충돌, 서식 실행취소 저장 중 거절을 더했고, `insights.spec.ts`에 사본의 업무 표시로 바꾸기를 더했습니다.
 
+## 2026-11-28 — 번호·기호로 시작하는 토글 제목
+
+`<summary><h2>10. 참고</h2></summary>`처럼 토글 제목이 번호·기호로 시작하는 문서가 리치 편집으로 열리지 않고 "HTML·각주·참조 링크 등은 Markdown 원문에서 편집하세요" 안내와 함께 원문 전용이 되었습니다. 사용자 문서(합성 재현만 검사에 포함)에서 제목만 `참고`로 바꾸면 문서 전체가 리치로 열렸습니다. 링크가 없는 문서라 열린 PR #110(파일 경로 링크 허용)과는 관계가 없습니다.
+
+원인:
+
+- `parseSummary`는 제목을 한 줄짜리 Markdown 문서로 따로 파싱해 문단 하나일 때만 토글로 묶습니다. `10. 참고`는 10부터 시작하는 번호 목록이 되므로 `<details>`가 html 노드로 남고 `checkMarkdown`이 리치 편집을 막았습니다.
+- 이 원문은 리치 편집이 만들었습니다. `detailsToMarkdown`이 제목을 `phrasing` 구성에 들어가지 않은 채 앞뒤를 `>`·`<`로 두고 직렬화해 줄 맨 앞(`10.`·`-`·`#`·`>`)과 글 속(`*`·`[`·`<`) 이스케이프가 전혀 없었습니다. 원문에서 `10\. 참고`로 고쳐도 다음 저장이 `10. 참고`로 되돌려 변환 보존 검사에서 막혔습니다.
+
+변경(`src/documents/editor/DocumentToggle.ts`, DB 변경 지침에 따라 사용자 승인):
+
+- 제목을 `phrasing` 안에서 앞뒤를 줄바꿈으로 둔 문단 줄처럼 직렬화해 `10\. 참고`·`\- 항목`·`\*별\*`·`\[a]\(b)`로 씁니다. 이 형태는 이전 버전도 같은 제목으로 읽습니다.
+- 한 문단으로 파싱되지 않는 기존 제목은 `literalStart`가 앞 공백을 지우고 맨 앞 번호의 `.`/`)` 또는 `#`·`>`·`+`·`-`·`*`·`_`·`` ` ``·`~`·`[` 앞에 역슬래시를 붙여 다시 파싱합니다. HTML로 시작하는 제목은 그대로 원문 전용입니다. 일괄 변환은 하지 않고 리치 편집의 다음 저장에서 이스케이프한 형태로 바뀝니다.
+
+검증:
+
+- `tests/browser/documents/document-editor-blocks.spec.ts`에 두 검사를 추가했습니다. 이스케이프 없이 저장된 `<h2>10. 참고</h2>`·`- 항목`·`# 해시`·`> 인용`·`[a]: b` 제목 다섯 토글이 안내 없이 리치로 열리고, 편집 후 이스케이프한 제목으로 저장되며 다시 열어도 같은 제목인지 봅니다. 토글 제목에 입력한 ` *별* [a](b) <i>`가 `\*별\* \[a]\(b) \<i>`로 저장되고 다시 열어도 강조·링크 없이 글자로 남는지 봅니다. 수정 전 코드에서는 두 검사 모두 실패했고(Chromium), 수정 후 Chromium·Firefox·WebKit 6건 통과했습니다.
+- 사용자 문서(`draft/mdsample/problem.txt`, 저장소 미포함)를 수정 후 빌드에 저장해 리치 편집이 안내 없이 열리는 것을 확인했습니다.
+- `npm run check:structure`(815개 파일, 오류 0)·`check:architecture`(485개 모듈, 위반 0)·`npm run build`·`npm run build:edge` 통과.
+
 ## 2026-11-26 — 슬라이드 보관 정리를 자료의 revision 수와 무관하게 (#253)
 
 팀 자료는 현재와 직전 10개 revision의 내용을 보관하고, 팀의 어느 자료의 보관 중인 revision도 쓰지 않는 내용(파일·객체와 그 썸네일)을 지웁니다. 이 정리가 자료를 저장할수록 느려졌습니다.
