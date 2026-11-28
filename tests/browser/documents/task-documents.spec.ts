@@ -2032,6 +2032,252 @@ test("리치 문서의 표와 텍스트를 함께 복사하면 서식과 구조�
   await preserved();
 });
 
+test("링크·정의·체크리스트가 될 수 없는 [는 역슬래시 없이 저장하고 내용은 그대로 둔다", async ({
+  page,
+}) => {
+  // Saved before: every "[" was escaped.
+  const before = [
+    "\\[공통] 내용",
+    "\\\\\\[공통]",
+    "\\[a](b)",
+    "\\[a]\\[b]",
+    "\\[a]: b",
+    "* \\[ ] 항목",
+    "\\[a \\[b] c](d)",
+    "**\\[굵게]** 뒤 \\[^1]",
+    "| \\[칸] |\n| ----- |\n| \\[값] |",
+    "# \\[제목]",
+    "\\[^1]: 각주",
+    "\\[공통] 자료 [링크](https://example.com) 끝",
+    "\\[x [링크](https://example.com) y]",
+    "\\[a][링크](https://example.com)",
+    "\\[ [링크](https://example.com)]\\(x)",
+  ].join("\n\n");
+  const after = [
+    "편집 [공통] 내용",
+    // A typed backslash keeps its own escape only.
+    "\\\\[공통]",
+    // These could become a link, references or a definition; "(" after "]"
+    // keeps its existing escape too.
+    "\\[a]\\(b)",
+    "\\[a]\\[b]",
+    "\\[a]: b",
+    // This could become a checklist item.
+    "* \\[ ] 항목",
+    "\\[a \\[b] c]\\(d)",
+    // A footnote call needs its definition, which stays escaped below.
+    "**[굵게]** 뒤 [^1]",
+    "| [칸] |\n| --- |\n| [값] |",
+    "# [제목]",
+    "\\[^1]: 각주",
+    // A link cannot hold links, and a "]" before one closes nothing.
+    "[공통] 자료 [링크](https://example.com) 끝",
+    "[x [링크](https://example.com) y]",
+    "[a][링크](https://example.com)",
+    // A link can hold an image, so brackets around one keep escapes.
+    "\\[ [링크](https://example.com)]\\(x)",
+  ].join("\n\n");
+  const shown = async () => {
+    await expect(rich(page).locator(":scope > p")).toHaveText([
+      /\[공통\] 내용$/,
+      "\\[공통]",
+      "[a](b)",
+      "[a][b]",
+      "[a]: b",
+      "[a [b] c](d)",
+      "[굵게] 뒤 [^1]",
+      "[^1]: 각주",
+      "[공통] 자료 링크 끝",
+      "[x 링크 y]",
+      "[a]링크",
+      "[ 링크](x)",
+    ]);
+    await expect(rich(page).locator("li")).toHaveText("[ ] 항목");
+    await expect(rich(page).locator("th")).toHaveText("[칸]");
+    await expect(rich(page).locator("td")).toHaveText("[값]");
+    await expect(rich(page).locator("h1")).toHaveText("[제목]");
+    await expect(rich(page).locator("a")).toHaveText([
+      "링크",
+      "링크",
+      "링크",
+      "링크",
+    ]);
+    await expect(rich(page).locator(".document-check-item")).toHaveCount(0);
+  };
+  await save(page, taskIds[0], before);
+  await open(page);
+  await shown();
+  // The start of the first paragraph.
+  await rich(page)
+    .locator(":scope > p")
+    .first()
+    .click({ position: { x: 1, y: 8 } });
+  await settleRichSelection(page);
+  await page.keyboard.insertText("편집 ");
+  await expect
+    .poll(
+      async () =>
+        (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
+    )
+    .toBe(`${after}\n`);
+  await shown();
+  await rich(page).press("ControlOrMeta+a");
+  expect((await copyRich(page)).text).toBe(after);
+  await close(page);
+  // The saved text opens in the rich view again, with the same content.
+  await open(page);
+  await expect(detail(page).locator(".document-notice")).toHaveCount(0);
+  await shown();
+  await raw(page);
+  await expect(source(page)).toHaveValue(`${after}\n`);
+});
+
+test("대괄호·역슬래시를 섞어 입력한 글은 저장 후 다시 열어도 같은 글이다", async ({
+  page,
+}) => {
+  const lines = [
+    "[a]",
+    "a [b] c",
+    "[a](b)",
+    "[a] (b)",
+    "[a][b]",
+    "[a] [b]",
+    "[a][]",
+    "[a]:",
+    "x [a]: b",
+    "[a]: b",
+    " [a]: b",
+    "![a](b)",
+    "![a]",
+    "\\[a]",
+    "\\",
+    "a\\",
+    "[^1]",
+    "[^1]: x",
+    "[a [b] c](d)",
+    "[a [b](c)",
+    "[[a]]",
+    "[[a]](b)",
+    "]a[",
+    "a](b",
+    "[a]\\(b)",
+    "[ ] x",
+    "[x] y",
+    "1. x",
+    "- x",
+    "# x",
+    "> x",
+  ];
+  await open(page);
+  await rich(page).click();
+  for (const line of lines) {
+    // Typed text is not parsed as Markdown.
+    await page.keyboard.insertText(line);
+    await page.keyboard.press("Enter");
+  }
+  const written = lines.map((line) => line.trimStart());
+  await expect(rich(page).locator(":scope > p")).toHaveText([...written, ""]);
+  await expect
+    .poll(
+      async () =>
+        (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
+    )
+    .toContain("x [a]: b");
+  await close(page);
+  await open(page);
+  await expect(detail(page).locator(".document-notice")).toHaveCount(0);
+  await expect(rich(page).locator(":scope > p")).toHaveText(written);
+  await expect(
+    rich(page).locator("a, img, ul, ol, h1, blockquote"),
+  ).toHaveCount(0);
+});
+
+test("토글 제목의 대괄호도 필요할 때만 역슬래시를 붙인다", async ({ page }) => {
+  await save(
+    page,
+    taskIds[0],
+    [
+      "<details open>\n<summary>**\\[소식]** 정리</summary>\n\n본문\n\n</details>",
+      "<details open>\n<summary>\\[a]: b</summary>\n\n본문\n\n</details>",
+    ].join("\n\n"),
+  );
+  await open(page);
+  await rich(page).locator(".document-toggle-content p").first().click();
+  await page.keyboard.insertText("편집 ");
+  const saved = async () =>
+    (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown;
+  await expect.poll(saved).toContain("<summary>**[소식]** 정리</summary>");
+  // A definition would end the toggle's title.
+  expect(await saved()).toContain("<summary>\\[a]: b</summary>");
+  await close(page);
+  await open(page);
+  await expect(detail(page).locator(".document-notice")).toHaveCount(0);
+  await expect(rich(page).locator(".document-toggle-summary")).toHaveText([
+    "[소식] 정리",
+    "[a]: b",
+  ]);
+});
+
+test("줄바꿈 뒤 각주 정의와 여러 줄 정의 모양의 글도 역슬래시를 유지한다", async ({
+  page,
+}) => {
+  const saved = async () =>
+    (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown;
+  // A soft line break from the Markdown source, then a typed line break.
+  await save(page, taskIds[0], "참고\n\\[^1]: 출처");
+  await open(page);
+  await expect(detail(page).locator(".document-notice")).toHaveCount(0);
+  await rich(page).locator(":scope > p").first().click();
+  await page.keyboard.press("ControlOrMeta+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("메모");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.insertText("[^2]: 다른 출처");
+  // A definition's label can run over lines.
+  await page.keyboard.press("Enter");
+  await page.keyboard.insertText("[참고");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.insertText("자료]: 링크");
+  await expect.poll(saved).toContain("\\[참고\\\n자료]: 링크");
+  expect(await saved()).toContain("\\[^2]: 다른 출처");
+  expect(await saved()).toContain("참고\n\\[^1]: 출처");
+  await close(page);
+  await open(page);
+  await expect(detail(page).locator(".document-notice")).toHaveCount(0);
+  await expect(rich(page).locator(":scope > p")).toHaveText([
+    "참고\n[^1]: 출처",
+    "메모[^2]: 다른 출처",
+    "[참고자료]: 링크",
+  ]);
+});
+
+test("공백으로 끝나는 글도 기호를 이스케이프해 다시 열면 링크·목록이 되지 않는다", async ({
+  page,
+}) => {
+  const saved = async () =>
+    (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown;
+  await open(page);
+  await rich(page).click();
+  // Typed text is not parsed, and the input rule needs the typed space last.
+  await page.keyboard.insertText("[a](b) ");
+  await expect.poll(saved).toMatch(/^\\\[a\]\\\(b\) ?\n$/);
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("1. ");
+  await expect(rich(page).locator("ol")).toHaveCount(1);
+  // Backspace keeps the typed marker as text, ending with its space.
+  await page.keyboard.press("Backspace");
+  await expect(rich(page).locator("ol")).toHaveCount(0);
+  await expect.poll(saved).toMatch(/\n\n1\\\. ?\n$/);
+  await close(page);
+  await open(page);
+  await expect(rich(page).locator("a")).toHaveCount(0);
+  await expect(rich(page).locator("ol")).toHaveCount(0);
+  await expect(rich(page).locator(":scope > p")).toHaveText([
+    /^\[a\]\(b\)\s?$/,
+    /^1\.\s?$/,
+  ]);
+});
+
 // The viewport top of the source line holding `offset`. The test documents'
 // lines do not wrap.
 async function sourceLine(page: Page, offset: number) {
@@ -2267,7 +2513,7 @@ test("복사한 일반 텍스트는 Markdown이며 HTML 없이 붙여도 다른 
   await rich(page).press("ControlOrMeta+a");
   const { text } = await copyRich(page);
   expect(text).toBe(
-    "# 회의 기록\n\n앞 **굵게** 뒤 [자료](https://example.com/docs)\n\n* 하나\n* 둘\n\n```js\nconst a = 1;\n```\n\n\\[완료] a\\*b",
+    "# 회의 기록\n\n앞 **굵게** 뒤 [자료](https://example.com/docs)\n\n* 하나\n* 둘\n\n```js\nconst a = 1;\n```\n\n[완료] a\\*b",
   );
   await close(page);
   // Another document rebuilds the formatting from the Markdown alone.

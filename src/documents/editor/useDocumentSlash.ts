@@ -80,9 +80,9 @@ export default function useDocumentSlash({
     const current = slashRef.current;
     if (
       current &&
-      (["from", "to", "query", "left", "top", "flip"] as const).every(
-        (key) => current[key] === next[key],
-      )
+      (
+        ["from", "to", "query", "listItem", "left", "top", "flip"] as const
+      ).every((key) => current[key] === next[key])
     )
       return;
     if (current?.from !== next.from) {
