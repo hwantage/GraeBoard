@@ -105,8 +105,14 @@ export default function useRichEditorLifecycle(
     setImageZoom: React.Dispatch<React.SetStateAction<boolean>>;
   },
 ) {
-  const { linkTitlesRef, linkOpener, hideLinkTip, setLink, setLinkOpenError } =
-    links;
+  const {
+    linkTitlesRef,
+    linkOpener,
+    hideLinkTip,
+    setLink,
+    setLinkOpenError,
+    notify,
+  } = links;
   const { closeSlash, syncSlash } = slashMenu;
   const applyingRemote = useRef(false);
   const appliedRemote = useRef(props.remoteMarkdown);
@@ -191,7 +197,8 @@ export default function useRichEditorLifecycle(
           },
 
           nodeViews: {
-            code_block: documentCodeBlockView,
+            code_block: (node, view, getPos) =>
+              documentCodeBlockView(node, view, getPos, notify),
             document_link: (node) => {
               if (latest.current.documentLinks !== false)
                 return documentLinkView(node, linkTitles);
