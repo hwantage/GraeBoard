@@ -146,9 +146,11 @@ function plainBracketTexts(root: StringifyNode) {
       // Inline links and full or collapsed references, also around a link
       // or an image, which a link can hold.
       /\][([]/.test(text) ||
-      // A definition can start a paragraph, and a footnote definition also
-      // any later line of one, after a line break.
-      (lineStart && /(?:^|\n)[ \t]*\[[^\n]*\]:/.test(text)) ||
+      // A definition can start a paragraph, its label running over lines,
+      // and a footnote definition also any later line of one.
+      (lineStart &&
+        ((/^\s*\[/.test(text) && text.includes("]:")) ||
+          /\n[ \t]*\[[^\n]*\]:/.test(text))) ||
       // The first line of a list item can be read as a checklist marker.
       (paragraph &&
         parent?.type === "listItem" &&

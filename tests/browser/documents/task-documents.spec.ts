@@ -2218,7 +2218,7 @@ test("토글 제목의 대괄호도 필요할 때만 역슬래시를 붙인다",
   ]);
 });
 
-test("줄바꿈 뒤 각주 정의 모양의 글도 역슬래시를 유지한다", async ({
+test("줄바꿈 뒤 각주 정의와 여러 줄 정의 모양의 글도 역슬래시를 유지한다", async ({
   page,
 }) => {
   const saved = async () =>
@@ -2233,7 +2233,13 @@ test("줄바꿈 뒤 각주 정의 모양의 글도 역슬래시를 유지한다"
   await page.keyboard.type("메모");
   await page.keyboard.press("Shift+Enter");
   await page.keyboard.insertText("[^2]: 다른 출처");
-  await expect.poll(saved).toContain("\\[^2]: 다른 출처");
+  // A definition's label can run over lines.
+  await page.keyboard.press("Enter");
+  await page.keyboard.insertText("[참고");
+  await page.keyboard.press("Shift+Enter");
+  await page.keyboard.insertText("자료]: 링크");
+  await expect.poll(saved).toContain("\\[참고\\\n자료]: 링크");
+  expect(await saved()).toContain("\\[^2]: 다른 출처");
   expect(await saved()).toContain("참고\n\\[^1]: 출처");
   await close(page);
   await open(page);
@@ -2241,6 +2247,7 @@ test("줄바꿈 뒤 각주 정의 모양의 글도 역슬래시를 유지한다"
   await expect(rich(page).locator(":scope > p")).toHaveText([
     "참고\n[^1]: 출처",
     "메모[^2]: 다른 출처",
+    "[참고자료]: 링크",
   ]);
 });
 
