@@ -1182,6 +1182,7 @@ function Workspace({
         throw error;
       }
     },
+    site.external && !sheetClone,
   );
   useEffect(() => {
     setFilterNameDialog(null);

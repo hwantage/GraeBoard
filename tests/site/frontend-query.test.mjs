@@ -42,6 +42,8 @@ test("explicit site takes priority over legacy auth mode and internal query cade
     siteFor({ site: "external", authMode: "password" }),
   );
   assert.equal(external.pollMs, 30000);
+  assert.equal(external.livePollMs, 300000);
+  assert.equal(policy.livePollMs, 7000);
   assert.equal(external.retryDelay(1, { status: 503 }), 5000);
   assert.equal(external.retryDelay(2, { status: 503 }), 10000);
   assert.equal(external.retryDelay(8, { status: 503 }), 60000);
@@ -87,6 +89,45 @@ test("a polling consumer keeps a shared request alive and all consumers release 
   assert.equal(work.controller.signal.aborted, false);
 });
 
+async function browserApi() {
+  const code = source("api")
+    .replace('"./site"', JSON.stringify(moduleURL(source("site"))))
+    .replace(
+      '"../../shared/formatting/compact.js"',
+      JSON.stringify(
+        new URL("../../shared/formatting/compact.js", import.meta.url).href,
+      ),
+    )
+    .replace(
+      '"../../shared/http/api-error-message.js"',
+      JSON.stringify(
+        new URL("../../shared/http/api-error-message.js", import.meta.url).href,
+      ),
+    );
+  return (await import(moduleURL(code))).api;
+}
+
+test("external bootstrap reuses a validated snapshot and drops it on account changes", async (t) => {
+  const api = await browserApi();
+  let reads = 0;
+  t.mock.method(globalThis, "fetch", async (path, options) => {
+    if (path.endsWith("/auth/logout")) return Response.json({});
+    reads++;
+    const validator = new Headers(options.headers).get("if-none-match");
+    assert.equal(validator, reads === 2 ? '"one"' : null);
+    return validator
+      ? new Response(null, { status: 304 })
+      : Response.json(
+          { site: "external", users: [{ id: reads }] },
+          { headers: { ETag: '"one"' } },
+        );
+  });
+  (await api("/bootstrap")).users[0].id = 999;
+  assert.equal((await api("/bootstrap")).users[0].id, 1);
+  await api("/auth/logout");
+  assert.equal((await api("/bootstrap")).users[0].id, 3);
+});
+
 test("only successful business mutations dispatch the local-save signal", async (t) => {
   const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
   const events = new EventTarget();
@@ -102,21 +143,7 @@ test("only successful business mutations dispatch the local-save signal", async 
   t.mock.method(globalThis, "fetch", async () => Response.json({ ok: true }));
   let saves = 0;
   events.addEventListener("graeboard:local-save", () => saves++);
-  const code = source("api")
-    .replace('"./site"', JSON.stringify(moduleURL(source("site"))))
-    .replace(
-      '"../../shared/formatting/compact.js"',
-      JSON.stringify(
-        new URL("../../shared/formatting/compact.js", import.meta.url).href,
-      ),
-    )
-    .replace(
-      '"../../shared/http/api-error-message.js"',
-      JSON.stringify(
-        new URL("../../shared/http/api-error-message.js", import.meta.url).href,
-      ),
-    );
-  const { api } = await import(moduleURL(code));
+  const api = await browserApi();
   await api("/auth/login", { method: "POST", body: "{}" });
   await api("/admin/users", { method: "POST", body: "{}" });
   await api("/teams/team/sync/refresh", { method: "POST", body: "{}" });

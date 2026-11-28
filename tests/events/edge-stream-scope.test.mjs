@@ -246,10 +246,20 @@ test("external streams send a copy, its memo and the team only the events naming
     name: name + " 2",
     expectedName: name,
   });
-  assert.deepEqual(ids(await collect(600)), [1, 3]);
+  const renamed = await collect(600);
+  assert.deepEqual(ids(renamed), [1, 3]);
+  assert.equal(
+    renamed.find((frame) => frame.id === 3).data.originalSheetChanged,
+    false,
+  );
   // An event that names nothing (a received commit) reaches every stream.
   await sendEvent({ teamId: f.teamId, source: "sync" });
-  assert.deepEqual(ids(await collect(600)), [1, 3]);
+  const unknown = await collect(600);
+  assert.deepEqual(ids(unknown), [1, 3]);
+  assert.notEqual(
+    unknown.find((frame) => frame.id === 3).data.originalSheetChanged,
+    false,
+  );
 
   // The cell stream keeps its rows across a document save but not a task edit.
   const tasks = new PostgresTaskRepository({
@@ -271,6 +281,31 @@ test("external streams send a copy, its memo and the team only the events naming
   assert.equal(
     (await tasks.readEvents(f.user, period, quiet.cursor)).reset,
     true,
+  );
+  const snapshot = await tasks.query(f.user, period);
+  await sendEvent({ entities: [{ entity: "calendar", key: ["entry"] }] });
+  const unchanged = await tasks.query(f.user, {
+    ...period,
+    ifNoneMatch: "W/" + snapshot.etag,
+  });
+  assert.equal(unchanged.notModified, true);
+  assert.notEqual(unchanged.cellEventId, snapshot.cellEventId);
+  assert.notEqual(
+    (
+      await tasks.query(f.user, {
+        ...period,
+        year: 2027,
+        ifNoneMatch: snapshot.etag,
+      })
+    ).notModified,
+    true,
+  );
+  await sendEvent({
+    entities: [{ entity: "document", key: ["task", f.taskId, "main"] }],
+  });
+  assert.ok(
+    (await tasks.query(f.user, { ...period, ifNoneMatch: unchanged.etag })).data
+      .tasks,
   );
   // Leave before the fixture stops PostgreSQL, so the stream's poll ends.
   await reader.cancel();

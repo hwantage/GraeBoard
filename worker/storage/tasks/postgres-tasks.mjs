@@ -25,7 +25,7 @@ import {
 } from "../../sheet/task-view.mjs";
 import { prepareCellChange } from "../../../server/storage/tasks/task-service.mjs";
 import { subscribePostgresEvents } from "../events/postgres-events.mjs";
-import { sheetQuiet } from "../../events/event-scope.mjs";
+import { eventTouches, sheetQuiet } from "../../events/event-scope.mjs";
 
 export class PostgresTaskRepository extends PostgresTaskCommands {
   constructor({ context }) {
@@ -162,7 +162,7 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
       return { cursor: eventId, reset: false, events };
     });
   }
-  query(user, { teamId, year, startMonth, deleted, ifNoneMatch }) {
+  query(user, { teamId, year, startMonth = 1, deleted = false, ifNoneMatch }) {
     const ctx = this.context;
     assert(
       user.id === ctx.user.id,
@@ -176,21 +176,51 @@ export class PostgresTaskRepository extends PostgresTaskCommands {
           403,
           "팀장만 삭제한 업무를 조회할 수 있습니다.",
         );
-      const cellEventId =
-          "pg:" +
-          Number(
-            (
-              await s.tx.query(
-                "SELECT COALESCE(MAX(cursor),0) AS cursor FROM site_events WHERE team_id=$1",
-                [teamId],
-              )
-            ).rows[0].cursor,
-          ),
-        etag =
-          '"' +
-          digest([teamId, { year, startMonth }, deleted, cellEventId]) +
-          '"';
-      if (ifNoneMatch === etag) return { etag, cellEventId, notModified: true };
+      const current = Number(
+        (
+          await s.tx.query(
+            "SELECT COALESCE(MAX(cursor),0) AS cursor FROM site_events WHERE team_id=$1",
+            [teamId],
+          )
+        ).rows[0].cursor,
+      );
+      const cellEventId = "pg:" + current;
+      // Bind the validator to this authorized representation. The cursor also
+      // lets us prove a short run of intervening events left its rows intact.
+      const tagAt = (at) =>
+        '"tasks-' +
+        at +
+        "-" +
+        digest([user.id, teamId, { year, startMonth }, deleted, at]) +
+        '"';
+      const etag = tagAt(current);
+      const previous = ifNoneMatch?.replace(/^W\//, "");
+      if (previous === etag) return { etag, cellEventId, notModified: true };
+      const at = Number(/^"tasks-(\d+)-[0-9a-f]{64}"$/.exec(previous)?.[1]);
+      if (
+        at >= 0 &&
+        at < current &&
+        current - at <= 32 &&
+        previous === tagAt(at)
+      ) {
+        const { rows } = await s.tx.query(
+          "SELECT kind, CASE WHEN kind='changed' AND octet_length(payload)<=8192 THEN payload END AS payload FROM site_events WHERE team_id=$1 AND cursor>$2 AND cursor<=$3",
+          [teamId, at, current],
+        );
+        // Gaps, cell edits, unknown or large events all require the full read.
+        if (
+          rows.length === current - at &&
+          rows.every(
+            (row) =>
+              row.payload &&
+              !eventTouches(
+                { kind: "originalSheet" },
+                { kind: row.kind, payload: JSON.parse(row.payload) },
+              ),
+          )
+        )
+          return { etag, cellEventId, notModified: true };
+      }
       return {
         etag,
         cellEventId,

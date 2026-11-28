@@ -43,11 +43,20 @@ export function streamScope(path, documentScope = null) {
     : { kind: "documents", prefix, parent };
 }
 
+// Only known records outside the original sheet and bootstrap can be skipped.
+const outsideOriginalSheet = ({ entity, key }) =>
+  Array.isArray(key) &&
+  (["calendar", "tag", "sheetClone"].includes(entity) ||
+    (entity === "document" &&
+      (key[0] === "calendar" || PANEL_DOCUMENTS.has(key[0]))));
+
 function touches(scope, { entity, key }) {
   if (!OWN_STREAMS.has(entity) || !Array.isArray(key)) return true;
   switch (scope.kind) {
     // Task rows reach the team as on the internal site's task requests; cell
     // values follow the cell stream.
+    case "originalSheet":
+      return !outsideOriginalSheet({ entity, key });
     case "team":
       return !(
         entity === "cell" ||

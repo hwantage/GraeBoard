@@ -260,3 +260,72 @@ for (const site of ["internal", "external"] as const) {
     }
   });
 }
+
+test("외부 원본 시트는 실시간 연결 중 무관한 알림과 30초 주기를 건너뛰고 실제 변경을 다시 읽는다", async ({
+  page,
+}) => {
+  const bootstrap = unpack(
+    await (await page.request.get("/api/bootstrap")).json(),
+  );
+  let bootReads = 0,
+    taskReads = 0,
+    conditionalReads = 0;
+  await page.route("**/api/bootstrap", async (route) => {
+    bootReads++;
+    if (route.request().headers()["if-none-match"] === '"current-user"')
+      conditionalReads++;
+    return route.fulfill({
+      headers: { ETag: '"current-user"' },
+      json: { ...bootstrap, site: "external" },
+    });
+  });
+  await page.route("**/api/tasks?**", (route) => {
+    taskReads++;
+    return route.continue();
+  });
+  await page.addInitScript(() =>
+    Object.defineProperty(window, "SharedWorker", { value: undefined }),
+  );
+  let sheetChanged = false,
+    ready = 0,
+    revision = 0;
+  await page.route("**/api/events", (route) => {
+    const frames: string[] = [];
+    revision++;
+    for (const { id, path, lastEventId } of route.request().postDataJSON()
+      .streams) {
+      const cells = path.includes("/cells/events");
+      if (cells) ready++;
+      if (!cells && !path.match(/\/teams\/[^/]+\/events/)) continue;
+      frames.push(
+        "event: stream\ndata: " +
+          JSON.stringify({
+            id,
+            event: cells ? "ready" : "document",
+            data: JSON.stringify(
+              cells ? {} : { revision, originalSheetChanged: sheetChanged },
+            ),
+            lastEventId: cells ? lastEventId : "pg:" + revision,
+          }) +
+          "\n\n",
+      );
+    }
+    return route.fulfill({
+      contentType: "text/event-stream",
+      body: frames.join(""),
+    });
+  });
+  await page.clock.install();
+  await page.goto("/");
+  await expect(page.getByRole("grid")).toBeVisible();
+  await expect.poll(() => ready).toBeGreaterThan(0);
+  await page.clock.pauseAt(new Date(Date.now() + 1000));
+  const baseline = [taskReads, bootReads];
+  await page.clock.runFor(32000);
+  expect([taskReads, bootReads]).toEqual(baseline);
+  sheetChanged = true;
+  await page.clock.runFor(35000);
+  await expect.poll(() => taskReads).toBeGreaterThan(baseline[0]);
+  expect(conditionalReads).toBeGreaterThan(0);
+  await expect(page.getByRole("grid")).toBeVisible();
+});

@@ -39,6 +39,7 @@ export class ApiError extends Error {
   }
 }
 const taskResponses = new Map<string, { etag: string; data: unknown }>();
+let bootstrapResponse: { etag: string; data: unknown } | undefined;
 let site = siteFor(null);
 const pulls = new Map<string, Promise<void>>();
 const lastPull = new Map<string, number>();
@@ -77,8 +78,17 @@ export async function api<T = any>(
   const multipart = options.body instanceof FormData;
   const cacheable =
     path.startsWith("/tasks?") && (!options.method || options.method === "GET");
-  const cached = cacheable ? taskResponses.get(path) : undefined;
-  if (path.startsWith("/auth/")) taskResponses.clear();
+  const bootstrap =
+    path === "/bootstrap" && (!options.method || options.method === "GET");
+  const cached = cacheable
+    ? taskResponses.get(path)
+    : bootstrap
+      ? bootstrapResponse
+      : undefined;
+  if (path.startsWith("/auth/")) {
+    taskResponses.clear();
+    bootstrapResponse = undefined;
+  }
   let response: Response;
   const started = performance.now();
   try {
@@ -120,8 +130,17 @@ export async function api<T = any>(
           cellEventId: response.headers.get("X-Cell-Event-ID"),
         }
       : data;
-  if (response.status === 304 && cached) return withCursor(cached.data) as T;
+  if (response.status === 304 && cached) {
+    // The Edge may advance the resume cursor past unrelated team changes.
+    if (cacheable && taskResponses.get(path) === cached)
+      cached.etag = response.headers.get("etag") || cached.etag;
+    return (
+      bootstrap ? structuredClone(cached.data) : withCursor(cached.data)
+    ) as T;
+  }
   if (!response.ok) {
+    if (bootstrap && [401, 403, 404].includes(response.status))
+      bootstrapResponse = undefined;
     if (cacheable && [403, 404].includes(response.status))
       taskResponses.delete(path);
     let data: any;
@@ -167,6 +186,11 @@ export async function api<T = any>(
   }
   if (["/bootstrap", "/setup"].includes(path)) {
     site = siteFor(data);
+    const etag = response.headers.get("etag");
+    bootstrapResponse =
+      bootstrap && site.external && etag
+        ? { etag, data: structuredClone(data) }
+        : undefined;
   }
   if (
     options.method &&

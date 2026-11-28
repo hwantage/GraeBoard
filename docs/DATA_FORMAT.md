@@ -548,6 +548,8 @@ XLSX·CSV 반출에는 속성 표시명과 값 이름을 사용하며, JSON에�
 | `DELETE /api/admin/teams/:id`                 | 확인한 팀의 전 연도 데이터 영구 삭제                                                       |
 | `PATCH /api/teams/:id/settings`               | 속성 이름·값·순서·표시 모양 저장                                                           |
 
+외부 `GET /api/bootstrap`은 요청자의 최신 권한으로 초기 정보를 구성하고 ETag가 같으면 본문 없는 304를 반환합니다. 외부 업무 목록은 같은 조회 범위에서 최근의 연속된 이벤트가 표시 내용과 무관함을 확인하면 304와 최신 `X-Cell-Event-ID`·ETag를 반환합니다. 이벤트 누락·정리, 큰 이벤트, 업무 문서·셀 변경은 전체 조회로 복구합니다.
+
 정확한 입력 검증은 `server/validation.mjs`, 동작 계약은 `tests/site/api.test.mjs`를 참고합니다. API를 바꾸거나 직접 DB를 수정하는 도구를 만들 때 충돌 버전, 감사 기록, 팀 접근 검사를 함께 유지해야 합니다.
 
 업무 생성은 `year`에만 등록하며 선택적인 `startMonth`는 삽입 대상의 조회 범위를 지정합니다. 선택적인 `insertAt: {taskId, updatedAt, placement}`는 같은 팀·표시 기간의 기준 행 앞(`before`) 또는 뒤(`after`)에 새 업무를 삽입합니다. 기준 행의 접근 권한·버전을 검사하며 버전 충돌은 409입니다. 일반 삽입은 기준 행의 `defaultStyle`, 행 공통 서식과 활성 속성·주차 셀의 예외를 함께 복사합니다. 삽입 행의 팀원을 포함한 셀 값은 비우고, 작업명 기본값과 요청한 묶음 기준 `fields`만 유지합니다. 빈 복수 팀원 값은 빈 배열로 만듭니다. 팀원은 `createdBy`가 본인이며 담당자가 비어 있는 행을 편집할 수 있습니다. 클라이언트는 기준 행의 개별 행 높이도 현재 보기에 복사합니다. `sourceId`·`copiedRow`를 함께 사용한 복제·붙여넣기는 복사 원본 서식을 우선합니다. 순서 간격이 부족하면 생성 트랜잭션 안에서 순서를 재배정하므로, 생성 실패 시 순서 변경도 함께 취소됩니다. 행 붙여넣기는 `copiedRow: {cells: {[key]: {value, style}}, defaultStyle, rowStyle?, documents?: [{id, title, markdown}]}`를 보내며 속성값·서식을 검증합니다. 일반 팀원의 담당자는 본인으로, 지원자는 빈 목록으로 생성하며 열람자는 생성할 수 없습니다. 기존 `sourceId` 복제도 유지하고 `copiedRow`와 동시에 보낼 수 없습니다. 관련 계약은 `tests/sheet/row-menu.test.mjs`에서도 검증합니다.
