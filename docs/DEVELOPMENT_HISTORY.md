@@ -18,6 +18,19 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-28 — 목록 항목 안 코드 블록의 Enter
+
+목록 항목 안에 들여쓴 코드 블록(`- 항목` 아래 두 칸 들여쓴 ```` ``` ````)에서 한 줄을 쓰고 Enter를 누르면 코드 블록을 빠져나와 여러 줄을 쓸 수 없었습니다.
+
+원인: Milkdown 목록 키맵의 Enter(`splitListItem`)가 ProseMirror 기본 키맵의 코드 줄바꿈(`newlineInCode`)보다 먼저 실행됩니다. `splitListItem`은 커서의 부모의 부모가 목록 항목이면 블록 종류를 보지 않고 항목을 나누므로, 목록 항목의 뒤쪽 블록(`paragraph block*`)인 코드 블록이 둘로 갈리고 커서 뒤 코드가 새 항목의 문단이 되었습니다. 목록 밖 코드 블록은 목록 키맵이 실패해 기본 키맵으로 넘어가므로 문제가 없었습니다.
+
+변경(`src/documents/editor/DocumentInputRules.ts`): `documentInputKeydown`에서 수식키 없는 Enter·Shift+Enter가 코드 블록 안이면 `newlineInCode`로 줄바꿈을 넣습니다. 편집기 속성의 `handleKeyDown`은 플러그인 키맵보다 먼저 실행되므로 목록·토글·인용 안 어디서든 같은 동작입니다. 코드 울타리 Enter(`fenceEnter`)는 Shift 없는 Enter에서 그대로 확인합니다. 코드 블록 뒤로 나가는 ⌘/Ctrl+Enter(`exitCode`)·방향키는 바꾸지 않았습니다.
+
+검증:
+
+- `tests/browser/documents/document-input.spec.ts`에 글머리·번호·체크리스트 항목 안 코드 블록에서 Enter·Shift+Enter로 세 줄을 쓰고 항목이 하나로 남는지, 저장한 Markdown의 들여쓴 세 줄, ⌘/Ctrl+Enter가 같은 항목 안 코드 블록 아래 문단으로 나가는지를 추가했습니다. 수정 전 코드(빌드 후 Chromium)에서는 세 검사 모두 항목이 2개가 되어 실패했고, 수정 후 Chromium·Firefox·WebKit 9건 통과했습니다.
+- `E2E_PORT=4383 npx playwright test tests/browser/documents/`(Chromium·Firefox·WebKit): 801건 중 778 통과, 8 실패, 15 skip(56.9분, 다른 브라우저 검사 2개와 동시 실행). 실패 중 `document-toc.spec.ts:380`(일정 문서와 메모 카드 목차) 3건은 origin/main `4f2a8d9` 빌드에서도 Chromium에서 같은 위치로 실패하는 기존 실패입니다. 나머지 5건(`task-documents.spec.ts`의 2385·3959·1100·3276행, Firefox·WebKit)은 같은 소스로 단독 재실행해 10건 모두 통과했습니다.
+
 ## 2026-11-28 — 저장한 Markdown의 `[`는 필요할 때만 이스케이프
 
 리치 문서의 `[공통]`이 원문에서 `\[공통]`으로, 직접 입력한 `\[공통]`은 `\\\[공통]`으로 보였습니다. 다른 Markdown 편집기는 입력한 그대로 둡니다.
@@ -500,6 +513,7 @@ PR #205가 `Grid.tsx`의 `GridCell`에 `useNewTask(c.key === "title" ? task : nu
 - 탈퇴자의 마지막 아바타 표시. bootstrap이 이미 읽는 계정 목록에서 채우므로 control 트랜잭션 수가 탈퇴자가 있어도 2회로 main과 같음(리뷰 반영, 별도 조회를 넣은 이전 구현은 3회).
 
 외부 모드 화면은 내부 서버의 실제 값으로 bootstrap 응답만 외부 모드로 바꿔 구성원 목록의 이미지·글자·색과 읽기 전용 프로필 창을 확인했습니다(`tests/browser/sync/data-sync.spec.ts`, Chromium·Firefox·WebKit). 실행 결과: `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 960건 통과(건너뜀 0), `npm run build`, `npm run build:edge`, `npm run check:structure`(오류 0), `npm run check:architecture`(위반 0), 관련 브라우저 검사 Chromium 41건·Firefox/WebKit 24건 통과. 리뷰 반영(탈퇴자 아바타를 이미 읽은 계정 목록에서 채움) 뒤 `npm test` 960건, `npm run build`, `npm run build:edge`, `team-site`, 팀 사이트 브라우저 검사를 다시 통과했습니다.
+
 ## 2026-11-24 — 외부 사이트 휴대폰에서 지금 동기화 찾기와 팀장의 연결 조회
 
 운영 외부 사이트를 휴대폰으로 연 시스템 관리자가 설정에서 **지금 동기화**를 찾지 못했습니다. 버튼은 팀 설정의 **외부 동기화** 탭에 그대로 있었고, 외부·휴대폰 폭에서도 표시·실행됩니다. 원인은 두 가지였습니다. ① 760px 이하에서 설정 메뉴의 묶음 제목(팀·시스템)을 숨겨, 이름이 같은 시스템 **외부 동기화**(팀 가져오기 화면)와 팀 탭이 구분되지 않았습니다. ② 390px에서 팀 탭 줄의 마지막 **외부 동기화**가 '외'까지만 보였습니다. 그래서 사용자는 메뉴 줄의 시스템 항목을 눌렀습니다. 화면 이름·탭 구조는 바꾸지 않고 CSS만 고쳤습니다. 760px 이하에서는 묶음 제목을 메뉴 줄에 표시하고, 700px 이하에서는 묶음마다 한 줄로 두어 제목 옆의 항목만 가로로 스크롤합니다. 같은 폭에서 팀 탭의 좌우 여백을 18px에서 8px로 줄여 360px에서도 다섯 탭이 모두 보입니다. 데스크톱 배치는 그대로입니다.
@@ -507,6 +521,7 @@ PR #205가 `Grid.tsx`의 `GridCell`에 `useNewTask(c.key === "title" ? task : nu
 재현 중 시스템 관리자가 아닌 외부 팀장의 문제도 확인했습니다. `TeamSyncSettings`는 팀장에게 상태 조회와 연결 조회(`GET /api/admin/teams/:id/connection`)를 함께 요청합니다. 사내 서버는 팀장을 허용하지만 외부 서버는 시스템 관리자만 허용해 403을 돌려줬습니다. 그 결과 처음 5초 동안 상태·실행 버튼이 보이지 않았고, 지금 동기화를 누르면 실행 뒤 다시 조회할 때 "동기화 실행 후 상태 조회 실패: 시스템 관리자만 사용할 수 있습니다."가 표시됐습니다. 사내·외부 동일 원칙에 따라 외부 서버의 연결 조회만 사내처럼 그 팀의 팀장에게 허용했습니다(`ctx.team`의 `manage` 검사, 다른 팀 팀장·팀원은 403). 연결 변경(`PUT`)과 이관은 계속 시스템 관리자 전용입니다. 외부 조회 응답은 `switchJob`·`teamId`·`profileId`·`revision`과 프로필별 `profileId`·`name`·`teamId`·`replaces`·`repository`만 담고 토큰·바인딩·비밀값은 없습니다. 이관 중(`switchJob.hasMore`)에는 팀장도 실행 버튼 대신 진행 안내를 보고, **이어서 연결 이관**·**중단**은 이관 API를 쓰는 시스템 관리자에게만 표시합니다. 사내 연결 조회에는 `switchJob`이 없어 사내 화면은 바뀌지 않습니다. 이관 중 외부 서버의 실행 API를 코드로 확인했습니다. `POST …/sync/run`은 거절 상태 코드를 주지 않습니다. 대신 동기화 lease 획득(`worker/sync/sync-store.mjs`의 `acquire`)이 열린 유지보수 작업(`profile-switch`) 때문에 실패해 `busy`로 아무 작업도 하지 않습니다. 일시정지·재개는 409 "정리가 진행 중입니다."로 거절합니다. 이번에는 고치지 않았습니다. DB·저장·동기화 형식은 바뀌지 않았습니다. 배포 안내: 팀장 연결 조회는 외부 서버(Supabase Edge) 코드 변경이므로 외부 사이트도 함께 배포해야 반영됩니다.
 
 검증: Node.js 22.23.1·PostgreSQL 17.11에서 `TEST_PG_BIN=… npm test` 958건 통과. `tests/site/worker-api.test.mjs`는 이관 중의 팀장 조회 허용·응답 필드 전체·다른 팀 팀장과 팀원 403·팀장 `PUT` 403을 확인하며, 수정 전 worker 코드에서는 403으로 실패합니다. `npm run build`·`npm run build:edge` 통과. `mobile`·`external-loading`·`data-sync`·`team-sync-indicator`·`sync-setup`·`sync-log`·`settings` 브라우저 검사를 세 브라우저에서 실행해 246건 통과·6건 skip·15건 실패였습니다. 실패 중 12건(`mobile` 일정 추가 간격·모드 전환 빈 줄·꼬리 메모 전체 화면, `team-sync-indicator` 휴대폰 한 줄)은 `origin/main`(443f9e1)에서도 같은 브라우저에서 실패합니다. 나머지 3건(`sync-setup` 885·565, `sync-log` 406, 각각 한 브라우저)은 `server/slides/slide-file-sync.mjs`의 타이머가 닫힌 시험 DB를 읽은 "database is not open"이었고, 세 번씩 다시 실행해 27건 모두 통과했습니다. 새 `mobile` 검사 3건(외부 관리자의 묶음 구분·탭 폭·지금 동기화, 팀장의 연결 설정·지금 동기화, 팀장의 이관 중 안내)은 세 브라우저에서 통과합니다. 수정 전 화면에서는 앞의 두 검사가 실패합니다. 외부 응답은 route fixture이며, 실제 외부 배포와 휴대폰 실기기 확인은 하지 않았습니다.
+
 ## 2026-11-25 — 업무 상세 헤더 제목에 입력 커서가 생기던 문제
 
 PR #229 확인 중, 스크롤해 헤더에 나타난 업무 제목을 누르면 말줄임 뒤에 입력 커서가 깜박이고 방향키로 움직인다는 지적이 있었습니다. 헤더 제목(`.task-detail-header-title`)은 편집할 수 없는 일반 글자였지만 선택할 수 있었습니다. 누르면 세 엔진 모두 그 글자 안에 접힌 선택(`Selection.type` "Caret")이 생기고 포커스는 대화상자로 갑니다. 이 선택은 평소에는 그려지지 않습니다. 그러나 브라우저의 캐럿 브라우징(Chrome·Edge·Brave·Firefox의 F7)이 켜져 있으면 커서로 그려지고 방향키로 움직입니다. Chromium·Firefox에서 캐럿 브라우징을 켜고 재현했습니다. 커서가 잘린 글자로 들어가면 `overflow: hidden` 칸이 옆으로 밀려(`scrollLeft` 65) 제목과 커서 사이가 비어 보였습니다. 같은 설정에서는 main의 **업무 상세** 글자도 눌러서 방향키로 커서를 옮길 수 있어, 이번 변경이 기존 동작을 잘린 긴 제목에서 드러나게 한 것입니다. 표시 전용인 헤더 제목에만 `user-select: none`을 주어, 눌러도 선택·커서가 제목 안에 생기지 않게 했습니다. 공용 `Modal`의 h2와 다른 대화상자, 대화상자 이름·포커스(Esc 닫기, Tab 이동), 본문 제목·문서 편집은 바뀌지 않았습니다. 화면의 new 표시가 없던 것은 그 업무가 만든 지 12시간이 지났기 때문입니다.
@@ -518,6 +533,7 @@ PR #229 확인 중, 스크롤해 헤더에 나타난 업무 제목을 누르면 
 업무 상세에서 아래로 스크롤하면 본문 맨 위의 제목이 사라져 어떤 업무인지 알기 어려웠습니다. 본문 제목 영역(`.task-detail-title`)이 완전히 가려지면 헤더의 **업무 상세** 자리에 저장된 업무 제목을 한 줄로 보이고, 제목이 다시 보이면 **업무 상세**로 돌아갑니다. `Panels.tsx`의 `TaskDetailHeaderTitle`이 `RowPanel`의 `titleAction` 맨 앞에서 `IntersectionObserver`로 가려짐만 감지해 자기 상태를 바꾸므로, 스크롤마다 다시 그리지 않고 속성·문서 편집기도 다시 그리지 않습니다. 대화상자 이름은 화면에서만 숨긴 `Modal`의 h2가 계속 맡아 항상 **업무 상세**이며, 헤더 제목은 `aria-hidden`입니다. 표시 중에는 제목 묶음의 `flex-basis`를 0으로 바꿔 원래 차지하던 폭 안에서만 말줄임하므로 오른쪽 버튼은 움직이거나 줄바꿈하지 않습니다. 링크 복사·전체 페이지 버튼은 제목 바로 뒤를 따릅니다. 전체 제목은 `title` 속성으로, 빈 제목은 **제목 없는 업무**로 보입니다. `Modal`·일정 상세·꼬리 메모 전체 페이지는 바뀌지 않았고 서버·저장 형식도 그대로입니다. 휴대폰 폭(390px)에서는 업무 동작 세 버튼이 같은 줄에 있어 제목이 앞 몇 글자만 보입니다.
 
 검증: 스크롤 전·후 표시, 버튼 위치 유지, 본문에서 고친 제목·긴 제목·빈 제목, 전체 페이지(`tests/browser/documents/task-documents.spec.ts`), 720·480·390·360·320px(360px 이하 두 줄 헤더 포함, `tests/browser/platform/mobile.spec.ts`), 사본 업무 상세(`tests/browser/sheet-clones/sheet-clone-editing.spec.ts`). 실행 환경과 건수는 PR에 기록합니다.
+
 ## 2026-11-24 — 슬라이드 편집 화면 상단의 링크 복사와 제목 길이만큼의 제목 칸
 
 - 요청(2026-11-24, 사용자): CanvaSlide **Share → 링크 복사**로 복사한 주소가 사내에서만 열리므로, 외부에서도 열리는 공유 링크 복사 버튼을 상단 제목 오른쪽에 두고 누르면 목록에서 연 것과 같은 상세 화면으로 들어오게 하기. 상단 제목을 고칠 때 입력 칸이 제목 길이만큼만 차지하게 하기. 버튼은 업무 상세의 링크 복사와 같은 방식(`/links/slide/<팀>/<자료>`)으로 정했습니다.
@@ -542,6 +558,7 @@ PR #229 확인 중, 스크롤해 헤더에 나타난 업무 제목을 누르면 
 카드 메뉴에 **일정 복제 (본문 포함)**을 더했습니다. 기존 복제 요청의 선택 값 `includeDocument`로 두 저장소가 본문을 복제본의 문서로 함께 저장하며 저장 형식 변경은 없습니다. 복제는 두 방식 모두 시각·알림을 복사합니다.
 
 검증: 발송 시각·유예·대상·재시도·여러 알림·상태 판정·주소 자동 등록은 시계와 허브를 대역으로(`tests/calendar/calendar-reminder-push.test.mjs`), 시각·알림 저장·충돌·복제는 SQLite·PostgreSQL 공통 계약과 사내 HTTP로, v34 → v35와 전환 도구 결과의 v35 승격·중단 롤백·신규 설치와의 스키마 일치는 `tests/sync/recovery/sync-migrations.test.mjs`로, 본문 포함 복제의 양방향 동기화는 `tests/sync/integration/sync-calendar-documents.test.mjs`로 검사합니다. 개발 PC(Windows)에서는 공식 실행기가 고정 소스의 심볼릭 링크·`npm` 실행·PostgreSQL 실행 파일 이름 때문에 돌지 않아, Node 22·PostgreSQL 18.7 Linux 컨테이너에서 `TEST_PG_BIN=… npm test`와 `npm run build:edge`를 실행했습니다. 실제 건수는 PR에 기록합니다. `npm run build`는 `tsc`·Vite 빌드까지 통과했고 CanvaSlide 편집기 배포본 단계는 컨테이너의 외부 접속 차단(내려받기 실패)과 Windows 줄바꿈으로 달라진 빌드 ID 때문에 확인하지 못했습니다. 브라우저 검사는 설치된 Chrome으로 `calendar-reminders.spec.ts`·`calendar-improvements.spec.ts` 10건을 실행했고 Firefox·WebKit은 실행하지 못했습니다. 실제 다바다허브로의 발송은 읽기 전용 응답 확인만 했으며 운영 DB migration과 배포는 수행하지 않았습니다.
+
 ## 2026-11-23 — 업무 링크가 보던 문서를 가리킴
 
 문서가 여러 개인 업무 상세에서 **링크 복사**를 누르면 항상 첫 문서가 열리던 것을, 보고 있던 문서가 열리도록 했습니다. 사용자 승인에 따라 저장되는 링크 경로에 선택 항목인 문서 ID를 더했습니다(`/links/task/<업무>/<문서>`, 사본 업무도 같음). 문서가 하나인 업무와 기존 링크는 그대로입니다. 링크 제목은 업무 제목을 유지합니다. 같은 업무의 다른 문서를 가리키는 링크들은 한 상세 창을 공유해, 이미 열린 업무면 그 창에서 문서만 바꿉니다. 경로 해석은 `shared/documents/document-links.js` 한 곳이며 두 서버의 제목 조회는 업무 ID만 사용하므로 서버 저장 코드는 바뀌지 않았습니다.
