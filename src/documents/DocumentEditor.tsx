@@ -43,6 +43,7 @@ import type {
   RichEditorHandle,
 } from "./editor/rich-editor-types";
 import {
+  placeIn,
   scrollAround,
   sourceLineTop,
   sourceOffsetAt,
@@ -229,6 +230,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
         line = sourceLineTop(input, offset);
       }
       return {
+        markdown: input.value,
         anchor: backward ? selectionEnd : selectionStart,
         head,
         view: { offset, top: line },
@@ -236,9 +238,10 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
     }
     useLayoutEffect(() => {
       const input = sourceInput.current;
-      const target = place.current;
-      if (mode !== "source" || !input || !target) return;
+      if (mode !== "source" || !input || !place.current) return;
+      const target = placeIn(place.current, input.value);
       place.current = null;
+      if (!target) return;
       const { anchor, head, view } = target;
       input.setSelectionRange(
         Math.min(anchor, head),

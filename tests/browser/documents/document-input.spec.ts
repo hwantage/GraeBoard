@@ -110,6 +110,42 @@ async function caret(block: Locator, offset = 0) {
 const text = async (locator: Locator) =>
   (await locator.textContent())?.replaceAll("\u00a0", " ");
 
+// The rich editor alone, at /__test/rich-editor, built from its source.
+async function serveRichEditorFixture(page: Page) {
+  const built = await build({
+    entryPoints: ["tests/browser/fixtures/rich-editor.tsx"],
+    outfile: "/tmp/graeboard-rich-editor-fixture.js",
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "browser",
+    jsx: "automatic",
+    define: { "process.env.NODE_ENV": '"production"' },
+    loader: { ".svg": "dataurl", ".png": "dataurl" },
+  });
+  await page.route("**/__test/rich-editor*", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const extension = path.endsWith(".js")
+      ? ".js"
+      : path.endsWith(".css")
+        ? ".css"
+        : null;
+    return route.fulfill(
+      extension
+        ? {
+            contentType: extension === ".js" ? "text/javascript" : "text/css",
+            body: built.outputFiles!.find((file) =>
+              file.path.endsWith(extension),
+            )!.text,
+          }
+        : {
+            contentType: "text/html",
+            body: '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/__test/rich-editor.css"><div id="fixture-root"></div><script type="module" src="/__test/rich-editor.js"></script>',
+          },
+    );
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   await request(page, "/auth/login", "POST", {
     username: "test@somansa.com",
@@ -1129,38 +1165,7 @@ test("제목 조회 중 링크를 지우면 늦은 제목으로 다시 삽입하
 test("제목 조회 속성이 false이면 URL을 서버에 보내지 않고 기본값은 제목을 조회한다", async ({
   page,
 }) => {
-  const built = await build({
-    entryPoints: ["tests/browser/fixtures/rich-editor.tsx"],
-    outfile: "/tmp/graeboard-rich-editor-fixture.js",
-    bundle: true,
-    write: false,
-    format: "esm",
-    platform: "browser",
-    jsx: "automatic",
-    define: { "process.env.NODE_ENV": '"production"' },
-    loader: { ".svg": "dataurl", ".png": "dataurl" },
-  });
-  await page.route("**/__test/rich-editor*", (route) => {
-    const path = new URL(route.request().url()).pathname;
-    const extension = path.endsWith(".js")
-      ? ".js"
-      : path.endsWith(".css")
-        ? ".css"
-        : null;
-    return route.fulfill(
-      extension
-        ? {
-            contentType: extension === ".js" ? "text/javascript" : "text/css",
-            body: built.outputFiles!.find((file) =>
-              file.path.endsWith(extension),
-            )!.text,
-          }
-        : {
-            contentType: "text/html",
-            body: '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/__test/rich-editor.css"><div id="fixture-root"></div><script type="module" src="/__test/rich-editor.js"></script>',
-          },
-    );
-  });
+  await serveRichEditorFixture(page);
   const requested: string[] = [];
   page.on("request", (req) => {
     if (req.url().includes("/api/link-title?"))
@@ -1185,4 +1190,32 @@ test("제목 조회 속성이 false이면 URL을 서버에 보내지 않고 기�
   await paste(editor, "https://public.example/title");
   await expect(editor.locator("a")).toHaveText("공개 사이트 제목");
   expect(requested).toEqual(["https://public.example/title"]);
+});
+
+test("원문에서 전환하는 사이 원격 변경이 들어와도 커서는 같은 글자에 놓인다", async ({
+  page,
+}) => {
+  await serveRichEditorFixture(page);
+  // The place was taken in the source before a remote change added the first
+  // paragraph; the editor opens with the newer text.
+  const place = {
+    markdown: "앞\n\n대상",
+    anchor: 3,
+    head: 3,
+    view: { offset: 3, top: 100 },
+    focus: true,
+  };
+  await page.goto(
+    `/__test/rich-editor?${new URLSearchParams({
+      markdown: "추가된 문단\n\n앞\n\n대상",
+      place: JSON.stringify(place),
+    })}`,
+  );
+  const editor = page.getByRole("textbox", { name: "업무 문서 리치 편집" });
+  await expect(editor).toBeFocused();
+  await page.keyboard.insertText("X");
+  await expect(page.locator("body")).toHaveAttribute(
+    "data-markdown",
+    "추가된 문단\n\n앞\n\nX대상\n",
+  );
 });

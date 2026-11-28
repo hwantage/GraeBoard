@@ -18,6 +18,19 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-28 — 모드 전환 위치 유지의 CodeRabbit 지적 반영 (#262 후속)
+
+병합된 #262에 CodeRabbit이 남긴 두 지적(Minor)을 코드와 대조해 둘 다 반영했습니다.
+
+- `visibleBounds`: 내부 스크롤 영역이 페이지 스크롤로 화면 위에 걸치면 스크롤 영역의 위쪽과 요소의 위쪽이 모두 음수라 보이는 영역의 위쪽이 음수가 되었습니다. 화면 밖 커서를 보이는 커서로 판단해 보던 글 대신 커서를 기준으로 삼을 수 있었습니다. 위쪽을 `0` 이상으로 제한했습니다.
+- 원문 → 리치 전환 중 원격 변경: `changeMode`가 남긴 위치는 전환 시점 원문의 오프셋인데, 리치 편집기가 준비되기 전에 원격 변경이 들어오면 `initialMarkdown`만 새 원문이 되어 커서·화면 위치가 원격 변경 길이만큼 다른 글자로 갔습니다(내용 손실은 없음). `DocumentPlace`에 오프셋을 센 원문(`markdown`)을 함께 담고, 쓰는 쪽(리치 편집기 초기화, 원문 textarea 적용)에서 원문이 다르면 `placeIn`이 공유 `mapDocumentPositions`로 옮긴 뒤 씁니다. 원격 변경을 보류하는 방식은 기존 충돌 처리 흐름을 바꾸므로 택하지 않았습니다.
+
+검증:
+
+- `tests/browser/fixtures/rich-editor.tsx`가 쿼리로 처음 원문과 위치를 받고 저장 원문을 `body[data-markdown]`에 남기게 하고, `document-input.spec.ts`의 fixture 준비를 `serveRichEditorFixture`로 묶었습니다. 위치를 잡은 원문(`앞\n\n대상`, `대상` 앞)과 편집기가 여는 원문(앞에 문단 추가)이 다를 때 바로 입력한 글자가 `대상` 앞에 들어가는지 봅니다. 수정 전 코드에서 Chromium 실패, 수정 후 세 엔진 통과. 같은 fixture를 쓰는 기존 검사와 모드 전환 검사를 포함해 세 엔진 48건 통과.
+- 화면 위로 걸친 스크롤 영역은 업무 상세·전체 페이지 배치에서 만들기 어려워 자동 검사를 더하지 않았습니다.
+- `npm run check:structure`(817개 파일, 오류 0)·`check:architecture`(487개 모듈, 위반 0)·`npm run build`·`npm run build:edge` 통과, `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 1,033건 통과(실패·취소·skip 0), `tests/browser/documents/` Chromium 291건 통과·skip 1·실패 1(origin/main에서도 실패하는 `document-toc.spec.ts:380`).
+
 ## 2026-11-28 — 원문·리치 전환에서 커서와 보던 위치 유지
 
 리치 문서에서 원문 버튼을 누르면 보던 위치와 관계없이 원문 맨 위가 열렸고, 반대도 같았습니다.
