@@ -176,10 +176,10 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
     });
   }
 
-  function setBlock(value: string, command = blockCommand) {
+  function setBlock(value: string, formatCommand = blockCommand) {
     run((ctx) => {
       const view = ctx.get(editorViewCtx);
-      command(ctx, value)?.(view.state, view.dispatch, view);
+      formatCommand(ctx, value)?.(view.state, view.dispatch, view);
     });
   }
   const slashEntries: [string, string, string, ReactNode][] = [
