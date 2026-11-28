@@ -225,6 +225,48 @@ test("코드 블록 Tab은 2칸이고 읽기 전용 Tab은 포커스를 옮긴�
   ).toBeFocused();
 });
 
+for (const [name, marker, item] of [
+  ["글머리 목록", "-", "ul > li"],
+  ["번호 목록", "1.", "ol > li"],
+  ["체크리스트", "- [ ]", "li.document-check-item"],
+]) {
+  test(`${name} 항목 안 코드 블록의 Enter·Shift+Enter는 줄을 바꾸고 항목을 나누지 않는다`, async ({
+    page,
+  }) => {
+    // The fence is indented to the item's content column.
+    const indent = marker === "1." ? "   " : "  ";
+    await open(
+      page,
+      `${marker} 항목\n${indent}\`\`\`\n${indent}첫 줄\n${indent}\`\`\`\n`,
+    );
+    const code = rich(page).locator(`${item} pre code`);
+    await expect(code).toHaveText("첫 줄");
+    await caret(code, 3);
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("둘째 줄");
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.type("셋째 줄");
+    await expect(rich(page).locator(item)).toHaveCount(1);
+    await expect(rich(page).locator("pre")).toHaveCount(1);
+    await expect(code).toHaveText("첫 줄\n둘째 줄\n셋째 줄");
+    await expect
+      .poll(() => markdown(page))
+      .toContain(
+        ["첫 줄", "둘째 줄", "셋째 줄", "```"]
+          .map((line) => indent + line)
+          .join("\n"),
+      );
+    // ⌘/Ctrl+Enter still leaves the code block, below it in the same item.
+    await page.keyboard.press("ControlOrMeta+Enter");
+    await page.keyboard.type("다음 글");
+    await expect(rich(page).locator(`${item} > div > p`)).toHaveText([
+      "항목",
+      "다음 글",
+    ]);
+    await expect(rich(page).locator(item)).toHaveCount(1);
+  });
+}
+
 for (const [marker, selector, saved] of [
   ["-", "ul > li", "* 항목"],
   ["*", "ul > li", "* 항목"],

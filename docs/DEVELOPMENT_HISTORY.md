@@ -29,6 +29,20 @@
 - 리뷰: 독립 리뷰 2회와 Fable 5.2(xhigh) 리뷰를 반영했습니다. 1차는 행 갱신 시각 흡수(→ `previousUpdatedAt`과 "바꾸기 전 값이 본 값과 같을 때만 옮김" 규칙)와 다른 팀 사본 열기의 대기 변경 유실, 2차는 미리보기 계산 범위, Fable 리뷰는 사본에서 일반 배경색 안내의 "업무 표시로 바꾸기"가 비활성으로 남던 문제(토큰은 원본에만), 서식 실행취소·재실행 뒤에 만든 변경이 되돌리기 전 서식을 저장하던 문제(그동안 셀 변경 거절), 오래된 문서 문구, 테스트 공백을 지적했습니다.
 - 검증: `npm test` 1,032건 통과(`tests/sheet/cell-save-queue.test.mjs` 11건, SQLite·PostgreSQL 응답의 `previousUpdatedAt`과 재시도 응답 검사 포함, 재시도 응답 비교는 `tests/support/cell-batch-replay-helper.mjs`). `npm run build`·`npm run build:edge`·`check:structure`·`check:architecture` 통과. 브라우저: Chromium 전체 881건 중 863 통과·1 건너뜀·17 실패, 실패 17건을 리뷰 반영 빌드로 다시 실행해 8건 통과(전체 실행 부하), 남은 9건(`monthly-calendar:175`·`:1586`, `document-toc:380`, `color-picker:486`, `mobile:356`·`:482`·`:1604`, `sheet-format-memo:158`, `team-sync-indicator:313`)은 main `30b51a8`에서도 같은 방식으로 실패. 리뷰 반영 뒤 관련 파일(`edit-while-saving`·`sheet-format-memo`·`workspace`·`insights`·`selection-copy-undo`·`sheet-clone-editing`·`sheet-sync`) Chromium 228 통과·1 실패(`sheet-format-memo:158`), `edit-while-saving`·`sheet-format-memo` Firefox·WebKit 46 통과·2 실패(같은 검사, main에서도 실패). `edit-while-saving.spec.ts` 12건에 같은 행의 셀 입력·행 서식 순서 2건, 다른 사람의 같은 행 변경 충돌, 서식 실행취소 저장 중 거절을 더했고, `insights.spec.ts`에 사본의 업무 표시로 바꾸기를 더했습니다.
 
+## 2026-11-28 — 목록 항목 안 코드 블록의 Enter
+
+목록 항목 안에 들여쓴 코드 블록(`- 항목` 아래 두 칸 들여쓴 ```` ``` ````)에서 한 줄을 쓰고 Enter를 누르면 코드 블록을 빠져나와 여러 줄을 쓸 수 없었습니다.
+
+원인: Milkdown 목록 키맵의 Enter(`splitListItem`)가 ProseMirror 기본 키맵의 코드 줄바꿈(`newlineInCode`)보다 먼저 실행됩니다. `splitListItem`은 커서의 부모의 부모가 목록 항목이면 블록 종류를 보지 않고 항목을 나누므로, 목록 항목의 뒤쪽 블록(`paragraph block*`)인 코드 블록이 둘로 갈리고 커서 뒤 코드가 새 항목의 문단이 되었습니다. 목록 밖 코드 블록은 목록 키맵이 실패해 기본 키맵으로 넘어가므로 문제가 없었습니다.
+
+변경(`src/documents/editor/DocumentInputRules.ts`): `documentInputKeydown`에서 수식키 없는 Enter·Shift+Enter가 코드 블록 안이면 `newlineInCode`로 줄바꿈을 넣습니다. 편집기 속성의 `handleKeyDown`은 플러그인 키맵보다 먼저 실행되므로 목록·토글·인용 안 어디서든 같은 동작입니다. 코드 울타리 Enter(`fenceEnter`)는 Shift 없는 Enter에서 그대로 확인합니다. 코드 블록 뒤로 나가는 ⌘/Ctrl+Enter(`exitCode`)·방향키는 바꾸지 않았습니다.
+
+검증:
+
+- `tests/browser/documents/document-input.spec.ts`에 글머리·번호·체크리스트 항목 안 코드 블록에서 Enter·Shift+Enter로 세 줄을 쓰고 항목이 하나로 남는지, 저장한 Markdown의 들여쓴 세 줄, ⌘/Ctrl+Enter가 같은 항목 안 코드 블록 아래 문단으로 나가는지를 추가했습니다. 수정 전 코드(빌드 후 Chromium)에서는 세 검사 모두 항목이 2개가 되어 실패했고, 수정 후 Chromium·Firefox·WebKit 9건 통과했습니다.
+- `E2E_PORT=4383 npx playwright test tests/browser/documents/`(Chromium·Firefox·WebKit): 801건 중 778 통과, 8 실패, 15 skip(56.9분, 다른 브라우저 검사 2개와 동시 실행). 실패 중 `document-toc.spec.ts:380`(일정 문서와 메모 카드 목차) 3건은 origin/main `4f2a8d9` 빌드에서도 Chromium에서 같은 위치로 실패하는 기존 실패입니다. 나머지 5건(`task-documents.spec.ts`의 2385·3959·1100·3276행, Firefox·WebKit)은 같은 소스로 단독 재실행해 10건 모두 통과했습니다.
+- `npm run check:structure`(815개 파일, 오류 0)·`check:architecture`(485개 모듈, 위반 0)·`npm run build`·`npm run build:edge` 통과.
+
 ## 2026-11-26 — 슬라이드 보관 정리를 자료의 revision 수와 무관하게 (#253)
 
 팀 자료는 현재와 직전 10개 revision의 내용을 보관하고, 팀의 어느 자료의 보관 중인 revision도 쓰지 않는 내용(파일·객체와 그 썸네일)을 지웁니다. 이 정리가 자료를 저장할수록 느려졌습니다.
