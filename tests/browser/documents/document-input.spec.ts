@@ -220,9 +220,177 @@ test("코드 블록 Tab은 2칸이고 읽기 전용 Tab은 포커스를 옮긴�
   });
   await page.keyboard.press("Tab");
   await expect(rich(page)).not.toBeFocused();
+  // Where buttons are tab stops (WebKit on macOS skips them by default), the
+  // diagram's copy button comes first and shows while it has the focus.
+  const copy = rich(page).getByRole("button", {
+    name: "코드 복사",
+    exact: true,
+  });
+  if (await copy.evaluate((el) => el === document.activeElement)) {
+    await expect(copy).toHaveCSS("opacity", "1");
+    await page.keyboard.press("Tab");
+  }
   await expect(
     detail(page).getByRole("textbox", { name: "탭 이동 검사", exact: true }),
   ).toBeFocused();
+});
+
+// Records what the copy buttons write, without the OS clipboard.
+async function watchClipboard(page: Page) {
+  await page.evaluate(() => {
+    (window as any).copied = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        write: async (items: ClipboardItem[]) => {
+          (window as any).copied.push(
+            await (await items[0].getType("text/plain")).text(),
+          );
+        },
+      },
+    });
+  });
+  return () => page.evaluate(() => (window as any).copied as string[]);
+}
+// The button sits in the block's top-right corner.
+async function inCorner(button: Locator, block: Locator) {
+  const [outer, inner] = await Promise.all([
+    block.boundingBox(),
+    button.boundingBox(),
+  ]);
+  const right = outer!.x + outer!.width - (inner!.x + inner!.width);
+  expect(right).toBeGreaterThanOrEqual(0);
+  expect(right).toBeLessThan(12);
+  expect(inner!.y - outer!.y).toBeGreaterThanOrEqual(0);
+  expect(inner!.y - outer!.y).toBeLessThan(12);
+}
+
+test("코드 블록 복사 버튼은 마우스를 올리면 오른쪽 위에 보이고 코드만 복사하며 문서와 커서를 그대로 둔다", async ({
+  page,
+}) => {
+  const code = "const a = 1;\n  return a;";
+  const diagram = "graph TD\n  A --> B";
+  const source = `앞 문단\n\n\`\`\`js\n${code}\n\`\`\`\n\n\`\`\`mermaid\n${diagram}\n\`\`\`\n`;
+  await open(page, source);
+  const copied = await watchClipboard(page);
+  const block = rich(page).locator('pre[data-language="js"]');
+  const button = block.getByRole("button", { name: "코드 복사", exact: true });
+  const paragraph = rich(page).locator("p", { hasText: "앞 문단" });
+  await caret(paragraph, 1);
+  await page.mouse.move(0, 0);
+  await expect(button).toHaveCSS("opacity", "0");
+  await block.hover();
+  await expect(button).toHaveCSS("opacity", "1");
+  await inCorner(button, block);
+  await button.click();
+  await expect(
+    detail(page).getByText("코드를 복사했습니다.", { exact: true }),
+  ).toBeVisible();
+  expect(await copied()).toEqual([code]);
+  // No transaction: nothing to undo, nothing saved, the caret stays put.
+  await expect(
+    detail(page).getByRole("button", { name: "문서 실행취소", exact: true }),
+  ).toBeDisabled();
+  expect(await markdown(page)).toBe(source);
+  await expect(rich(page)).toBeFocused();
+  await page.keyboard.type("X");
+  await expect
+    .poll(() => markdown(page))
+    .toBe(source.replace("앞 문단", "앞X 문단"));
+
+  // The editor's own copy of the code text leaves the button out.
+  await block.locator("code").evaluate(async (el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+  });
+  const data = await rich(page).evaluate((el) => {
+    const data: Record<string, string> = {};
+    const event = new Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        clearData: () => {},
+        setData: (type: string, value: string) => {
+          data[type] = value;
+        },
+      },
+    });
+    el.dispatchEvent(event);
+    return data;
+  });
+  expect(data["text/plain"]).toBe(code);
+  expect(data["text/html"] ?? "").not.toContain("코드 복사");
+
+  // A diagram copies its source from the top-right of the diagram without
+  // opening the source.
+  const mermaid = rich(page).locator(".document-mermaid");
+  await rich(page).locator("p", { hasText: "앞X 문단" }).click();
+  await expect(
+    mermaid.locator(".document-mermaid-preview > svg"),
+  ).toBeVisible();
+  await expect(mermaid.locator("pre")).toBeHidden();
+  const diagramCopy = mermaid.getByRole("button", {
+    name: "코드 복사",
+    exact: true,
+  });
+  await mermaid.hover();
+  await expect(diagramCopy).toHaveCSS("opacity", "1");
+  await inCorner(diagramCopy, mermaid);
+  await diagramCopy.click();
+  await expect.poll(copied).toEqual([code, diagram]);
+  await expect(mermaid.locator("pre")).toBeHidden();
+
+  // Paper shows the code without the button.
+  await page.emulateMedia({ media: "print" });
+  await expect(button).toBeHidden();
+  await page.emulateMedia({ media: null });
+  expect(await markdown(page)).toBe(source.replace("앞 문단", "앞X 문단"));
+});
+
+test("읽기 전용 문서의 코드 블록도 복사하고 복사하지 못하면 알린다", async ({
+  page,
+}) => {
+  await open(page, "```sql\nSELECT 1;\n```\n");
+  // Presentation mode uses the same readOnly editor contract.
+  await detail(page).getByRole("button", { name: "닫기", exact: true }).click();
+  await page.getByRole("button", { name: "발표 모드", exact: true }).click();
+  await page
+    .getByRole("button", { name: "입력 검증 업무 문서 열기", exact: true })
+    .click();
+  await expect(rich(page)).toHaveAttribute("contenteditable", "false");
+  const copied = await watchClipboard(page);
+  const block = rich(page).locator("pre");
+  const button = block.getByRole("button", { name: "코드 복사", exact: true });
+  await block.hover();
+  await expect(button).toHaveCSS("opacity", "1");
+  await button.click();
+  await expect(
+    detail(page).getByText("코드를 복사했습니다.", { exact: true }),
+  ).toBeVisible();
+  expect(await copied()).toEqual(["SELECT 1;"]);
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        write: async () => {
+          throw new Error("denied");
+        },
+      },
+    });
+  });
+  await button.click();
+  await expect(
+    detail(page).getByText("코드를 복사하지 못했습니다. 다시 시도해 주세요.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(await markdown(page)).toBe("```sql\nSELECT 1;\n```\n");
 });
 
 for (const [marker, selector, saved] of [

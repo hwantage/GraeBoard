@@ -18,6 +18,17 @@
 - [문서 편집과 리뷰 설정](#문서-편집과-리뷰-설정)
 - [문서 정리](#문서-정리)
 
+## 2026-11-28 — 코드 블록 복사 버튼
+
+- 요청(2026-11-28, 사용자): MD 문서의 코드 블록을 복사하는 기능. 복사 버튼은 마우스를 올렸을 때 오른쪽 위에 보이게 하기.
+- 변경: `documentCodeBlockView`가 코드 블록(`pre`)과 Mermaid 블록(`.document-mermaid`)의 오른쪽 위에 **코드 복사** 버튼을 둡니다. 이미지·토글 NodeView와 같은 `iconButton`(`DocumentImageView.ts`)을 쓰고, 아이콘은 lucide Copy·Check와 같은 경로를 `iconButton`에서 분리한 `lineIcon`으로 그립니다. 누르면 그 노드의 현재 `textContent`(Mermaid는 소스)를 기존 `copyToClipboard`로 복사하고, 링크 주소 복사와 같은 편집기 토스트로 **코드를 복사했습니다.** 또는 **코드를 복사하지 못했습니다. 다시 시도해 주세요.**를 알립니다. 토스트 상태는 `useDocumentLinkActions`의 `notify(message, failed)`로 묶어 `copyLink`도 같은 함수를 씁니다. 성공하면 버튼 아이콘이 1.5초 동안 체크로 바뀝니다.
+- 편집기와의 관계: 버튼은 NodeView DOM에만 있습니다(`contentEditable=false`, `user-select: none`). mousedown을 막아 커서·편집기 포커스가 그대로이고, `stopEvent`로 ProseMirror가 버튼 이벤트를 처리하지 않으며 아이콘 교체는 `ignoreMutation`이 무시합니다. 트랜잭션을 만들지 않아 실행취소 기록과 저장 본문이 바뀌지 않습니다. 스키마에 없으므로 편집기 복사(클립보드 직렬화)와 HTML·PDF·Markdown 다운로드(`DOMSerializer`)에도 들어가지 않습니다. Mermaid 미리보기 클릭, 코드 블록 선택 표시, WebKit 여러 줄 입력 처리는 그대로입니다.
+- 표시: 블록 hover와 키보드 초점(`:focus-visible`)에서 보이고, 터치 화면(`@media (hover: none)`)에서는 항상 보이며 인쇄(`@media print`)에서는 숨깁니다. 캘린더 어두운 테마는 이미지 도구와 같은 목록(`calendar.css`)으로 배경·글자색을 맞춥니다. 읽기 전용·발표 보기도 같은 NodeView를 씁니다.
+- 기존 검사 수정: Mermaid 블록 안에 버튼 아이콘 SVG가 함께 있어 `document-mermaid.spec.ts`의 다이어그램 선택자(`.document-mermaid svg`)를 `.document-mermaid-preview > svg`로 좁혔습니다. `document-input.spec.ts`의 읽기 전용 Tab 검사는 버튼이 탭 정지점인 환경(Chromium·Firefox, macOS WebKit은 기본 설정에서 버튼을 건너뜀)에서 다이어그램의 복사 버튼에 먼저 초점이 가므로, 버튼이 보이는지 확인한 뒤 한 번 더 Tab합니다.
+- 저장 형식·API: 바꾸지 않았습니다.
+- 검사 추가: `document-input.spec.ts`에 ① 마우스를 올리기 전 숨김·올린 뒤 표시·블록 오른쪽 위 위치, 누르면 코드 텍스트만 복사·토스트, 실행취소 비활성·저장 본문 불변·커서 위치에 그대로 입력, 편집기 복사(⌘/Ctrl+C)에 버튼 없음, Mermaid 소스 복사(소스는 열리지 않음), 인쇄 매체에서 숨김 ② 발표 모드(읽기 전용) 복사와 클립보드 거절 시 실패 토스트를 추가했습니다. `document-download.spec.ts`의 HTML 검사에 `<button` 없음을 더했습니다.
+- 검증: `npm run check:structure`(815개, 오류 0) · `npm run check:architecture`(485개 모듈, 위반 0) · `npm run build` · `npm run build:edge` 통과. `E2E_PORT=4381 npx playwright test tests/browser/documents/`(798건, 55.9분): Chromium 264 통과·1 실패·1 건너뜀, Firefox 256 통과·2 실패·8 건너뜀, WebKit 257 통과·3 실패·6 건너뜀(합계 777 통과·6 실패·15 건너뜀, 건너뜀은 엔진 조건부 `test.skip`). 실패를 단독으로 다시 실행해 `task-documents.spec.ts:2385`(Firefox·WebKit 시간 초과)와 `:1100`(WebKit `ECONNRESET`)은 통과했고, `document-toc.spec.ts:380`(메모 카드 리치 편집기를 찾지 못함, 481행)은 세 엔진 모두 같은 줄에서 실패했으며 origin/main `4f2a8d9` 빌드에서도 같은 줄에서 세 엔진 모두 실패했습니다. 새 검사와 고친 읽기 전용 Tab 검사는 세 엔진 9건 통과. 화면 확인은 밝은 테마 코드·Mermaid hover, 복사 뒤 체크 아이콘·토스트, 캘린더 어두운 테마, 390px 터치 에뮬레이션(Chromium `isMobile`, 항상 표시), 읽기 전용 Tab 초점(Chromium·Firefox는 버튼에 초점과 표시, WebKit은 건너뜀)입니다. 전체 `npm test`는 이 작업에서 실행하지 않았습니다.
+
 ## 2026-11-26 — 원본 화면에서 저장 중에도 셀 편집
 
 - 계기: 원본 화면에서 셀을 고친 뒤 저장이 끝나기 전에 다른 셀을 고치면 "앞선 변경을 저장 중입니다" 안내와 함께 막혔고, 2026-11-26에도 같은 현상이 확인됐습니다. 개발 외부 사이트는 DB가 싱가포르(`ap-southeast-1`)라 서식 저장이 3~4초 걸려 자주 드러나고, 운영 외부 DB는 서울(`ap-northeast-2`)이라 짧지만 연달아 고치면 여전히 걸립니다. 사본 화면은 이미 저장 중 입력을 쌓아 이어 보냈습니다. 2026-11-14에 같은 기능을 로컬 브랜치(`feat/edit-while-saving`)로 만들었다가 보류했고, 최신 main에서 새 브랜치로 다시 구현했습니다.
