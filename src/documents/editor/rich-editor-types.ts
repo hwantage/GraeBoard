@@ -12,6 +12,8 @@ export type RichEditorHandle = {
 // A place in the document as Markdown offsets: the selection, and the text
 // kept at the same viewport height (`top`, px) when the mode switches.
 export type DocumentPlace = {
+  // The text the offsets count in.
+  markdown: string;
   anchor: number;
   head: number;
   view: { offset: number; top: number };

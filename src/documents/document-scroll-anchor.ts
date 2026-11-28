@@ -1,3 +1,6 @@
+import { mapDocumentPositions } from "../../shared/documents/document-merge.js";
+import type { DocumentPlace } from "./editor/rich-editor-types";
+
 // Keeps the same text at the same height on screen when the document switches
 // between the rich editor and the Markdown source, whose heights differ and
 // which may scroll inside themselves or in the panel around them.
@@ -35,7 +38,8 @@ export function pinnedHeight(area: Element | null, shell: Element | null) {
   return height;
 }
 
-// The part of the viewport where `element` shows text, below pinned bars.
+// The part of the viewport where `element` shows text, below pinned bars. A
+// scroll area partly above the viewport counts from the viewport's top.
 export function visibleBounds(element: Element) {
   const container = scrollContainer(element);
   const box = element.getBoundingClientRect();
@@ -45,6 +49,7 @@ export function visibleBounds(element: Element) {
     : container.getBoundingClientRect();
   return {
     top: Math.max(
+      0,
       box.top,
       area.top +
         pinnedHeight(
@@ -191,4 +196,28 @@ export function sourceOffsetAt(input: HTMLTextAreaElement, top: number) {
     }
     return input.value.length;
   });
+}
+
+// The place in `text`, a newer version of the text it was taken in: a remote
+// change can arrive while the other mode opens. Null when the two versions
+// cannot be compared in time.
+export function placeIn(
+  place: DocumentPlace,
+  text: string,
+): DocumentPlace | null {
+  if (place.markdown === text) return place;
+  const offsets: number[] | null = mapDocumentPositions(place.markdown, text, [
+    place.anchor,
+    place.head,
+    place.view.offset,
+  ]);
+  if (!offsets) return null;
+  const [anchor, head, offset] = offsets;
+  return {
+    ...place,
+    markdown: text,
+    anchor,
+    head,
+    view: { ...place.view, offset },
+  };
 }

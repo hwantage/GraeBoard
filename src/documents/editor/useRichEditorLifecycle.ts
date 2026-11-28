@@ -3,7 +3,11 @@ import { documentEditorInput } from "./document-editor-input";
 import { configureDocumentInputRules } from "./DocumentInputRules";
 import { documentLinkTitle } from "./DocumentLinkTitle";
 import { useEffect, useRef, useState } from "react";
-import { scrollAround, visibleBounds } from "../document-scroll-anchor";
+import {
+  placeIn,
+  scrollAround,
+  visibleBounds,
+} from "../document-scroll-anchor";
 import { documentPositions, markdownOffsets } from "./document-source-position";
 
 import { parseDocumentLinkPath } from "../../../shared/documents/document-links.js";
@@ -365,8 +369,19 @@ export default function useRichEditorLifecycle(
             const tr = view.state.tr
               .replaceWith(0, view.state.doc.content.size, doc.content)
               .setMeta("addToHistory", false);
-            // Continue where the Markdown source was.
-            const place = latest.current.initialPlace;
+            // Continue where the Markdown source was. A place that cannot
+            // be mapped to the text is skipped, but a click on the switch
+            // still puts the keyboard caret in the editor.
+            const initialPlace = latest.current.initialPlace;
+            const place =
+              initialPlace &&
+              placeIn(initialPlace, latest.current.initialMarkdown);
+            if (!place && initialPlace?.focus)
+              shownAt.current = {
+                pos: tr.selection.head,
+                top: NaN,
+                focus: true,
+              };
             if (place) {
               const [anchor, head, shown] = documentPositions(
                 ctx,
@@ -440,7 +455,12 @@ export default function useRichEditorLifecycle(
         );
         return from == null || to == null || offset == null
           ? null
-          : { anchor: from, head: to, view: { offset, top: shown.top } };
+          : {
+              markdown,
+              anchor: from,
+              head: to,
+              view: { offset, top: shown.top },
+            };
       }) ?? null
     );
   }

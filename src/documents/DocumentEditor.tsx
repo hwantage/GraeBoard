@@ -43,6 +43,7 @@ import type {
   RichEditorHandle,
 } from "./editor/rich-editor-types";
 import {
+  placeIn,
   scrollAround,
   sourceLineTop,
   sourceOffsetAt,
@@ -229,6 +230,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
         line = sourceLineTop(input, offset);
       }
       return {
+        markdown: input.value,
         anchor: backward ? selectionEnd : selectionStart,
         head,
         view: { offset, top: line },
@@ -236,9 +238,16 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
     }
     useLayoutEffect(() => {
       const input = sourceInput.current;
-      const target = place.current;
-      if (mode !== "source" || !input || !target) return;
+      if (mode !== "source" || !input || !place.current) return;
+      const focus = place.current.focus;
+      const target = placeIn(place.current, input.value);
       place.current = null;
+      // A place that cannot be mapped to the text is skipped; a click on the
+      // switch still puts the keyboard caret in the source.
+      if (!target) {
+        if (focus) input.focus({ preventScroll: true });
+        return;
+      }
       const { anchor, head, view } = target;
       input.setSelectionRange(
         Math.min(anchor, head),
