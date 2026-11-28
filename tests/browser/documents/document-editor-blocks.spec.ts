@@ -477,7 +477,8 @@ test("닫는 태그가 없는 토글도 표·링크를 표시하며 편집 전 �
     .poll(async () => (await document(page)).markdown)
     .toContain("추가 새 서비스");
   const edited = (await document(page)).markdown;
-  expect(edited.trimEnd()).toMatch(/\*\*\\\[마지막\]\*\*\n\n<\/details>$/);
+  // Brackets that cannot start a link are saved without "\[" escapes.
+  expect(edited.trimEnd()).toMatch(/\*\*\[마지막\]\*\*\n\n<\/details>$/);
   await close(page);
   await open(page);
   await expect(toggle.locator("table")).toHaveCount(2);
