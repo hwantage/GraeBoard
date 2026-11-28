@@ -385,15 +385,17 @@ test("토글 제목에 입력한 기호는 다시 열어도 글자로 남는다"
   await settleRichSelection(page);
   await page.keyboard.press("End");
   // Typed text is not parsed as Markdown.
-  await page.keyboard.insertText(" *별* [a](b) <i>");
+  await page.keyboard.insertText(" *별* [a](b) <i></summary>끝");
   await expect
     .poll(async () => (await document(page)).markdown)
-    .toContain("<summary>제목 \\*별\\* \\[a]\\(b) \\<i></summary>");
+    .toContain(
+      "<summary>제목 \\*별\\* \\[a]\\(b) \\<i>\\</summary>끝</summary>",
+    );
   await close(page);
   await open(page);
   await expect(detail(page).locator(".document-notice")).toHaveCount(0);
   await expect(toggle.locator(".document-toggle-summary")).toHaveText(
-    "제목 *별* [a](b) <i>",
+    "제목 *별* [a](b) <i></summary>끝",
   );
   await expect(toggle.locator(".document-toggle-summary em, a")).toHaveCount(0);
 });

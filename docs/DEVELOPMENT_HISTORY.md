@@ -34,7 +34,7 @@
 
 검증:
 
-- `tests/browser/documents/document-editor-blocks.spec.ts`에 두 검사를 추가했습니다. 이스케이프 없이 저장된 `<h2>10. 참고</h2>`·`- 항목`·`# 해시`·`> 인용`·`[a]: b` 제목 다섯 토글이 안내 없이 리치로 열리고, 편집 후 이스케이프한 제목으로 저장되며 다시 열어도 같은 제목인지 봅니다. 토글 제목에 입력한 ` *별* [a](b) <i>`가 `\*별\* \[a]\(b) \<i>`로 저장되고 다시 열어도 강조·링크 없이 글자로 남는지 봅니다. 수정 전 코드에서는 두 검사 모두 실패했고(Chromium), 수정 후 Chromium·Firefox·WebKit 6건 통과했습니다.
+- `tests/browser/documents/document-editor-blocks.spec.ts`에 두 검사를 추가했습니다. 이스케이프 없이 저장된 `<h2>10. 참고</h2>`·`- 항목`·`# 해시`·`> 인용`·`[a]: b` 제목 다섯 토글이 안내 없이 리치로 열리고, 편집 후 이스케이프한 제목으로 저장되며 다시 열어도 같은 제목인지 봅니다. 토글 제목에 입력한 ` *별* [a](b) <i></summary>끝`이 `\*별\* \[a]\(b) \<i>\</summary>끝`으로 저장되고 다시 열어도 강조·링크 없이 글자로 남는지 봅니다. 수정 전 코드에서는 두 검사 모두 실패했고(Chromium), 수정 후 Chromium·Firefox·WebKit 6건 통과했습니다.
 - 사용자 문서(`draft/mdsample/problem.txt`, 저장소 미포함)를 수정 후 빌드에 저장해 리치 편집이 안내 없이 열리는 것을 확인했습니다.
 - `npm run check:structure`(815개 파일, 오류 0)·`check:architecture`(485개 모듈, 위반 0)·`npm run build`·`npm run build:edge` 통과.
 
