@@ -2048,6 +2048,10 @@ test("링크·정의·체크리스트가 될 수 없는 [는 역슬래시 없이
     "| \\[칸] |\n| ----- |\n| \\[값] |",
     "# \\[제목]",
     "\\[^1]: 각주",
+    "\\[공통] 자료 [링크](https://example.com) 끝",
+    "\\[x [링크](https://example.com) y]",
+    "\\[a][링크](https://example.com)",
+    "\\[ [링크](https://example.com)]\\(x)",
   ].join("\n\n");
   const after = [
     "편집 [공통] 내용",
@@ -2066,6 +2070,12 @@ test("링크·정의·체크리스트가 될 수 없는 [는 역슬래시 없이
     "| [칸] |\n| --- |\n| [값] |",
     "# [제목]",
     "\\[^1]: 각주",
+    // A link cannot hold links, and a "]" before one closes nothing.
+    "[공통] 자료 [링크](https://example.com) 끝",
+    "[x [링크](https://example.com) y]",
+    "[a][링크](https://example.com)",
+    // A link can hold an image, so brackets around one keep escapes.
+    "\\[ [링크](https://example.com)]\\(x)",
   ].join("\n\n");
   const shown = async () => {
     await expect(rich(page).locator(":scope > p")).toHaveText([
@@ -2077,12 +2087,21 @@ test("링크·정의·체크리스트가 될 수 없는 [는 역슬래시 없이
       "[a [b] c](d)",
       "[굵게] 뒤 [^1]",
       "[^1]: 각주",
+      "[공통] 자료 링크 끝",
+      "[x 링크 y]",
+      "[a]링크",
+      "[ 링크](x)",
     ]);
     await expect(rich(page).locator("li")).toHaveText("[ ] 항목");
     await expect(rich(page).locator("th")).toHaveText("[칸]");
     await expect(rich(page).locator("td")).toHaveText("[값]");
     await expect(rich(page).locator("h1")).toHaveText("[제목]");
-    await expect(rich(page).locator("a")).toHaveCount(0);
+    await expect(rich(page).locator("a")).toHaveText([
+      "링크",
+      "링크",
+      "링크",
+      "링크",
+    ]);
     await expect(rich(page).locator(".document-check-item")).toHaveCount(0);
   };
   await save(page, taskIds[0], before);

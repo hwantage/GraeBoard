@@ -111,7 +111,6 @@ const LINK_NODES = new Set([
   "linkReference",
   "imageReference",
   "footnoteReference",
-  "definition",
 ]);
 // The text nodes of blocks whose "[" cannot start a link, a reference, a
 // definition or a task marker, so they need no "\[" escape.
@@ -123,24 +122,27 @@ function plainBracketTexts(root: StringifyNode) {
       return;
     }
     // The block's characters as written, code and HTML included, so any "]"
-    // that could close a link label is seen.
+    // that could close a link label is seen. A link stands for one neutral
+    // character: a link cannot contain links, and without definitions a "]"
+    // before one only closes plain text. Its own label keeps its escapes.
     let text = "";
-    let link = false;
     const texts: StringifyNode[] = [];
     const read = (child: StringifyNode) => {
-      if (LINK_NODES.has(child.type)) link = true;
+      if (LINK_NODES.has(child.type)) text += "\uFFFC";
       else if (child.type === "break") text += "\n";
-      else if (typeof child.value === "string") {
-        if (child.type === "text") texts.push(child);
-        text += child.value;
+      else {
+        if (typeof child.value === "string") {
+          if (child.type === "text") texts.push(child);
+          text += child.value;
+        }
+        child.children?.forEach(read);
       }
-      child.children?.forEach(read);
     };
     node.children?.forEach(read);
     const paragraph = node.type === "paragraph";
     if (
-      link ||
-      // Inline links and full or collapsed references.
+      // Inline links and full or collapsed references, also around a link
+      // or an image, which a link can hold.
       /\][([]/.test(text) ||
       // A definition or footnote definition can start only a paragraph.
       (paragraph && /^\s*\[/.test(text) && text.includes("]:")) ||
