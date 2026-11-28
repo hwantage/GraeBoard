@@ -13,6 +13,9 @@ const detail = (page: Page) =>
 const rich = (page: Page) =>
   detail(page).getByRole("textbox", { name: "업무 문서 리치 편집" });
 const block = (page: Page) => rich(page).locator(".document-mermaid");
+// The drawn diagram, not the icon of the block's copy button.
+const diagramSvg = (target: Locator) =>
+  target.locator(".document-mermaid-preview > svg");
 async function api(page: Page, path: string, method = "GET", data?: unknown) {
   const response = await page.request.fetch(`/api${path}`, {
     method,
@@ -124,20 +127,20 @@ test("Mermaid 소스 편집·미리보기·실행취소·복사와 일반 펜스
 }, info) => {
   await save(page, `${fence(diagram)}\n\n나머지 문단\n`);
   await open(page);
-  await expect(block(page).locator("svg")).toContainText("완료");
+  await expect(diagramSvg(block(page))).toContainText("완료");
   await expect(block(page).locator("pre")).toBeHidden();
   const changed = diagram.replace("완료", "검토 완료");
   await editSource(page, changed);
-  await expect(block(page).locator("svg")).toContainText("검토 완료");
+  await expect(diagramSvg(block(page))).toContainText("검토 완료");
   await detail(page).screenshot({ path: info.outputPath("mermaid-edit.png") });
   await detail(page)
     .getByRole("button", { name: "문서 실행취소", exact: true })
     .click();
-  await expect(block(page).locator("svg")).not.toContainText("검토 완료");
+  await expect(diagramSvg(block(page))).not.toContainText("검토 완료");
   await detail(page)
     .getByRole("button", { name: "문서 재실행", exact: true })
     .click();
-  await expect(block(page).locator("svg")).toContainText("검토 완료");
+  await expect(diagramSvg(block(page))).toContainText("검토 완료");
   await rich(page).locator("p", { hasText: "나머지 문단" }).click();
   await expect(block(page).locator("pre")).toBeHidden();
   await selectContents(rich(page));
@@ -173,7 +176,7 @@ test("소스 편집 중 원격 문단 수정이 병합되어 다이어그램과 
 }) => {
   const initial = await save(page, `${fence(diagram)}\n\n나머지 문단\n`);
   await open(page);
-  await expect(block(page).locator("svg")).toBeVisible();
+  await expect(diagramSvg(block(page))).toBeVisible();
   let writes = 0;
   let release!: () => void;
   const held = new Promise<void>((resolve) => {
@@ -195,7 +198,7 @@ test("소스 편집 중 원격 문단 수정이 병합되어 다이어그램과 
   await expect
     .poll(() => stored(page))
     .toBe(`${fence(changed)}\n\n원격 문단 수정\n`);
-  await expect(block(page).locator("svg")).toContainText("동시 수정");
+  await expect(diagramSvg(block(page))).toContainText("동시 수정");
   await expect(
     rich(page).locator("p", { hasText: "원격 문단 수정" }),
   ).toBeVisible();
@@ -219,14 +222,14 @@ test("발표 모드의 업무 문서와 꼬리 메모에서도 읽기 전용 다
     .click();
   await page.getByRole("button", { name: "발표 모드", exact: true }).click();
   const memo = page.locator(".annual-memos .document-mermaid");
-  await expect(memo.locator("svg")).toBeVisible();
+  await expect(diagramSvg(memo)).toBeVisible();
   await expect(memo.locator("pre")).toBeHidden();
   await page
     .locator(`[data-cell="${taskId}:title"] .task-document-indicator`)
     .click();
   await expect(rich(page)).toHaveAttribute("contenteditable", "false");
-  await expect(block(page).locator("svg")).toContainText("완료");
-  await block(page).locator("svg").click();
+  await expect(diagramSvg(block(page))).toContainText("완료");
+  await diagramSvg(block(page)).click();
   await expect(block(page).locator("pre")).toBeHidden();
 });
 
@@ -288,7 +291,7 @@ test("문법 오류를 소스와 함께 표시하고 복구·삭제 후 임시 D
   await expect(block(page).first().locator("pre")).toHaveText(
     "flowchart LR\n A[",
   );
-  await expect(block(page).nth(1).locator("svg")).toContainText("완료");
+  await expect(diagramSvg(block(page).nth(1))).toContainText("완료");
   await expect(
     rich(page).locator("p", { hasText: "나머지 문단" }),
   ).toBeVisible();
@@ -302,7 +305,7 @@ test("문법 오류를 소스와 함께 표시하고 복구·삭제 후 임시 D
       await expect(
         block(page).first().locator(".document-error"),
       ).toBeVisible();
-    else await expect(block(page).first().locator("svg")).toBeVisible();
+    else await expect(diagramSvg(block(page).first())).toBeVisible();
   }
   await expect(
     page.locator(
@@ -338,7 +341,7 @@ test("다이어그램 도구 불러오기 실패는 문법 오류와 구분하�
   );
   expect(failedRequests).toBeGreaterThan(0);
   await expect(block(page).locator("pre")).toHaveText(diagram);
-  await expect(block(page).locator("svg")).toHaveCount(0);
+  await expect(diagramSvg(block(page))).toHaveCount(0);
   await expect(error.locator(".document-mermaid-error-detail")).toHaveCount(0);
   const changed = diagram.replace("완료", "입력 보존");
   await editSource(page, changed);
@@ -384,7 +387,7 @@ test("일반 문서는 Mermaid를 로드하지 않고 슬래시 메뉴에서 예
   await page.keyboard.press("Enter");
   await page.keyboard.insertText("/mermaid");
   await page.getByRole("option", { name: "Mermaid 다이어그램" }).click();
-  await expect(block(page).locator("svg")).toContainText("시작");
+  await expect(diagramSvg(block(page))).toContainText("시작");
   expect(requests.some((url) => url.includes("mermaid.core"))).toBe(true);
   await expect.poll(() => stored(page)).toContain(fence(diagram));
 });

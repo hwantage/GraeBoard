@@ -8,7 +8,10 @@ import {
   deleteTableColumn,
   deleteTableRow,
   listFormatCommand,
+  listItemBlockCommand,
   blockCommand,
+  LIST_ITEM_BLOCKS,
+  MERMAID_EXAMPLE,
   type ListFormat,
 } from "./document-editor-commands";
 import type {
@@ -139,6 +142,7 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
     canDeleteRow,
     uploadError,
     applyRemote,
+    place,
   } = useRichEditorLifecycle(props, {
     root,
     editorRef,
@@ -150,7 +154,7 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
     setPreview,
     setImageZoom,
   });
-  useImperativeHandle(ref, () => ({ applyRemote }));
+  useImperativeHandle(ref, () => ({ applyRemote, place }));
 
   function run(action: (ctx: Ctx) => unknown) {
     if (props.readOnly || !editorRef.current) return;
@@ -173,10 +177,10 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
     });
   }
 
-  function setBlock(value: string) {
+  function setBlock(value: string, formatCommand = blockCommand) {
     run((ctx) => {
       const view = ctx.get(editorViewCtx);
-      blockCommand(ctx, value)?.(view.state, view.dispatch, view);
+      formatCommand(ctx, value)?.(view.state, view.dispatch, view);
     });
   }
   const slashEntries: [string, string, string, ReactNode][] = [
@@ -224,16 +228,24 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
             const view = ctx.get(editorViewCtx);
             ctx.get(commandsCtx).call(createCodeBlockCommand.key, "mermaid");
             if (!view.state.selection.$from.parent.textContent)
-              view.dispatch(
-                view.state.tr.insertText("flowchart LR\n  A[시작] --> B[완료]"),
-              );
+              view.dispatch(view.state.tr.insertText(MERMAID_EXAMPLE));
           });
         else setBlock(id);
       },
     }),
   );
+  // In a list item's line the "/" menu keeps the item in its list: the list
+  // formats switch the list and blocks go under the item. Formats that would
+  // lift the item out of its list are left out.
+  const listItemSlashItems = slashItems.flatMap((item) =>
+    LIST_ITEM_BLOCKS.includes(item.id)
+      ? [{ ...item, run: () => setBlock(item.id, listItemBlockCommand) }]
+      : ["bullet", "ordered", "task", "link"].includes(item.id)
+        ? [item]
+        : [],
+  );
   const { items: visibleSlashItems, active: activeSlash } =
-    slashMenu.updateItems(slashItems);
+    slashMenu.updateItems(slash?.listItem ? listItemSlashItems : slashItems);
   const tocShown = ready && !!props.toc;
   return (
     <div

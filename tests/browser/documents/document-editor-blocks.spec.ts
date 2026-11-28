@@ -75,6 +75,20 @@ async function settleRichSelection(page: Page) {
     );
   });
 }
+// Puts the caret at the start or end of `line`. The click focuses the editor
+// first, as ProseMirror puts its own caret back when it gains focus.
+async function caretAt(page: Page, line: Locator, end = false) {
+  await line.click();
+  await settleRichSelection(page);
+  await line.evaluate((element, end) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    range.collapse(!end);
+    getSelection()!.removeAllRanges();
+    getSelection()!.addRange(range);
+  }, end);
+  await settleRichSelection(page);
+}
 async function pasteImage(page: Page, color = "#408378") {
   await rich(page).focus();
   await rich(page).evaluate((element, color) => {
@@ -327,6 +341,79 @@ test("토글은 / 메뉴와 문서 블록으로 만들고 접고 펼치며 detai
   await expect(detail(page).locator(".document-notice")).toContainText("원문");
 });
 
+test("번호·기호로 시작하는 토글 제목도 리치로 열고 줄 맨 앞 이스케이프로 저장한다", async ({
+  page,
+}) => {
+  // Titles as written before 2026-11-28, without line-start escapes.
+  const titles = ["<h2>10. 참고</h2>", "- 항목", "# 해시", "> 인용", "[a]: b"];
+  const shown = ["10. 참고", "- 항목", "# 해시", "> 인용", "[a]: b"];
+  await save(
+    page,
+    taskIds[0],
+    titles
+      .map(
+        (title) =>
+          `<details open>\n<summary>${title}</summary>\n\n본문\n\n</details>`,
+      )
+      .join("\n\n"),
+  );
+  await open(page);
+  await expect(detail(page).locator(".document-notice")).toHaveCount(0);
+  await expect(rich(page).locator(".document-toggle-summary")).toHaveText(
+    shown,
+  );
+  await expect(rich(page).locator("h2.document-toggle-summary")).toHaveCount(1);
+  await rich(page).locator(".document-toggle-content p").first().click();
+  await page.keyboard.insertText("편집 ");
+  const written = [
+    "<summary><h2>10\\. 참고</h2></summary>",
+    "<summary>\\- 항목</summary>",
+    "<summary>\\# 해시</summary>",
+    "<summary>\\> 인용</summary>",
+    "<summary>\\[a]: b</summary>",
+  ];
+  await expect
+    .poll(async () => (await document(page)).markdown)
+    .toContain(written[0]);
+  const markdown = (await document(page)).markdown;
+  for (const title of written) expect(markdown).toContain(title);
+  await close(page);
+  await open(page);
+  await expect(detail(page).locator(".document-notice")).toHaveCount(0);
+  await expect(rich(page).locator(".document-toggle-summary")).toHaveText(
+    shown,
+  );
+});
+
+test("토글 제목에 입력한 기호는 다시 열어도 글자로 남는다", async ({
+  page,
+}) => {
+  await save(
+    page,
+    taskIds[0],
+    "<details open>\n<summary>제목</summary>\n\n본문\n\n</details>",
+  );
+  await open(page);
+  const toggle = rich(page).locator(":scope > .document-toggle");
+  await toggle.locator(".document-toggle-title").click();
+  await settleRichSelection(page);
+  await page.keyboard.press("End");
+  // Typed text is not parsed as Markdown.
+  await page.keyboard.insertText(" *별* [a](b) <i></summary>끝");
+  await expect
+    .poll(async () => (await document(page)).markdown)
+    .toContain(
+      "<summary>제목 \\*별\\* \\[a]\\(b) \\<i>\\</summary>끝</summary>",
+    );
+  await close(page);
+  await open(page);
+  await expect(detail(page).locator(".document-notice")).toHaveCount(0);
+  await expect(toggle.locator(".document-toggle-summary")).toHaveText(
+    "제목 *별* [a](b) <i></summary>끝",
+  );
+  await expect(toggle.locator(".document-toggle-summary em, a")).toHaveCount(0);
+});
+
 test("닫는 태그가 없는 토글도 표·링크를 표시하며 편집 전 원문을 보존한다", async ({
   page,
 }) => {
@@ -404,7 +491,8 @@ test("닫는 태그가 없는 토글도 표·링크를 표시하며 편집 전 �
     .poll(async () => (await document(page)).markdown)
     .toContain("추가 새 서비스");
   const edited = (await document(page)).markdown;
-  expect(edited.trimEnd()).toMatch(/\*\*\\\[마지막\]\*\*\n\n<\/details>$/);
+  // Brackets that cannot start a link are saved without "\[" escapes.
+  expect(edited.trimEnd()).toMatch(/\*\*\[마지막\]\*\*\n\n<\/details>$/);
   await close(page);
   await open(page);
   await expect(toggle.locator("table")).toHaveCount(2);
@@ -568,14 +656,227 @@ test("/ 메뉴는 입력한 글자로 형식을 거르고 방향키·Enter·Esc�
   await rich(page).pressSequentially("/목록 ");
   await expect(slashMenu(page)).toHaveCount(0);
   await expect(rich(page).locator(":scope > p").last()).toHaveText("/목록 ");
+  // Only the start of a line opens the menu: a "/" after other text stays a
+  // character, even after a space and with a query that matches.
+  await rich(page).pressSequentially("/표");
+  await expect(slashMenu(page)).toHaveCount(0);
+  await rich(page).pressSequentially(" 그리고/표");
+  await expect(slashMenu(page)).toHaveCount(0);
+  await page.keyboard.press("Enter");
+  // A query that matches nothing shows no menu, and Enter starts a new line.
   await rich(page).pressSequentially("/glm");
   await expect(slashMenu(page)).toHaveCount(0);
   await page.keyboard.press("Enter");
-  await expect(rich(page).locator(":scope > p")).toHaveCount(2);
+  await expect(rich(page).locator(":scope > p")).toHaveCount(3);
   await expect
     .poll(async () => (await document(page, taskIds[1])).markdown)
-    .toMatch(exact("## 둘째 수준\n\n/목록 /glm"));
+    .toMatch(exact("## 둘째 수준\n\n/목록 /표 그리고/표\n\n/glm"));
+  // "/" at the start of a line with text after it opens the full menu, and a
+  // format changes the whole line as before.
+  await caretAt(page, rich(page).locator(":scope > p").nth(1));
+  await rich(page).pressSequentially("/");
+  await expect(options).toHaveCount(17);
+  await rich(page).pressSequentially("제목1");
+  await expect(options).toHaveText(["제목 1", "토글 제목 1"]);
+  await page.keyboard.press("Enter");
+  await expect(rich(page).getByRole("heading", { level: 1 })).toHaveText(
+    "/glm",
+  );
+  await expect
+    .poll(async () => (await document(page, taskIds[1])).markdown)
+    .toMatch(exact("## 둘째 수준\n\n/목록 /표 그리고/표\n\n# /glm"));
 });
+
+const listSlashOptions = [
+  "글머리 목록",
+  "번호 목록",
+  "체크리스트",
+  "인용",
+  "코드 블록",
+  "Mermaid 다이어그램",
+  "표",
+  "구분선",
+  "링크",
+];
+test("목록 항목 줄 맨 앞의 / 메뉴는 목록 형식과 하위 블록만 보이고 목록 밖에서는 모두 보인다", async ({
+  page,
+}) => {
+  await save(
+    page,
+    taskIds[0],
+    "* 글머리\n\n1. 번호\n\n* [ ] 할 일\n\n> 인용 안",
+  );
+  await open(page);
+  const options = slashMenu(page).getByRole("option");
+  const lines = rich(page).locator("li p");
+  for (const index of [0, 1, 2]) {
+    await caretAt(page, lines.nth(index));
+    await rich(page).pressSequentially("/");
+    await expect(options).toHaveText(listSlashOptions);
+    await page.keyboard.press("Escape");
+    await expect(slashMenu(page)).toHaveCount(0);
+    await page.keyboard.press("Backspace");
+  }
+  await expect(lines).toHaveText(["글머리", "번호", "할 일"]);
+  // Formats that would lift the item out of its list match nothing there.
+  await caretAt(page, lines.nth(0));
+  await rich(page).pressSequentially("/제목");
+  await expect(slashMenu(page)).toHaveCount(0);
+  for (let count = 0; count < 3; count++)
+    await page.keyboard.press("Backspace");
+  // A "/" after the item's text stays a character.
+  await caretAt(page, lines.nth(0), true);
+  await rich(page).pressSequentially(" /코드");
+  await expect(slashMenu(page)).toHaveCount(0);
+  // The list formats switch the item's list as before.
+  await caretAt(page, lines.nth(2));
+  await rich(page).pressSequentially("/글머리");
+  await expect(options).toHaveText(["글머리 목록"]);
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(async () => (await document(page)).markdown)
+    .toMatch(exact("* 글머리 /코드\n\n1. 번호\n\n* 할 일\n\n> 인용 안"));
+  // A quote outside lists keeps the full menu.
+  await caretAt(page, rich(page).locator("blockquote p"));
+  await rich(page).pressSequentially("/");
+  await expect(options).toHaveCount(17);
+  await expect(options.first()).toHaveText("본문");
+});
+
+// The blocks of a list item, by tag.
+const itemBlocks = (item: Locator) =>
+  item
+    .locator(":scope > div > *")
+    .evaluateAll((blocks) => blocks.map((block) => block.tagName));
+// Whether the caret is at the end of the code block it is in.
+const caretAtCodeEnd = (page: Page) =>
+  rich(page).evaluate(() => {
+    const { anchorNode, anchorOffset } = getSelection()!;
+    const element =
+      anchorNode instanceof Element ? anchorNode : anchorNode?.parentElement;
+    const code = element?.closest("code");
+    if (!code) return false;
+    const range = document.createRange();
+    range.setStart(code, 0);
+    range.setEnd(anchorNode!, anchorOffset);
+    return range.toString().length === code.textContent!.length;
+  });
+// Each block the "/" menu adds under a list item, with the Markdown before
+// and after adding it under an empty item after "하나" and under the line
+// "하나" itself. The text typed right after it shows where the caret went.
+const listItemBlocks = [
+  {
+    label: "코드 블록",
+    query: "코드",
+    tag: "PRE",
+    under: ["* 하나\n* 셋", "* 하나\n  ```\n  가\n  ```\n* 셋"],
+    line: [
+      "* 하나\n  * 아래\n* 셋",
+      "* 하나\n  ```\n  나\n  ```\n  * 아래\n* 셋",
+    ],
+  },
+  {
+    label: "Mermaid 다이어그램",
+    query: "mermaid",
+    tag: "DIV",
+    under: [
+      "1. 하나\n2. 셋",
+      "1. 하나\n   ```mermaid\n   flowchart LR\n     A[시작] --> B[완료]\n   ```\n2. 셋",
+    ],
+    line: [
+      "1. 하나\n   * 아래\n2. 셋",
+      "1. 하나\n   ```mermaid\n   flowchart LR\n     A[시작] --> B[완료]\n   ```\n   * 아래\n2. 셋",
+    ],
+  },
+  {
+    label: "인용",
+    query: "인용",
+    tag: "BLOCKQUOTE",
+    under: ["* [ ] 하나\n* [x] 셋", "* [ ] 하나\n\n  > 가\n* [x] 셋"],
+    line: [
+      "* [ ] 하나\n  * [ ] 아래\n* [x] 셋",
+      "* [ ] 하나\n\n  > 나\n\n  * [ ] 아래\n* [x] 셋",
+    ],
+  },
+  {
+    label: "표",
+    query: "표",
+    tag: "TABLE",
+    under: [
+      "* 하나\n* 셋",
+      "* 하나\n\n  | 가  |    |    |\n  | :- | :- | :- |\n  |    |    |    |\n  |    |    |    |\n* 셋",
+    ],
+    line: [
+      "* 하나\n  * 아래\n* 셋",
+      "* 하나\n\n  | 나  |    |    |\n  | :- | :- | :- |\n  |    |    |    |\n  |    |    |    |\n\n  * 아래\n* 셋",
+    ],
+  },
+  {
+    // A divider has no text: the caret stays on its line, and an empty item
+    // stays below the divider for the next item.
+    label: "구분선",
+    query: "구분선",
+    tag: "HR",
+    under: ["1. 하나\n2. 셋", "1. 하나\n   ***\n2. 가\n3. 셋"],
+    line: ["1. 하나\n   * 아래\n2. 셋", "1. 나하나\n   ***\n   * 아래\n2. 셋"],
+  },
+];
+for (const block of listItemBlocks)
+  test(`/ 메뉴로 목록 항목 아래에 넣은 ${block.label}: 한 번에 실행취소하고 같은 Markdown으로 다시 연다`, async ({
+    page,
+  }) => {
+    test.setTimeout(60000);
+    for (const [index, [before, after]] of [
+      block.under,
+      block.line,
+    ].entries()) {
+      const under = index === 0;
+      const id = taskIds[index];
+      await save(page, id, before);
+      await open(page, id);
+      const items = rich(page).locator(":scope > * > li");
+      const lines = items.locator(":scope > div > p");
+      const shape = under ? ["P"] : ["P", "UL"];
+      if (under) {
+        // An empty item after "하나", with nothing under it.
+        await caretAt(page, lines.first(), true);
+        await page.keyboard.press("Enter");
+        await expect(lines).toHaveText(["하나", "", "셋"]);
+      } else await caretAt(page, lines.first());
+      await rich(page).pressSequentially(`/${block.query}`);
+      await expect(slashMenu(page).getByRole("option")).toHaveText([
+        block.label,
+      ]);
+      await page.keyboard.press("Enter");
+      await expect(slashMenu(page)).toHaveCount(0);
+      const added = ["P", block.tag, ...shape.slice(1)];
+      await expect.poll(() => itemBlocks(items.first())).toEqual(added);
+      await expect(items).toHaveCount(under && block.tag === "HR" ? 3 : 2);
+      await detail(page)
+        .getByRole("button", { name: "문서 실행취소", exact: true })
+        .click();
+      await expect.poll(() => itemBlocks(items.first())).toEqual(shape);
+      await expect(lines).toHaveText(
+        under ? ["하나", "", "셋"] : ["하나", "셋"],
+      );
+      await detail(page)
+        .getByRole("button", { name: "문서 재실행", exact: true })
+        .click();
+      await expect.poll(() => itemBlocks(items.first())).toEqual(added);
+      if (block.tag === "DIV") expect(await caretAtCodeEnd(page)).toBe(true);
+      else await page.keyboard.type(under ? "가" : "나");
+      await expect
+        .poll(async () => (await document(page, id)).markdown)
+        .toMatch(exact(after));
+      await close(page);
+      await open(page, id);
+      await expect(detail(page).locator(".document-notice")).toHaveCount(0);
+      await expect.poll(() => itemBlocks(items.first())).toEqual(added);
+      await raw(page);
+      await expect(source(page)).toHaveValue(exact(after));
+      await close(page);
+    }
+  });
 
 test("붙여넣은 이미지 뒤와 문서 끝 블록 아래에서 바로 이어서 입력한다", async ({
   page,

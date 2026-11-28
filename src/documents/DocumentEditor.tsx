@@ -38,9 +38,17 @@ import {
 } from "./document-storage";
 import type { TaskDocument } from "../types";
 import type {
+  DocumentPlace,
   RemoteMarkdown,
   RichEditorHandle,
 } from "./editor/rich-editor-types";
+import {
+  placeIn,
+  scrollAround,
+  sourceLineTop,
+  sourceOffsetAt,
+  visibleBounds,
+} from "./document-scroll-anchor";
 import "./task-document.css";
 
 const RichMarkdownEditor = lazy(() => import("./editor/RichMarkdownEditor"));
@@ -203,7 +211,62 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
         exporting.current = false;
       }
     }
-    function changeMode(value: DocumentMode) {
+    // The caret and the text on screen follow the switch to the other mode.
+    const place = useRef<DocumentPlace | null>(null);
+    function sourcePlace(): DocumentPlace | null {
+      const input = sourceInput.current;
+      if (!input) return null;
+      const { selectionStart, selectionEnd, selectionDirection } = input;
+      const backward = selectionDirection === "backward";
+      const head = backward ? selectionStart : selectionEnd;
+      const { top, bottom } = visibleBounds(input);
+      let offset = head;
+      let line = sourceLineTop(input, head);
+      if (
+        line < top ||
+        line > bottom - parseFloat(getComputedStyle(input).lineHeight)
+      ) {
+        offset = sourceOffsetAt(input, top);
+        line = sourceLineTop(input, offset);
+      }
+      return {
+        markdown: input.value,
+        anchor: backward ? selectionEnd : selectionStart,
+        head,
+        view: { offset, top: line },
+      };
+    }
+    useLayoutEffect(() => {
+      const input = sourceInput.current;
+      if (mode !== "source" || !input || !place.current) return;
+      const focus = place.current.focus;
+      const target = placeIn(place.current, input.value);
+      place.current = null;
+      // A place that cannot be mapped to the text is skipped; a click on the
+      // switch still puts the keyboard caret in the source.
+      if (!target) {
+        if (focus) input.focus({ preventScroll: true });
+        return;
+      }
+      const { anchor, head, view } = target;
+      input.setSelectionRange(
+        Math.min(anchor, head),
+        Math.max(anchor, head),
+        anchor > head ? "backward" : "forward",
+      );
+      // Within the textarea first, then the panel around it.
+      input.scrollTop += sourceLineTop(input, view.offset) - view.top;
+      scrollAround(input, sourceLineTop(input, view.offset), view.top);
+      if (target.focus) input.focus({ preventScroll: true });
+    }, [mode, loaded]);
+    function changeMode(value: DocumentMode, focus = false) {
+      if (value !== mode) {
+        place.current =
+          mode === "rich"
+            ? (richEditor.current?.place(current.current.markdown) ?? null)
+            : sourcePlace();
+        if (place.current) place.current.focus = focus;
+      }
       if (value === "rich" && mode !== value) {
         setEditorReady(false);
         setEditorFailed(false);
@@ -617,13 +680,17 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
       <DocumentModeToggle
         mode={mode}
         disabled={!!uploadCount}
-        onChange={(value) => {
+        onChange={(value, pointer) => {
           if (composing.current) return;
-          modeFocus.current = !!section.current
-            ?.querySelector(".document-modes")
-            ?.contains(document.activeElement);
+          // A click continues typing at the caret in the other mode. Enter or
+          // Space on the switch keeps keyboard focus on the switch.
+          modeFocus.current =
+            !pointer &&
+            !!section.current
+              ?.querySelector(".document-modes")
+              ?.contains(document.activeElement);
           setNotice("");
-          changeMode(value);
+          changeMode(value, pointer && !docReadOnly && !mobile);
         }}
       />
     );
@@ -816,6 +883,7 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                   <RichMarkdownEditor
                     label={`${label} 리치 편집`}
                     initialMarkdown={current.current.markdown}
+                    initialPlace={place.current}
                     remoteMarkdown={remoteMarkdown}
                     ref={richEditor}
                     readOnly={docReadOnly}
@@ -837,7 +905,10 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
                     linkTitles={!props.storage}
                     onUpload={uploadImage}
                     onUploading={uploading}
-                    onReady={() => setEditorReady(true)}
+                    onReady={() => {
+                      place.current = null;
+                      setEditorReady(true);
+                    }}
                     onUnsupported={(message) => {
                       setNotice(message);
                       setMode("source");

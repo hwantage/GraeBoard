@@ -3,6 +3,12 @@ import { documentEditorInput } from "./document-editor-input";
 import { configureDocumentInputRules } from "./DocumentInputRules";
 import { documentLinkTitle } from "./DocumentLinkTitle";
 import { useEffect, useRef, useState } from "react";
+import {
+  placeIn,
+  scrollAround,
+  visibleBounds,
+} from "../document-scroll-anchor";
+import { documentPositions, markdownOffsets } from "./document-source-position";
 
 import { parseDocumentLinkPath } from "../../../shared/documents/document-links.js";
 import { DocumentLinkTitles, documentLinkTarget } from "../document-links";
@@ -46,15 +52,17 @@ import {
 import { commonmark } from "@milkdown/kit/preset/commonmark";
 import { gfm } from "@milkdown/kit/preset/gfm";
 import { history } from "@milkdown/kit/plugin/history";
-import { Plugin } from "@milkdown/kit/prose/state";
+import { Plugin, TextSelection } from "@milkdown/kit/prose/state";
 import { Fragment } from "@milkdown/kit/prose/model";
 
 import { dropCursor } from "@milkdown/kit/prose/dropcursor";
 import { undoDepth, redoDepth } from "@milkdown/kit/prose/history";
 import { isInTable } from "@milkdown/kit/prose/tables";
 import { $prose } from "@milkdown/kit/utils";
+import type { EditorView } from "@milkdown/kit/prose/view";
 
 import type {
+  DocumentPlace,
   RemoteMarkdown,
   RichEditorProps as Props,
 } from "./rich-editor-types";
@@ -67,6 +75,7 @@ import {
   isPlainLineBreak,
   remarkTableShape,
   checkMarkdown,
+  configureTextEscapes,
 } from "./document-markdown";
 import { deleteTableRow } from "./document-editor-commands";
 import type useDocumentLinkActions from "./useDocumentLinkActions";
@@ -79,6 +88,24 @@ const dropIndicator = $prose(() =>
 );
 // Uploaded images land at the end of their paragraph without a visible caret.
 // Continue typing in the paragraph below, creating it when needed.
+
+// The caret when it is on screen, otherwise the text at the top of the view,
+// and its viewport height. A tall block, such as an image, starting above the
+// view counts from the view's top.
+function shownPosition(view: EditorView) {
+  const { head } = view.state.selection;
+  const { top, bottom } = visibleBounds(view.dom);
+  const caret = view.coordsAtPos(head);
+  if (caret.top >= top && caret.bottom <= bottom)
+    return { pos: head, top: caret.top };
+  const box = view.dom.getBoundingClientRect();
+  const pos =
+    view.posAtCoords({
+      left: box.left + Math.min(40, box.width / 2),
+      top: Math.max(top, box.top) + 1,
+    })?.pos ?? head;
+  return { pos, top: Math.max(top, view.coordsAtPos(pos).top) };
+}
 
 export default function useRichEditorLifecycle(
   props: Props,
@@ -104,11 +131,21 @@ export default function useRichEditorLifecycle(
     setImageZoom: React.Dispatch<React.SetStateAction<boolean>>;
   },
 ) {
-  const { linkTitlesRef, linkOpener, hideLinkTip, setLink, setLinkOpenError } =
-    links;
+  const {
+    linkTitlesRef,
+    linkOpener,
+    hideLinkTip,
+    setLink,
+    setLinkOpenError,
+    notify,
+  } = links;
   const { closeSlash, syncSlash } = slashMenu;
   const applyingRemote = useRef(false);
   const appliedRemote = useRef(props.remoteMarkdown);
+  // The text to bring back to its height on screen once the editor shows.
+  const shownAt = useRef<{ pos: number; top: number; focus: boolean } | null>(
+    null,
+  );
   const [ready, setReady] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
@@ -131,6 +168,7 @@ export default function useRichEditorLifecycle(
           getNode: (state) => state.schema.nodes.paragraph.create(),
         });
         configureDocumentInputRules(ctx);
+        configureTextEscapes(ctx);
         ctx.set(editorViewOptionsCtx, {
           ...documentEditorInput(ctx, {
             latest,
@@ -189,7 +227,8 @@ export default function useRichEditorLifecycle(
           },
 
           nodeViews: {
-            code_block: documentCodeBlockView,
+            code_block: (node, view, getPos) =>
+              documentCodeBlockView(node, view, getPos, notify),
             document_link: (node) => {
               if (latest.current.documentLinks !== false)
                 return documentLinkView(node, linkTitles);
@@ -327,11 +366,39 @@ export default function useRichEditorLifecycle(
           );
           editor.action((ctx) => {
             const view = ctx.get(editorViewCtx);
-            view.dispatch(
-              view.state.tr
-                .replaceWith(0, view.state.doc.content.size, doc.content)
-                .setMeta("addToHistory", false),
-            );
+            const tr = view.state.tr
+              .replaceWith(0, view.state.doc.content.size, doc.content)
+              .setMeta("addToHistory", false);
+            // Continue where the Markdown source was. A place that cannot
+            // be mapped to the text is skipped, but a click on the switch
+            // still puts the keyboard caret in the editor.
+            const initialPlace = latest.current.initialPlace;
+            const place =
+              initialPlace &&
+              placeIn(initialPlace, latest.current.initialMarkdown);
+            if (!place && initialPlace?.focus)
+              shownAt.current = {
+                pos: tr.selection.head,
+                top: NaN,
+                focus: true,
+              };
+            if (place) {
+              const [anchor, head, shown] = documentPositions(
+                ctx,
+                doc,
+                latest.current.initialMarkdown,
+                [place.anchor, place.head, place.view.offset],
+              );
+              if (anchor != null && head != null)
+                tr.setSelection(TextSelection.create(tr.doc, anchor, head));
+              if (shown != null || place.focus)
+                shownAt.current = {
+                  pos: shown ?? tr.selection.head,
+                  top: shown != null ? place.view.top : NaN,
+                  focus: !!place.focus,
+                };
+            }
+            view.dispatch(tr);
           });
           editorRef.current = editor;
           initialized = true;
@@ -356,6 +423,47 @@ export default function useRichEditorLifecycle(
       if (editor.status === "Created") void editor.destroy();
     };
   }, []);
+  // After the host shows the editor, its layout is final.
+  useEffect(() => {
+    const shown = shownAt.current;
+    if (!ready || !shown) return;
+    shownAt.current = null;
+    const frame = requestAnimationFrame(() =>
+      editorRef.current?.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        if (shown.pos > view.state.doc.content.size) return;
+        if (!Number.isNaN(shown.top))
+          scrollAround(view.dom, view.coordsAtPos(shown.pos).top, shown.top);
+        // The caret stays where the selection was placed; focusing does not
+        // scroll to it.
+        if (shown.focus && view.editable) view.focus();
+      }),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [ready]);
+  function place(markdown: string): DocumentPlace | null {
+    return (
+      editorRef.current?.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        const { anchor, head } = view.state.selection;
+        const shown = shownPosition(view);
+        const [from, to, offset] = markdownOffsets(
+          ctx,
+          view.state,
+          [anchor, head, shown.pos],
+          markdown,
+        );
+        return from == null || to == null || offset == null
+          ? null
+          : {
+              markdown,
+              anchor: from,
+              head: to,
+              view: { offset, top: shown.top },
+            };
+      }) ?? null
+    );
+  }
   function applyRemote(remote: RemoteMarkdown) {
     if (appliedRemote.current === remote || !editorRef.current) return;
     appliedRemote.current = remote;
@@ -408,5 +516,6 @@ export default function useRichEditorLifecycle(
     canDeleteRow,
     uploadError,
     applyRemote,
+    place,
   };
 }

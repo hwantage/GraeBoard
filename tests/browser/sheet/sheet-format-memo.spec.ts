@@ -217,7 +217,7 @@ test("서식 복사 중 저장된 필터 메뉴는 Esc 한 번에 닫히며 복�
   await expect(target(page, 0)).toHaveAttribute("aria-selected", "true");
 });
 
-test("연속 서식 적용은 저장 중 추가 요청을 안내하고 저장 후 다시 적용한다", async ({
+test("연속 서식 적용은 저장 중에도 받아 순서대로 저장한다", async ({
   page,
 }) => {
   let release!: () => void, started!: () => void;
@@ -240,21 +240,69 @@ test("연속 서식 적용은 저장 중 추가 요청을 안내하고 저장 �
   try {
     await target(page, 2).click();
     await received;
+    // The first save is still on its way: the next two wait behind it
+    // instead of being refused.
     await target(page, 3).click();
-    await expect(page.getByRole("alert")).toContainText(
-      "앞선 변경을 저장 중입니다. 잠시 후 다시 적용하세요.",
-    );
     await page.locator(`[data-row-id="${ids[4]}"] .row-select`).click();
+    await expect(page.getByRole("alert")).toHaveCount(0);
     await expect(brush).toHaveAttribute("aria-pressed", "true");
     expect(requests).toBe(1);
-    await save(page, async () => release());
     expect(cell((await stored(page))[3], "title").style.bold).not.toBe(true);
-    await save(page, () => target(page, 3).click());
-    expect(cell((await stored(page))[3], "title").style.bold).toBe(true);
-    await save(page, () =>
-      page.locator(`[data-row-id="${ids[4]}"] .row-select`).click(),
-    );
-    expect(cell((await stored(page))[4], "owner").style.bold).toBe(true);
+    release();
+    await expect
+      .poll(async () => cell((await stored(page))[3], "title").style.bold)
+      .toBe(true);
+    await expect
+      .poll(async () => cell((await stored(page))[4], "owner").style.bold)
+      .toBe(true);
+    expect(requests).toBe(3);
+  } finally {
+    release();
+  }
+});
+
+test("저장 중에도 다른 셀을 고칠 수 있고, 고친 값은 바로 보이며 순서대로 저장된다", async ({
+  page,
+}) => {
+  let release!: () => void, started!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const received = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  let requests = 0;
+  await page.route("**/api/cells/batch", async (route) => {
+    requests++;
+    started();
+    await gate;
+    await route.continue();
+  });
+  const edit = async (row: number, value: string) => {
+    await target(page, row).dblclick();
+    await page.locator(".inline-editor textarea").fill(value);
+    await page.keyboard.press("Enter");
+  };
+  try {
+    await edit(1, "첫 번째 수정");
+    await received;
+    // The first save has not come back. Another cell, and then the first
+    // cell again, are edited meanwhile.
+    await edit(2, "두 번째 수정");
+    await edit(1, "첫 번째를 다시 수정");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await expect(target(page, 1)).toContainText("첫 번째를 다시 수정");
+    await expect(target(page, 2)).toContainText("두 번째 수정");
+    expect(requests).toBe(1);
+    release();
+    await expect
+      .poll(async () => cell((await stored(page))[1], "title").value)
+      .toBe("첫 번째를 다시 수정");
+    await expect
+      .poll(async () => cell((await stored(page))[2], "title").value)
+      .toBe("두 번째 수정");
+    expect(requests).toBe(3);
+    await expect(page.getByRole("alert")).toHaveCount(0);
   } finally {
     release();
   }

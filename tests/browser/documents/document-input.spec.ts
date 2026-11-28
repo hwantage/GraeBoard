@@ -110,6 +110,42 @@ async function caret(block: Locator, offset = 0) {
 const text = async (locator: Locator) =>
   (await locator.textContent())?.replaceAll("\u00a0", " ");
 
+// The rich editor alone, at /__test/rich-editor, built from its source.
+async function serveRichEditorFixture(page: Page) {
+  const built = await build({
+    entryPoints: ["tests/browser/fixtures/rich-editor.tsx"],
+    outfile: "/tmp/graeboard-rich-editor-fixture.js",
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "browser",
+    jsx: "automatic",
+    define: { "process.env.NODE_ENV": '"production"' },
+    loader: { ".svg": "dataurl", ".png": "dataurl" },
+  });
+  await page.route("**/__test/rich-editor*", (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const extension = path.endsWith(".js")
+      ? ".js"
+      : path.endsWith(".css")
+        ? ".css"
+        : null;
+    return route.fulfill(
+      extension
+        ? {
+            contentType: extension === ".js" ? "text/javascript" : "text/css",
+            body: built.outputFiles!.find((file) =>
+              file.path.endsWith(extension),
+            )!.text,
+          }
+        : {
+            contentType: "text/html",
+            body: '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/__test/rich-editor.css"><div id="fixture-root"></div><script type="module" src="/__test/rich-editor.js"></script>',
+          },
+    );
+  });
+}
+
 test.beforeEach(async ({ page }) => {
   await request(page, "/auth/login", "POST", {
     username: "test@somansa.com",
@@ -220,10 +256,219 @@ test("코드 블록 Tab은 2칸이고 읽기 전용 Tab은 포커스를 옮긴�
   });
   await page.keyboard.press("Tab");
   await expect(rich(page)).not.toBeFocused();
+  // Where buttons are tab stops (WebKit on macOS skips them by default), the
+  // diagram's copy button comes first and shows while it has the focus.
+  const copy = rich(page).getByRole("button", {
+    name: "코드 복사",
+    exact: true,
+  });
+  if (await copy.evaluate((el) => el === document.activeElement)) {
+    await expect(copy).toHaveCSS("opacity", "1");
+    await page.keyboard.press("Tab");
+  }
   await expect(
     detail(page).getByRole("textbox", { name: "탭 이동 검사", exact: true }),
   ).toBeFocused();
 });
+
+// Records what the copy buttons write, without the OS clipboard.
+async function watchClipboard(page: Page) {
+  await page.evaluate(() => {
+    (window as any).copied = [];
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        write: async (items: ClipboardItem[]) => {
+          (window as any).copied.push(
+            await (await items[0].getType("text/plain")).text(),
+          );
+        },
+      },
+    });
+  });
+  return () => page.evaluate(() => (window as any).copied as string[]);
+}
+// The button sits in the block's top-right corner.
+async function inCorner(button: Locator, block: Locator) {
+  const [outer, inner] = await Promise.all([
+    block.boundingBox(),
+    button.boundingBox(),
+  ]);
+  const right = outer!.x + outer!.width - (inner!.x + inner!.width);
+  expect(right).toBeGreaterThanOrEqual(0);
+  expect(right).toBeLessThan(12);
+  expect(inner!.y - outer!.y).toBeGreaterThanOrEqual(0);
+  expect(inner!.y - outer!.y).toBeLessThan(12);
+}
+
+test("코드 블록 복사 버튼은 마우스를 올리면 오른쪽 위에 보이고 코드만 복사하며 문서와 커서를 그대로 둔다", async ({
+  page,
+}) => {
+  const code = "const a = 1;\n  return a;";
+  const diagram = "graph TD\n  A --> B";
+  const source = `앞 문단\n\n\`\`\`js\n${code}\n\`\`\`\n\n\`\`\`mermaid\n${diagram}\n\`\`\`\n`;
+  await open(page, source);
+  const copied = await watchClipboard(page);
+  const block = rich(page).locator('pre[data-language="js"]');
+  const button = block.getByRole("button", { name: "코드 복사", exact: true });
+  const paragraph = rich(page).locator("p", { hasText: "앞 문단" });
+  await caret(paragraph, 1);
+  await page.mouse.move(0, 0);
+  await expect(button).toHaveCSS("opacity", "0");
+  await block.hover();
+  await expect(button).toHaveCSS("opacity", "1");
+  await inCorner(button, block);
+  await button.click();
+  await expect(
+    detail(page).getByText("코드를 복사했습니다.", { exact: true }),
+  ).toBeVisible();
+  expect(await copied()).toEqual([code]);
+  // No transaction: nothing to undo, nothing saved, the caret stays put.
+  await expect(
+    detail(page).getByRole("button", { name: "문서 실행취소", exact: true }),
+  ).toBeDisabled();
+  expect(await markdown(page)).toBe(source);
+  await expect(rich(page)).toBeFocused();
+  await page.keyboard.type("X");
+  await expect
+    .poll(() => markdown(page))
+    .toBe(source.replace("앞 문단", "앞X 문단"));
+
+  // The editor's own copy of the code text leaves the button out.
+  await block.locator("code").evaluate(async (el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+  });
+  const data = await rich(page).evaluate((el) => {
+    const data: Record<string, string> = {};
+    const event = new Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: {
+        clearData: () => {},
+        setData: (type: string, value: string) => {
+          data[type] = value;
+        },
+      },
+    });
+    el.dispatchEvent(event);
+    return data;
+  });
+  expect(data["text/plain"]).toBe(code);
+  expect(data["text/html"] ?? "").not.toContain("코드 복사");
+
+  // A diagram copies its source from the top-right of the diagram without
+  // opening the source.
+  const mermaid = rich(page).locator(".document-mermaid");
+  await rich(page).locator("p", { hasText: "앞X 문단" }).click();
+  await expect(
+    mermaid.locator(".document-mermaid-preview > svg"),
+  ).toBeVisible();
+  await expect(mermaid.locator("pre")).toBeHidden();
+  const diagramCopy = mermaid.getByRole("button", {
+    name: "코드 복사",
+    exact: true,
+  });
+  await mermaid.hover();
+  await expect(diagramCopy).toHaveCSS("opacity", "1");
+  await inCorner(diagramCopy, mermaid);
+  await diagramCopy.click();
+  await expect.poll(copied).toEqual([code, diagram]);
+  await expect(mermaid.locator("pre")).toBeHidden();
+
+  // Paper shows the code without the button.
+  await page.emulateMedia({ media: "print" });
+  await expect(button).toBeHidden();
+  await page.emulateMedia({ media: null });
+  expect(await markdown(page)).toBe(source.replace("앞 문단", "앞X 문단"));
+});
+
+test("읽기 전용 문서의 코드 블록도 복사하고 복사하지 못하면 알린다", async ({
+  page,
+}) => {
+  await open(page, "```sql\nSELECT 1;\n```\n");
+  // Presentation mode uses the same readOnly editor contract.
+  await detail(page).getByRole("button", { name: "닫기", exact: true }).click();
+  await page.getByRole("button", { name: "발표 모드", exact: true }).click();
+  await page
+    .getByRole("button", { name: "입력 검증 업무 문서 열기", exact: true })
+    .click();
+  await expect(rich(page)).toHaveAttribute("contenteditable", "false");
+  const copied = await watchClipboard(page);
+  const block = rich(page).locator("pre");
+  const button = block.getByRole("button", { name: "코드 복사", exact: true });
+  await block.hover();
+  await expect(button).toHaveCSS("opacity", "1");
+  await button.click();
+  await expect(
+    detail(page).getByText("코드를 복사했습니다.", { exact: true }),
+  ).toBeVisible();
+  expect(await copied()).toEqual(["SELECT 1;"]);
+
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        write: async () => {
+          throw new Error("denied");
+        },
+      },
+    });
+  });
+  await button.click();
+  await expect(
+    detail(page).getByText("코드를 복사하지 못했습니다. 다시 시도해 주세요.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(await markdown(page)).toBe("```sql\nSELECT 1;\n```\n");
+});
+for (const [name, marker, item] of [
+  ["글머리 목록", "-", "ul > li"],
+  ["번호 목록", "1.", "ol > li"],
+  ["체크리스트", "- [ ]", "li.document-check-item"],
+]) {
+  test(`${name} 항목 안 코드 블록의 Enter·Shift+Enter는 줄을 바꾸고 항목을 나누지 않는다`, async ({
+    page,
+  }) => {
+    // The fence is indented to the item's content column.
+    const indent = marker === "1." ? "   " : "  ";
+    await open(
+      page,
+      `${marker} 항목\n${indent}\`\`\`\n${indent}첫 줄\n${indent}\`\`\`\n`,
+    );
+    const code = rich(page).locator(`${item} pre code`);
+    await expect(code).toHaveText("첫 줄");
+    await caret(code, 3);
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("둘째 줄");
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.type("셋째 줄");
+    await expect(rich(page).locator(item)).toHaveCount(1);
+    await expect(rich(page).locator("pre")).toHaveCount(1);
+    await expect(code).toHaveText("첫 줄\n둘째 줄\n셋째 줄");
+    await expect
+      .poll(() => markdown(page))
+      .toContain(
+        ["첫 줄", "둘째 줄", "셋째 줄", "```"]
+          .map((line) => indent + line)
+          .join("\n"),
+      );
+    // ⌘/Ctrl+Enter still leaves the code block, below it in the same item.
+    await page.keyboard.press("ControlOrMeta+Enter");
+    await page.keyboard.type("다음 글");
+    await expect(rich(page).locator(`${item} > div > p`)).toHaveText([
+      "항목",
+      "다음 글",
+    ]);
+    await expect(rich(page).locator(item)).toHaveCount(1);
+  });
+}
 
 for (const [marker, selector, saved] of [
   ["-", "ul > li", "* 항목"],
@@ -920,38 +1165,7 @@ test("제목 조회 중 링크를 지우면 늦은 제목으로 다시 삽입하
 test("제목 조회 속성이 false이면 URL을 서버에 보내지 않고 기본값은 제목을 조회한다", async ({
   page,
 }) => {
-  const built = await build({
-    entryPoints: ["tests/browser/fixtures/rich-editor.tsx"],
-    outfile: "/tmp/graeboard-rich-editor-fixture.js",
-    bundle: true,
-    write: false,
-    format: "esm",
-    platform: "browser",
-    jsx: "automatic",
-    define: { "process.env.NODE_ENV": '"production"' },
-    loader: { ".svg": "dataurl", ".png": "dataurl" },
-  });
-  await page.route("**/__test/rich-editor*", (route) => {
-    const path = new URL(route.request().url()).pathname;
-    const extension = path.endsWith(".js")
-      ? ".js"
-      : path.endsWith(".css")
-        ? ".css"
-        : null;
-    return route.fulfill(
-      extension
-        ? {
-            contentType: extension === ".js" ? "text/javascript" : "text/css",
-            body: built.outputFiles!.find((file) =>
-              file.path.endsWith(extension),
-            )!.text,
-          }
-        : {
-            contentType: "text/html",
-            body: '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/__test/rich-editor.css"><div id="fixture-root"></div><script type="module" src="/__test/rich-editor.js"></script>',
-          },
-    );
-  });
+  await serveRichEditorFixture(page);
   const requested: string[] = [];
   page.on("request", (req) => {
     if (req.url().includes("/api/link-title?"))
@@ -976,4 +1190,56 @@ test("제목 조회 속성이 false이면 URL을 서버에 보내지 않고 기�
   await paste(editor, "https://public.example/title");
   await expect(editor.locator("a")).toHaveText("공개 사이트 제목");
   expect(requested).toEqual(["https://public.example/title"]);
+});
+
+test("원문에서 전환하는 사이 원격 변경이 들어와도 커서는 같은 글자에 놓인다", async ({
+  page,
+}) => {
+  await serveRichEditorFixture(page);
+  // The place was taken in the source before a remote change added the first
+  // paragraph; the editor opens with the newer text.
+  const place = {
+    markdown: "앞\n\n대상",
+    anchor: 3,
+    head: 3,
+    view: { offset: 3, top: 100 },
+    focus: true,
+  };
+  await page.goto(
+    `/__test/rich-editor?${new URLSearchParams({
+      markdown: "추가된 문단\n\n앞\n\n대상",
+      place: JSON.stringify(place),
+    })}`,
+  );
+  const editor = page.getByRole("textbox", { name: "업무 문서 리치 편집" });
+  await expect(editor).toBeFocused();
+  await page.keyboard.insertText("X");
+  await expect(page.locator("body")).toHaveAttribute(
+    "data-markdown",
+    "추가된 문단\n\n앞\n\nX대상\n",
+  );
+});
+
+test("전환 위치를 새 원문에 옮기지 못해도 클릭 전환이면 편집기에 커서가 들어간다", async ({
+  page,
+}) => {
+  await serveRichEditorFixture(page);
+  // Texts too different to compare in time: the place is dropped.
+  const place = {
+    markdown: "가".repeat(30000),
+    anchor: 10,
+    head: 10,
+    view: { offset: 10, top: 100 },
+    focus: true,
+  };
+  await page.goto(
+    `/__test/rich-editor?${new URLSearchParams({
+      markdown: "대상",
+      place: JSON.stringify(place),
+    })}`,
+  );
+  const editor = page.getByRole("textbox", { name: "업무 문서 리치 편집" });
+  await expect(editor).toBeFocused();
+  await page.keyboard.insertText("X");
+  await expect(page.locator("body")).toHaveAttribute("data-markdown", /X/);
 });

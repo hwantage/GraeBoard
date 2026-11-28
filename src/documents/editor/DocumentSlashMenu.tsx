@@ -12,11 +12,19 @@ export type SlashItem = {
   // A heading is shown above the first item of each group.
   group?: string;
 };
-export type SlashMatch = { from: number; to: number; query: string };
+export type SlashMatch = {
+  from: number;
+  to: number;
+  query: string;
+  // The paragraph is a list item's own line, where the menu keeps the item.
+  listItem: boolean;
+};
 
-// "/" at the start of a paragraph or after a space opens the menu. The
-// characters typed after it filter the list; a space or leaving the paragraph
-// closes it. Table cells keep "/" as plain text because block commands do not
+// "/" at the start of a paragraph opens the menu, even with text after the
+// caret. The characters typed after it filter the list; a space or leaving
+// the paragraph closes it. A "/" after other text stays a character: block
+// commands change the whole paragraph, which a "/" typed mid-sentence does
+// not mean. Table cells keep "/" as plain text because block commands do not
 // apply inside them.
 export function slashMatch(state: EditorState): SlashMatch | null {
   const { selection } = state;
@@ -24,12 +32,13 @@ export function slashMatch(state: EditorState): SlashMatch | null {
   const { $from } = selection;
   if ($from.parent.type.name !== "paragraph" || isInTable(state)) return null;
   const text = $from.parent.textBetween(0, $from.parentOffset, undefined, "￼");
-  const match = /(?:^|\s)\/([^\s/]*)$/.exec(text);
+  const match = /^\/([^\s/]*)$/.exec(text);
   if (!match) return null;
   return {
     from: $from.pos - match[1].length - 1,
     to: $from.pos,
     query: match[1],
+    listItem: $from.node(-1).type.name === "list_item",
   };
 }
 

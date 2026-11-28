@@ -24,6 +24,7 @@ import { RequestContext } from "../../worker/control/control.mjs";
 import { migratePostgres } from "../../server/migrations/postgres.mjs";
 import { allEntities } from "../../server/sync/node/entities.mjs";
 import { canonical, emptyState } from "../../server/sync/core/protocol.mjs";
+import { replayedResult } from "../support/cell-batch-replay-helper.mjs";
 
 function sqliteFixture(t) {
   const dir = mkdtempSync("/tmp/gb-task-contract-"),
@@ -130,7 +131,7 @@ async function commonContract({
   assert.equal(saved.pending, before.pending + 1);
   assert.equal(saved.audit, before.audit + 1);
   assert.equal(await events(), 1);
-  assert.deepEqual(await service.saveBatch(first), result);
+  assert.deepEqual(await service.saveBatch(first), replayedResult(result));
   assert.deepEqual(await counts(), saved);
   assert.equal(await events(), 1);
   const current = decoded(

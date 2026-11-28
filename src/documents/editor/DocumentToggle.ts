@@ -95,6 +95,19 @@ function supportedInline(nodes: MdNode[]): boolean {
   );
 }
 
+const oneParagraph = (root: MdNode) =>
+  root.children?.length === 1 && root.children[0].type === "paragraph";
+// The title is one line of Markdown. Before 2026-11-28 titles were written
+// without the escapes of a line start, so a title such as "10. 참고" read as a
+// list there. Read a leading list number, bullet, heading, quote, fence,
+// rule or definition marker as text instead. HTML stays unsupported.
+function literalStart(text: string) {
+  const title = text.replace(/^[ \t]+/, "");
+  const number = /^\d{1,9}(?=[.)])/.exec(title);
+  if (number) return `${number[0]}\\${title.slice(number[0].length)}`;
+  return /^[#>+\-*_`~[]/.test(title) ? `\\${title}` : title;
+}
+
 function parseSummary(
   html: string,
   parse: ParseFragment,
@@ -110,7 +123,8 @@ function parseSummary(
   }
   let children: MdNode[] = [];
   if (text.trim()) {
-    const root = parse(text);
+    let root = parse(text);
+    if (!oneParagraph(root)) root = parse(literalStart(text));
     const [block, ...more] = root.children || [];
     if (!block || more.length || block.type !== "paragraph") return null;
     children = block.children || [];
@@ -188,6 +202,7 @@ function groupDetails(children: MdNode[], parse: ParseFragment): MdNode[] {
 }
 
 type ToMarkdownState = {
+  enter: (construct: string) => () => void;
   containerPhrasing: (parent: MdNode, info: object) => string;
   containerFlow: (parent: MdNode, info: object) => string;
   createTracker: (info: object) => {
@@ -203,11 +218,15 @@ function detailsToMarkdown(
   info: object,
 ) {
   const [summary, ...blocks] = node.children as [Summary, ...MdNode[]];
+  // The title is read back as a one-line Markdown document (parseSummary),
+  // so it gets the escapes of a paragraph line, as `10\. 참고` or `\*별\*`.
+  const exit = state.enter("phrasing");
   const title = state.containerPhrasing(summary, {
     ...info,
-    before: ">",
-    after: "<",
+    before: "\n",
+    after: "\n",
   });
+  exit();
   const tracker = state.createTracker(info);
   const level = summary.level;
   let value = `<details${node.open ? " open" : ""}>\n<summary>${

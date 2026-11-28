@@ -14,13 +14,21 @@ import {
   paragraphSchema,
 } from "@milkdown/kit/preset/commonmark";
 
+import { createTable } from "@milkdown/kit/preset/gfm";
+
 import {
   EditorState,
+  Selection,
   TextSelection,
   type Command,
   type Transaction,
 } from "@milkdown/kit/prose/state";
-import { Fragment, NodeRange, type Node } from "@milkdown/kit/prose/model";
+import {
+  Fragment,
+  NodeRange,
+  type Node,
+  type Schema,
+} from "@milkdown/kit/prose/model";
 import { canJoin, liftTarget, StepMap } from "@milkdown/kit/prose/transform";
 import { keydownHandler } from "@milkdown/kit/prose/keymap";
 
@@ -298,4 +306,82 @@ export function blockCommand(ctx: Ctx, value: string): Command | null {
   if (value === "code")
     return outOfListCommand(commands.get(createCodeBlockCommand.key)());
   return null;
+}
+
+// The source a new Mermaid diagram starts from.
+export const MERMAID_EXAMPLE = "flowchart LR\n  A[시작] --> B[완료]";
+// Blocks the "/" menu adds under a list item.
+export const LIST_ITEM_BLOCKS = ["quote", "code", "mermaid", "table", "hr"];
+
+// Markdown writes a tight item's blocks without blank lines between them. A
+// fence or "***" starts and ends on its own lines, so it stays apart anyway,
+// unless it follows a toggle, whose closing HTML runs on to the next blank
+// line. A quote or table takes in the lines after it (lazy continuation,
+// table rows) and is taken into a list before it. A loose item keeps the
+// blocks apart with blank lines.
+function keepsTight(block: Node, before: Node | null) {
+  return (
+    (block.type.name === "code_block" || block.type.name === "hr") &&
+    before?.type.name !== "toggle"
+  );
+}
+
+function listItemBlock(ctx: Ctx, schema: Schema, value: string) {
+  const { nodes } = schema;
+  if (value === "table") return createTable(ctx, 3, 3);
+  if (value === "quote")
+    return nodes.blockquote.create(null, nodes.paragraph.create());
+  if (value === "hr") return nodes.hr.create();
+  return value === "mermaid"
+    ? nodes.code_block.create(
+        { language: "mermaid" },
+        schema.text(MERMAID_EXAMPLE),
+      )
+    : nodes.code_block.create();
+}
+
+// In a list item's own line the "/" menu adds the block under the item
+// instead of lifting the item out of its list (blockCommand), as an indented
+// fence or quote under "- a" does in Markdown. An empty item after another
+// item, with nothing under it, gives way to the block at the end of the item
+// before it. Otherwise the block follows the line in its item, before any
+// sub-items, and the line keeps its text. The caret goes to the end of the
+// block's first text: into the code, after the Mermaid example, into the
+// quote or the table's first cell. A divider has no text, so the caret stays
+// on its line and an empty item stays below the divider for the next item.
+export function listItemBlockCommand(ctx: Ctx, value: string): Command | null {
+  if (!LIST_ITEM_BLOCKS.includes(value)) return null;
+  return (state, dispatch) => {
+    const { schema, selection } = state;
+    const { $from } = selection;
+    if (!selection.empty || $from.parent.type !== schema.nodes.paragraph)
+      return false;
+    const item = $from.node(-1);
+    if (item.type !== schema.nodes.list_item) return false;
+    if (!dispatch) return true;
+    const block = listItemBlock(ctx, schema, value);
+    const under =
+      !$from.parent.content.size &&
+      item.childCount === 1 &&
+      $from.index(-2) > 0;
+    const tr = state.tr;
+    if (under && !block.isLeaf) tr.delete($from.before(-1), $from.after(-1));
+    // The end of the item before comes before the deleted item, so the
+    // deletion does not move it.
+    const at = under ? $from.before(-1) - 1 : $from.after();
+    const $at = tr.doc.resolve(at);
+    const holder = $at.parent;
+    tr.insert(at, block);
+    if (!holder.attrs.spread && !keepsTight(block, $at.nodeBefore))
+      tr.setNodeMarkup($at.before(), undefined, {
+        ...holder.attrs,
+        spread: true,
+      });
+    if (!block.isLeaf) {
+      const text = Selection.findFrom(tr.doc.resolve(at), 1, true)!;
+      tr.setSelection(TextSelection.create(tr.doc, text.$from.end()));
+    }
+    dispatch(closeHistory(tr).scrollIntoView());
+    return true;
+  };
 }

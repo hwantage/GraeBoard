@@ -1633,6 +1633,75 @@ test("사용자 요청: 업무 표시는 색을 채운 칩으로 구분하고, �
   await expect(card(page, "업무 수").locator("strong")).toHaveText("1");
 });
 
+test("사본에서도 일반 배경색 안내의 업무 표시로 바꾸기를 바로 누를 수 있다", async ({
+  page,
+}) => {
+  // The original sheet binds the notice to its painting's saved result; a
+  // copy's draft records the painting at once and binds it as before.
+  await configure(page);
+  const clone = await request(page, "/sheet-clones", {
+    id: randomUUID(),
+    teamId,
+    year: 2026,
+    referenceDate: "2026-01-05",
+    name: "안내 사본",
+    taskIds,
+    view: defaultView(2026),
+  });
+  await page.reload();
+  const tab = page.getByRole("tab", { name: "안내 사본", exact: true });
+  await tab.click();
+  await expect(tab).toHaveAttribute("aria-selected", "true");
+  const read = async () =>
+    (await request(page, `/sheet-clones/${clone.id}`)).tasks[0];
+  await page.locator(`[data-cell="${taskIds[0]}:2026-01-05"]`).click();
+  await pickColor(page, "배경색", "#0066cc");
+  const toast = page.locator(".toast");
+  const change = toast.getByRole("button", { name: "업무 표시로 바꾸기" });
+  await expect(change).toBeEnabled();
+  await change.click();
+  await expect(toast).toHaveCount(0);
+  await expect
+    .poll(async () => effectiveCell(await read(), "2026-01-05").style.work)
+    .toBe(true);
+});
+
+test("원본에서 앞선 저장을 오래 기다린 일반 배경색도 저장된 뒤 업무 표시로 바꿀 수 있다", async ({
+  page,
+}) => {
+  // The notice's time starts once its painting is saved and the button
+  // works, however long the earlier saves keep the painting waiting.
+  await configure(page);
+  await page.clock.install();
+  await page.reload();
+  let release!: () => void,
+    saves = 0;
+  const held = new Promise<void>((r) => (release = r));
+  await page.route("**/api/cells/batch", async (route) => {
+    if (++saves === 1) await held;
+    await route.continue();
+  });
+  await page.locator(`[data-cell="${taskIds[1]}:2026-01-12"]`).click();
+  await page.getByRole("button", { name: "굵게", exact: true }).click();
+  await expect.poll(() => saves).toBe(1);
+  await page.locator(`[data-cell="${taskIds[0]}:2026-01-05"]`).click();
+  await pickColor(page, "배경색", "#0066cc");
+  const toast = page.locator(".toast");
+  const change = toast.getByRole("button", { name: "업무 표시로 바꾸기" });
+  await expect(change).toBeDisabled();
+  await page.clock.runFor(9000);
+  await expect(change).toBeVisible();
+  release();
+  await expect(change).toBeEnabled();
+  await change.click();
+  await expect(toast).toHaveCount(0);
+  await expect
+    .poll(
+      async () => effectiveCell(await taskAt(page), "2026-01-05").style.work,
+    )
+    .toBe(true);
+});
+
 test("사용자 검토: 업무 색상은 일반 테마 바로 아래 한 곳에서 CAS로 저장하고 최신 차트·목표일을 보존한다", async ({
   page,
 }, info) => {

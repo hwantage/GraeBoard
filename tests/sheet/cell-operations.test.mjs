@@ -15,6 +15,7 @@ import {
   now,
 } from "../../server/db.mjs";
 import { DEFAULT_SETTINGS, weeksForYear } from "../../shared/domain.js";
+import { replayedResponse } from "../support/cell-batch-replay-helper.mjs";
 
 async function fixture(t) {
   const dir = mkdtempSync(join(tmpdir(), "graeboard-cell-operations-"));
@@ -156,7 +157,10 @@ test("셀 저장은 전후 데이터를 한 번만 보관하고 재시작·후�
   await f.save([{ ...changes[0], value: "나중 수정", expectedVersion: 1 }]);
   await f.restart();
   f.queries.length = 0;
-  assert.deepEqual(await f.save(changes, operationId), saved);
+  assert.deepEqual(
+    await f.save(changes, operationId),
+    replayedResponse(saved, "body"),
+  );
   const read = f.queries.find((sql) => /SELECT .*FROM audit\b/i.test(sql));
   assert.match(read, /WHERE id=\?/);
   const plan = f.db
@@ -210,7 +214,10 @@ test("여러 팀의 섞인 셀 순서·이력 복원을 보존하고 팀 삭제 
   ];
   const saved = await f.save(changes, operationId);
   assert.equal(saved.status, 200);
-  assert.deepEqual(await f.save(changes, operationId), saved);
+  assert.deepEqual(
+    await f.save(changes, operationId),
+    replayedResponse(saved, "body"),
+  );
   const histories = [];
   for (const [teamId, taskId] of [
     [f.team, f.task.id],
@@ -243,7 +250,7 @@ test("여러 팀의 섞인 셀 순서·이력 복원을 보존하고 팀 삭제 
   assert.equal(getTask(f.db, f.task.id).cells.title.value, "원래 제목");
   assert.deepEqual(
     await f.save(changes, operationId),
-    saved,
+    replayedResponse(saved, "body"),
     "복원 이후에도 최초 응답을 재생한다",
   );
   const keepId = randomUUID();
@@ -287,7 +294,7 @@ test("여러 팀의 섞인 셀 순서·이력 복원을 보존하고 팀 삭제 
       ],
       keepId,
     ),
-    keep,
+    replayedResponse(keep, "body"),
   );
 });
 
@@ -382,7 +389,10 @@ test("이력 참조 재시도도 삭제 업무를 읽되 현재 팀 접근 권�
     ).status,
     200,
   );
-  assert.deepEqual(await f.save(changes, operationId, f.lead), saved);
+  assert.deepEqual(
+    await f.save(changes, operationId, f.lead),
+    replayedResponse(saved, "body"),
+  );
   f.db
     .prepare("DELETE FROM memberships WHERE user_id=? AND team_id=?")
     .run(f.lead, f.team);

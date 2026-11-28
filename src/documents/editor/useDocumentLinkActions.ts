@@ -85,7 +85,7 @@ export default function useDocumentLinkActions({
   const hideTimer = useRef<number | undefined>(undefined);
   const linkTipBox = useRef<HTMLDivElement>(null);
   const linkTitlesRef = useRef<DocumentLinkTitles | null>(null);
-  const [notice, notify] = useToast();
+  const [notice, setNotice] = useToast();
   const [noticeFailed, setNoticeFailed] = useState(false);
   const [linkOpenError, setLinkOpenError] = useState("");
   linkOpener.current = documentLinks;
@@ -277,14 +277,17 @@ export default function useDocumentLinkActions({
       );
     else window.open(href, "_blank", "noopener,noreferrer");
   }
+  // The editor's notice, also used by node views such as code block copy.
+  function notify(message: string, failed = false) {
+    setNoticeFailed(failed);
+    setNotice(message);
+  }
   async function copyLink(href: string) {
     try {
       await copyToClipboard(href);
-      setNoticeFailed(false);
       notify("링크 주소를 복사했습니다.");
     } catch {
-      setNoticeFailed(true);
-      notify("링크 주소를 복사하지 못했습니다. 다시 시도해 주세요.");
+      notify("링크 주소를 복사하지 못했습니다. 다시 시도해 주세요.", true);
     }
   }
   const tipVisible = linkTip !== null;
@@ -320,6 +323,7 @@ export default function useDocumentLinkActions({
     linkTitlesRef,
     notice,
     noticeFailed,
+    notify,
     linkOpenError,
     setLinkOpenError,
     openLinkForm,

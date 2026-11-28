@@ -278,6 +278,8 @@ test("HTML은 화면과 같은 블록을 이미지·다이어그램과 함께 �
   expect(outside).not.toMatch(/ data-[a-z-]+=/);
   expect(html).not.toMatch(/<script/i);
   expect(html).not.toContain("contenteditable");
+  // Nor the code blocks' copy buttons.
+  expect(html).not.toMatch(/<button/i);
 
   // The saved file opens away from the site, images and diagram included.
   const viewer = await page.context().newPage();

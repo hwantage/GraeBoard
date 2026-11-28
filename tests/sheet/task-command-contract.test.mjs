@@ -9,6 +9,7 @@ import {
 } from "../support/business-storage-fixture.mjs";
 import { defaultView } from "../../shared/domain.js";
 import { unpack } from "../../shared/formatting/compact.js";
+import { replayedResult } from "../support/cell-batch-replay-helper.mjs";
 const data = (result) => result.data || unpack(JSON.parse(result.encoded.body));
 async function taskCommands({ service, teamId, user, counts, failOnce }) {
   const first = (
@@ -236,6 +237,24 @@ test("M6 same task command contract: actual PostgreSQL creation/copy/CAS/reorder
       fail = true;
     },
   });
+  // The title gets an own style that the format below clears, so the format
+  // touches the row and answers with its stamp before the save.
+  const seen = data(
+    await service.query({ teamId: f.teamId, year: 2026 }),
+  ).tasks.find((task) => task.id === f.taskId);
+  await service.saveBatch({
+    operationId: randomUUID(),
+    createdAt: new Date().toISOString(),
+    changes: [
+      {
+        taskId: seen.id,
+        key: "title",
+        style: { italic: true },
+        expectedVersion: seen.cells.title?.version ?? 0,
+        expectedFormatRevision: seen.formatting?.revision ?? 0,
+      },
+    ],
+  });
   const current = data(await service.query({ teamId: f.teamId, year: 2026 })),
     task = current.tasks.find((task) => task.id === f.taskId);
   const format = {
@@ -251,7 +270,9 @@ test("M6 same task command contract: actual PostgreSQL creation/copy/CAS/reorder
   const before = notices.length;
   const formatted = await service.saveBatch(format);
   assert.equal(notices.length, before + 1);
-  assert.deepEqual(await service.saveBatch(format), formatted);
+  assert.deepEqual(formatted.previousUpdatedAt, { [task.id]: task.updatedAt });
+  assert.notEqual(formatted.updatedAt[task.id], task.updatedAt);
+  assert.deepEqual(await service.saveBatch(format), replayedResult(formatted));
   assert.equal(
     notices.length,
     before + 1,
