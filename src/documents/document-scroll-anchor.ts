@@ -143,11 +143,12 @@ export function sourceLineTop(input: HTMLTextAreaElement, offset: number) {
   );
 }
 
-// The start of the first source line whose top is at or below viewport
-// `top`. One layout of the copy, with a span per line, measures every line.
+// The first offset whose screen line, as the source wraps it, starts at or
+// below viewport `top`. One layout of the copy, with a span per source line,
+// finds the line; the wrapped lines inside it are told apart by their
+// rectangles, which need no new layout.
 export function sourceOffsetAt(input: HTMLTextAreaElement, top: number) {
   return mirror(input, (_lineTop, box) => {
-    const wanted = top - input.getBoundingClientRect().top + input.scrollTop;
     const lines = input.value.split("\n");
     box.replaceChildren(
       ...lines.map((line, index) => {
@@ -156,11 +157,37 @@ export function sourceOffsetAt(input: HTMLTextAreaElement, top: number) {
         return span;
       }),
     );
+    const base = box.getBoundingClientRect().top;
+    // A line cut by up to half its height still counts as the top one, so
+    // subpixel scrolling does not skip it.
+    const wanted =
+      top -
+      input.getBoundingClientRect().top +
+      input.scrollTop -
+      parseFloat(getComputedStyle(input).lineHeight) / 2;
+    const range = document.createRange();
     let offset = 0;
     for (const [index, span] of [...box.children].entries()) {
-      if (input.clientTop + (span as HTMLElement).offsetTop >= wanted)
-        return offset;
-      offset += lines[index].length + 1;
+      const { offsetTop, offsetHeight } = span as HTMLElement;
+      const line = lines[index];
+      if (input.clientTop + offsetTop + offsetHeight > wanted) {
+        if (input.clientTop + offsetTop >= wanted || !line) return offset;
+        const text = span.firstChild!;
+        const charTop = (at: number) => {
+          range.setStart(text, at);
+          range.setEnd(text, at + 1);
+          return range.getClientRects()[0]?.top - base;
+        };
+        let low = 0,
+          high = line.length;
+        while (low < high) {
+          const middle = (low + high) >> 1;
+          if (charTop(middle) < wanted) low = middle + 1;
+          else high = middle;
+        }
+        return offset + low;
+      }
+      offset += line.length + 1;
     }
     return input.value.length;
   });

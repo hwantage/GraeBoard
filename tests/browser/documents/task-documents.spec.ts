@@ -2063,6 +2063,21 @@ async function sourceSelection(page: Page) {
     (el as HTMLTextAreaElement).selectionEnd,
   ]);
 }
+// Scroll the document so `target` starts `below` px under the toolbar, and
+// return that toolbar's bottom.
+async function showBelowToolbar(target: Locator, below: number) {
+  return target.evaluate((el, below) => {
+    let area = el.parentElement;
+    while (area && !/auto|scroll/.test(getComputedStyle(area).overflowY))
+      area = area.parentElement;
+    const toolbar = el
+      .closest(".task-document")!
+      .querySelector(".document-rich-tools")!
+      .getBoundingClientRect().bottom;
+    area!.scrollTop += el.getBoundingClientRect().top - (toolbar + below);
+    return toolbar;
+  }, below);
+}
 const longDocument = Array.from({ length: 60 }, (_, index) =>
   (index + 1) % 10
     ? `문단 ${index + 1} **굵게 ${index + 1}** 끝`
@@ -2126,12 +2141,19 @@ for (const [name, before, typed] of [
   // A fence line is between blocks: the nearer edge, the code's start.
   ["코드 울타리 줄", "```j", "Xconst a = 1;"],
   ["표 칸의 링크 주소", "[링크](https://exa", "[링크X](https://example.com)"],
+  // Marks beside "&" or a bare address change their escapes; the offset is
+  // compared in each serialization's own text.
+  [
+    "문단 링크 주소",
+    "[가이드](https://b.example.com/gu",
+    "[가이드X](https://b.example.com/guide)",
+  ],
 ]) {
   test(`원문 커서가 ${name}에 있으면 리치 문서도 그 자리에서 이어 쓴다`, async ({
     page,
   }) => {
     const markdown =
-      "# 제목 하나\n\n- 항목 **굵게** 끝\n\n```js\nconst a = 1;\n```\n\n| 머리 | 칸 |\n| --- | --- |\n| 값 | [링크](https://example.com) |\n\n마지막 문단";
+      "# 제목 하나\n\n- 항목 **굵게** 끝\n\n```js\nconst a = 1;\n```\n\n| 머리 | 칸 |\n| --- | --- |\n| 값 | [링크](https://example.com) |\n\n참고 R&D https://a.example.com 그리고 [가이드](https://b.example.com/guide)\n\n마지막 문단";
     await save(page, taskIds[0], markdown);
     await open(page);
     await raw(page);
@@ -2159,6 +2181,37 @@ for (const [name, before, typed] of [
   });
 }
 
+test("긴 문단 중간을 보다가 원문을 오가도 그 문단이 화면 맨 위에 걸쳐 있다", async ({
+  page,
+}) => {
+  await save(
+    page,
+    taskIds[0],
+    Array.from(
+      { length: 30 },
+      (_, index) => `문단 ${index + 1} ${"가나다라마바사 ".repeat(120)}`,
+    ).join("\n\n"),
+  );
+  await open(page);
+  const paragraph = rich(page).locator(":scope > p").nth(14);
+  await rich(page).locator(":scope > p").first().click();
+  await settleRichSelection(page);
+  // The middle of paragraph 15 at the top of the view; the caret is above.
+  const height = (await paragraph.boundingBox())!.height;
+  const top = await showBelowToolbar(paragraph, -height / 2);
+  const before = (await paragraph.boundingBox())!;
+  expect(before.y).toBeLessThan(top);
+  expect(before.y + before.height).toBeGreaterThan(top + 20);
+  await raw(page);
+  await richMode(page);
+  // Back within one line of where it was: the source and the rich view wrap
+  // the paragraph at different letters. Taking the next source line instead,
+  // as whole-line rounding did, moves it by the rest of the paragraph.
+  await expect
+    .poll(async () => Math.abs((await paragraph.boundingBox())!.y - before.y))
+    .toBeLessThan(32);
+});
+
 test("커서가 화면 밖이면 원문·리치 전환 뒤 보던 글이 같은 높이에 남는다", async ({
   page,
 }) => {
@@ -2169,7 +2222,7 @@ test("커서가 화면 밖이면 원문·리치 전환 뒤 보던 글이 같은 
   // The caret stays at the start while the view moves to paragraph 45.
   await bold(2).click();
   await settleRichSelection(page);
-  await bold(45).evaluate((el) => el.scrollIntoView({ block: "center" }));
+  await showBelowToolbar(bold(45), 100);
   const box = (await bold(45).boundingBox())!;
   await raw(page);
   const [start] = await sourceSelection(page);

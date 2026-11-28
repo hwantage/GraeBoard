@@ -148,8 +148,9 @@ function markPositions(block: Node, start: number) {
 // the serializer's spelling instead. One serialization with marks at each
 // text block's start and end finds the block, or the nearer block edge for
 // syntax between blocks, such as a fence line. Another with a mark at each
-// position of that block finds the nearest position, counted from the block's
-// start: its marks widen a table column and so pad the rows above it.
+// position of that block finds the nearest position. Marks change escapes
+// beside them and widen table columns, so each serialization compares the
+// offset mapped to its own text.
 // A few passes over the document, whatever its size.
 export function documentPositions(
   ctx: Ctx,
@@ -181,7 +182,10 @@ export function documentPositions(
       withEdges.replace(ANY_MARK, ""),
       missing,
     );
-    const inBlock = new Map<number, { positions: number[]; at: number[] }>();
+    const inBlock = new Map<
+      number,
+      { positions: number[]; at: number[]; written: string }
+    >();
     targets.forEach((target, index) => {
       let block = 0;
       while (block + 1 < blocks.length && edges[2 * block + 2] <= target)
@@ -206,12 +210,18 @@ export function documentPositions(
           start - 1 + node.nodeSize,
           copy,
         );
-        const at = markOffsets(serialize(replaced.doc));
-        marked = { positions, at: at.map((offset) => offset - at[0]) };
+        const text = serialize(replaced.doc);
+        marked = {
+          positions,
+          at: markOffsets(text),
+          written: text.replace(ANY_MARK, ""),
+        };
         inBlock.set(block, marked);
       }
+      // The offset in this serialization, whose escapes around the marks
+      // and table padding differ from the one that found the block.
+      const [wanted] = mapOffsets(markdown, marked.written, [missing[index]]);
       // The nearest position; the earlier one when two are as near.
-      const wanted = target - edges[2 * block];
       let nearest = 0;
       marked.at.forEach((at, position) => {
         if (Math.abs(at - wanted) < Math.abs(marked.at[nearest] - wanted))
