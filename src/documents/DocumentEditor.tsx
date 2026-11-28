@@ -239,9 +239,15 @@ export default forwardRef<DocumentHandle, SharedDocumentEditorProps>(
     useLayoutEffect(() => {
       const input = sourceInput.current;
       if (mode !== "source" || !input || !place.current) return;
+      const focus = place.current.focus;
       const target = placeIn(place.current, input.value);
       place.current = null;
-      if (!target) return;
+      // A place that cannot be mapped to the text is skipped; a click on the
+      // switch still puts the keyboard caret in the source.
+      if (!target) {
+        if (focus) input.focus({ preventScroll: true });
+        return;
+      }
       const { anchor, head, view } = target;
       input.setSelectionRange(
         Math.min(anchor, head),

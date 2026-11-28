@@ -1219,3 +1219,27 @@ test("원문에서 전환하는 사이 원격 변경이 들어와도 커서는 �
     "추가된 문단\n\n앞\n\nX대상\n",
   );
 });
+
+test("전환 위치를 새 원문에 옮기지 못해도 클릭 전환이면 편집기에 커서가 들어간다", async ({
+  page,
+}) => {
+  await serveRichEditorFixture(page);
+  // Texts too different to compare in time: the place is dropped.
+  const place = {
+    markdown: "가".repeat(30000),
+    anchor: 10,
+    head: 10,
+    view: { offset: 10, top: 100 },
+    focus: true,
+  };
+  await page.goto(
+    `/__test/rich-editor?${new URLSearchParams({
+      markdown: "대상",
+      place: JSON.stringify(place),
+    })}`,
+  );
+  const editor = page.getByRole("textbox", { name: "업무 문서 리치 편집" });
+  await expect(editor).toBeFocused();
+  await page.keyboard.insertText("X");
+  await expect(page.locator("body")).toHaveAttribute("data-markdown", /X/);
+});

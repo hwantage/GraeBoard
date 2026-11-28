@@ -29,6 +29,7 @@
 
 - `tests/browser/fixtures/rich-editor.tsx`가 쿼리로 처음 원문과 위치를 받고 저장 원문을 `body[data-markdown]`에 남기게 하고, `document-input.spec.ts`의 fixture 준비를 `serveRichEditorFixture`로 묶었습니다. 위치를 잡은 원문(`앞\n\n대상`, `대상` 앞)과 편집기가 여는 원문(앞에 문단 추가)이 다를 때 바로 입력한 글자가 `대상` 앞에 들어가는지 봅니다. 수정 전 코드에서 Chromium 실패, 수정 후 세 엔진 통과. 같은 fixture를 쓰는 기존 검사와 모드 전환 검사를 포함해 세 엔진 48건 통과.
 - 화면 위로 걸친 스크롤 영역은 업무 상세·전체 페이지 배치에서 만들기 어려워 자동 검사를 더하지 않았습니다.
+- #265에 대한 CodeRabbit 지적(Minor) 반영: `placeIn`이 비교 제한 초과로 `null`을 돌려주면 위치 복원과 함께 클릭 전환의 포커스 요청까지 버려 편집기에 커서가 들어가지 않았습니다. 위치 복원과 포커스를 나눠, 매핑에 실패해도 포커스 요청은 리치 편집기(`shownAt`)와 원문 textarea 모두에서 처리합니다. fixture로 비교할 수 없을 만큼 다른 원문(3만 자)을 주는 검사를 더했고, 수정 전 코드에서 Chromium 실패, 수정 후 세 엔진 통과했습니다. 관련 검사 세 엔진 51건 통과.
 - `npm run check:structure`(817개 파일, 오류 0)·`check:architecture`(487개 모듈, 위반 0)·`npm run build`·`npm run build:edge` 통과, `TEST_PG_BIN=/opt/homebrew/opt/postgresql@17/bin npm test` 1,033건 통과(실패·취소·skip 0), `tests/browser/documents/` Chromium 291건 통과·skip 1·실패 1(origin/main에서도 실패하는 `document-toc.spec.ts:380`).
 
 ## 2026-11-28 — 원문·리치 전환에서 커서와 보던 위치 유지
