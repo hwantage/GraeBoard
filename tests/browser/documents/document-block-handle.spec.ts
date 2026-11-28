@@ -460,7 +460,8 @@ test("하위 항목은 상위 항목 안에서 바뀌고 바꾼 항목의 하위
   ]);
   await expect(nested).toHaveText(["안건 하나", "안건 셋"]);
 
-  // The block menu and the "/" menu convert the caret's item the same way.
+  // The toolbar's block menu converts the caret's item the same way. The "/"
+  // menu adds blocks under an item instead (document-editor-blocks.spec.ts).
   await place(page, nested.nth(1));
   await detail(page)
     .getByRole("combobox", { name: "문서 블록", exact: true })
@@ -468,27 +469,10 @@ test("하위 항목은 상위 항목 안에서 바뀌고 바꾼 항목의 하위
   await expect(
     top.nth(0).locator(".document-toggle .document-toggle-title"),
   ).toHaveText("안건 셋");
-  // "/" at the start of the item's line opens the menu.
-  await nested
-    .nth(0)
-    .locator("p")
-    .evaluate((line) => {
-      const range = document.createRange();
-      range.setStart(line.firstChild!, 0);
-      getSelection()!.removeAllRanges();
-      getSelection()!.addRange(range);
-      (line.closest("[contenteditable]") as HTMLElement).focus();
-    });
-  await rich(page).evaluate(async () => {
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
-    );
-  });
-  await page.keyboard.type("/인용");
-  await expect(
-    detail(page).getByRole("listbox", { name: "편집 형식 선택" }),
-  ).toBeVisible();
-  await page.keyboard.press("Enter");
+  await place(page, nested.nth(0));
+  await detail(page)
+    .getByRole("combobox", { name: "문서 블록", exact: true })
+    .selectOption("quote");
   await expect(top.nth(0).locator(":scope > div > blockquote")).toHaveText(
     "안건 하나",
   );
