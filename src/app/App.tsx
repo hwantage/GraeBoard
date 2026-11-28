@@ -619,8 +619,9 @@ function Workspace({
     // Moving to another team drops the cell changes still waiting to be
     // saved (useSheetOperations), so the move waits for them as a copy
     // switch does (prepareCopySwitch), with the windows closed to show why.
-    if (editorRef.current || operations.isPending() || operations.failure()) {
-      setError("현재 셀 입력과 저장을 마친 뒤 전환해 주세요.");
+    const busy = cellWorkNotice();
+    if (busy) {
+      setError(busy);
       return;
     }
     setLinkNavigation({ target, teamId });
@@ -846,11 +847,18 @@ function Workspace({
       ? sheetCloneDraft.ref.current?.tasks || sheetCloneRef.current.tasks
       : operations.project(taskData.snapshot());
   }
+  // An open cell input, or cell changes saving or failed: switching to a copy
+  // or another team would leave them behind, so the switch stops with this.
+  function cellWorkNotice() {
+    return editorRef.current || operations.isPending() || operations.failure()
+      ? "현재 셀 입력과 저장을 마친 뒤 전환해 주세요."
+      : "";
+  }
   async function prepareCopySwitch() {
     if (annualMemoRef.current && !(await annualMemoRef.current.flush()))
       throw new Error("메모 저장을 마친 뒤 전환해 주세요.");
-    if (editorRef.current || operations.isPending() || operations.failure())
-      throw new Error("현재 셀 입력과 저장을 마친 뒤 전환해 주세요.");
+    const busy = cellWorkNotice();
+    if (busy) throw new Error(busy);
     if (sheetCloneDraft.ref.current) await sheetCloneDraft.save();
   }
   async function openSheetClone(id: string | null) {
@@ -867,6 +875,9 @@ function Workspace({
     }
     const r = await api<SheetClone>(`/sheet-clones/${id}`);
     if (currentTeam.current !== teamId || boardKey.current !== scope) return;
+    // Cells edited while the copy loaded are checked again before switching.
+    const busy = cellWorkNotice();
+    if (busy) throw new Error(busy);
     if (!sheetCloneRef.current) {
       lastView.current = viewRef.current;
       const grid = workspaceRef.current?.querySelector(".sheet-scroll");
@@ -1101,7 +1112,9 @@ function Workspace({
       setUndoToast({ ...undoToast, target: historyTop });
   }, [undoToast, historyTop, sheetKey]);
   useEffect(() => {
-    if (undoToast) {
+    // 원본의 일반 배경색 안내는 칠하기가 저장돼 바꾸기를 누를 수 있게 된 뒤부터
+    // 시간을 잰다. 앞선 저장을 오래 기다려도 쓰기 전에 사라지지 않는다.
+    if (undoToast && !(undoToast.kind === "work" && undoToast.token)) {
       const timer = setTimeout(() => setUndoToast(null), 8000);
       return () => clearTimeout(timer);
     }
@@ -3443,12 +3456,20 @@ function Workspace({
               onClick={async () => {
                 if (
                   !confirm(
-                    operations.queued.length
+                    (operations.queued.length
                       ? `저장되지 않은 입력과 그 뒤에 기다리던 변경 ${operations.queued.length}건을 버리고 최신 업무를 불러올까요?`
-                      : "저장되지 않은 입력을 버리고 최신 업무를 불러올까요?",
+                      : "저장되지 않은 입력을 버리고 최신 업무를 불러올까요?") +
+                      (editorRef.current
+                        ? " 편집 중인 셀 입력도 함께 버립니다."
+                        : ""),
                   )
                 )
                   return;
+                // A cell being typed was made on top of the dropped changes
+                // too, and an open editor would keep the sheet from
+                // reloading (useTaskData blocked).
+                editorRef.current = null;
+                setEditor(null);
                 operations.clearFailure({ discard: true });
                 // The dropped changes leave the queue before the sheet reloads.
                 await operations.idle();

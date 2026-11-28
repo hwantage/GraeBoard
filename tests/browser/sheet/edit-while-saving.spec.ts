@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { unpack } from "../../../shared/formatting/compact.js";
-import { cell } from "../../../shared/domain.js";
+import { cell, defaultView } from "../../../shared/domain.js";
 
 const headers = { "X-Requested-With": "WeeklyPlan" };
 let teamId: string, userId: string, ids: string[];
@@ -193,6 +193,86 @@ test("실패한 서식을 버리면 그 위에 만든 서식도 저장하지 않
   expect(g.count()).toBe(1);
   const style = (await title(page, 2)).style;
   expect(!!style.bold || !!style.italic).toBe(false);
+});
+
+test("입력 취소는 편집 중인 셀 입력도 닫고 최신 업무를 불러온다", async ({
+  page,
+}) => {
+  const g = await gate(page, 503);
+  await edit(page, 1, "실패할 값");
+  await g.received;
+  await target(page, 2).dblclick();
+  await page.locator(".inline-editor textarea").fill("쓰는 중");
+  g.release();
+  const failure = page
+    .getByRole("alert")
+    .filter({ hasText: "저장하지 못한 변경" });
+  await expect(failure).toBeVisible();
+  // Leaving the editor tries to save its input, which is refused while the
+  // failure stands; the notice saying so can move the button off the press.
+  const panel = page.getByRole("dialog", { name: "저장하지 못한 입력" });
+  await expect(async () => {
+    if (!(await panel.isVisible()))
+      await page.getByRole("button", { name: "입력 확인" }).click();
+    await expect(panel).toBeVisible({ timeout: 1000 });
+  }).toPass();
+  await expect(page.locator(".inline-editor")).toHaveCount(1);
+  page.once("dialog", (d) => {
+    expect(d.message()).toContain("편집 중인 셀 입력도 함께 버립니다.");
+    void d.accept();
+  });
+  // An open editor would keep the sheet from reloading.
+  const reload = page.waitForRequest(
+    (r) => r.method() === "GET" && new URL(r.url()).pathname === "/api/tasks",
+  );
+  await page.getByRole("button", { name: "입력 취소·최신 내용 보기" }).click();
+  await reload;
+  await expect(page.locator(".inline-editor")).toHaveCount(0);
+  await expect(failure).toHaveCount(0);
+  await expect(target(page, 1)).toHaveText("업무 2");
+  await expect(target(page, 2)).toHaveText("업무 3");
+  expect(g.count()).toBe(1);
+});
+
+test("사본을 불러오는 사이 원본 셀을 고치면 사본으로 바꾸지 않는다", async ({
+  page,
+}) => {
+  const id = randomUUID();
+  await request(page, "/sheet-clones", "POST", {
+    id,
+    teamId,
+    year: 2026,
+    referenceDate: "2026-01-05",
+    name: "대기 사본",
+    taskIds: ids,
+    view: defaultView(2026),
+  });
+  await page.reload();
+  await expect(target(page, 0)).toHaveText("업무 1");
+  let load!: () => void, asked!: () => void;
+  const loading = new Promise<void>((r) => (load = r));
+  const requested = new Promise<void>((r) => (asked = r));
+  await page.route(`**/api/sheet-clones/${id}`, async (route) => {
+    asked();
+    await loading;
+    await route.continue();
+  });
+  const g = await gate(page);
+  const tab = page.getByRole("tab", { name: "대기 사본", exact: true });
+  await tab.click();
+  await requested;
+  // The input made while the copy loads is still saving when it arrives.
+  await edit(page, 1, "사본 여는 중 입력");
+  await g.received;
+  load();
+  await expect(
+    page.getByText("현재 셀 입력과 저장을 마친 뒤 전환해 주세요."),
+  ).toBeVisible();
+  await expect(tab).not.toHaveAttribute("aria-selected", "true");
+  g.release();
+  await expect
+    .poll(async () => (await title(page, 1)).value)
+    .toBe("사본 여는 중 입력");
 });
 
 test("편집창을 연 뒤 기다리던 내 입력이 모두 저장되어도 내 입력끼리 충돌하지 않는다", async ({
