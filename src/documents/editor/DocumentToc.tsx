@@ -14,6 +14,7 @@ import type { Node } from "@milkdown/kit/prose/model";
 import { TextSelection, type EditorState } from "@milkdown/kit/prose/state";
 import type { EditorView } from "@milkdown/kit/prose/view";
 import { unfoldTogglesAround } from "./DocumentToggle";
+import { pinnedHeight } from "../document-scroll-anchor";
 
 // The table of contents beside the rich document lists its headings in
 // order, including toggle headings and headings inside toggles. It only reads
@@ -56,25 +57,6 @@ function scrollArea(shell: HTMLElement) {
   while (area && !/auto|scroll/.test(getComputedStyle(area).overflowY))
     area = area.parentElement;
   return area;
-}
-
-// The tab row, mode row and toolbar stay pinned at the top of the scroll
-// area. The contents and its jumps start below the lowest of them.
-function pinnedHeight(area: HTMLElement | null, shell: HTMLElement) {
-  let height = 0;
-  for (const bar of (area ?? document).querySelectorAll<HTMLElement>(
-    ".document-tabs, .document-mode-bar, .document-rich-tools",
-  )) {
-    const owner = bar.closest(".rich-document");
-    if (!bar.offsetHeight || (owner && owner !== shell)) continue;
-    const style = getComputedStyle(bar);
-    if (style.position === "sticky")
-      height = Math.max(
-        height,
-        (parseFloat(style.top) || 0) + bar.offsetHeight,
-      );
-  }
-  return height;
 }
 
 export default forwardRef<TocApi, Props>(function DocumentToc(

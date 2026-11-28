@@ -61,7 +61,7 @@ function canFormat(
 
 // Same nodes, text, marks and attributes; only a heading's synced id may
 // differ. Any other attribute change, such as a remote check, is real content.
-function sameContent(a: Node, b: Node): boolean {
+export function sameContent(a: Node, b: Node): boolean {
   if (a === b) return true;
   if (
     a.type !== b.type ||

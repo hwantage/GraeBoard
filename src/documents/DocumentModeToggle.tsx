@@ -9,7 +9,8 @@ export default function DocumentModeToggle({
 }: {
   mode: DocumentMode;
   disabled?: boolean;
-  onChange: (mode: DocumentMode) => void;
+  // `pointer` is true for a click or tap, false for Enter or Space.
+  onChange: (mode: DocumentMode, pointer: boolean) => void;
 }) {
   return (
     <div className="document-modes" role="group" aria-label="문서 편집 모드">
@@ -26,7 +27,7 @@ export default function DocumentModeToggle({
           data-tooltip={label}
           aria-pressed={mode === value}
           disabled={disabled}
-          onClick={() => onChange(value)}
+          onClick={(event) => onChange(value, event.detail > 0)}
         >
           <Icon size={16} aria-hidden="true" />
         </button>

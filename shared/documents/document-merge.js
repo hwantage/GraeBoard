@@ -66,9 +66,7 @@ export function mergeDocument(base, local, remote) {
   return result + base.slice(offset);
 }
 
-export function mapDocumentPosition(before, after, position) {
-  const changes = edits(before, after);
-  if (!changes) return Math.min(position, after.length);
+function mapThrough(changes, position) {
   let delta = 0;
   for (const edit of changes) {
     if (position < edit.start) break;
@@ -76,4 +74,17 @@ export function mapDocumentPosition(before, after, position) {
     delta += edit.text.length - (edit.end - edit.start);
   }
   return position + delta;
+}
+
+export function mapDocumentPosition(before, after, position) {
+  const changes = edits(before, after);
+  if (!changes) return Math.min(position, after.length);
+  return mapThrough(changes, position);
+}
+
+// Several positions through one diff, or null when the texts are too
+// different to compare in time.
+export function mapDocumentPositions(before, after, positions) {
+  const changes = edits(before, after);
+  return changes && positions.map((position) => mapThrough(changes, position));
 }

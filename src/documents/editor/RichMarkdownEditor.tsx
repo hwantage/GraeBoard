@@ -142,6 +142,7 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
     canDeleteRow,
     uploadError,
     applyRemote,
+    place,
   } = useRichEditorLifecycle(props, {
     root,
     editorRef,
@@ -153,7 +154,7 @@ function RichMarkdownEditor(props: Props, ref: ForwardedRef<RichEditorHandle>) {
     setPreview,
     setImageZoom,
   });
-  useImperativeHandle(ref, () => ({ applyRemote }));
+  useImperativeHandle(ref, () => ({ applyRemote, place }));
 
   function run(action: (ctx: Ctx) => unknown) {
     if (props.readOnly || !editorRef.current) return;

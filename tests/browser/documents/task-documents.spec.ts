@@ -2278,6 +2278,220 @@ test("공백으로 끝나는 글도 기호를 이스케이프해 다시 열면 �
   ]);
 });
 
+// The viewport top of the source line holding `offset`. The test documents'
+// lines do not wrap.
+async function sourceLine(page: Page, offset: number) {
+  return source(page).evaluate((el, offset) => {
+    const input = el as HTMLTextAreaElement;
+    const style = getComputedStyle(input);
+    const line = input.value.slice(0, offset).split("\n").length - 1;
+    return {
+      text: input.value.split("\n")[line],
+      top:
+        input.getBoundingClientRect().top +
+        input.clientTop +
+        parseFloat(style.paddingTop) +
+        line * parseFloat(style.lineHeight) -
+        input.scrollTop,
+      height: parseFloat(style.lineHeight),
+    };
+  }, offset);
+}
+async function richMode(page: Page) {
+  await detail(page)
+    .getByRole("button", { name: "리치 문서", exact: true })
+    .click();
+  await expect(rich(page)).toBeVisible();
+}
+async function sourceSelection(page: Page) {
+  return source(page).evaluate((el) => [
+    (el as HTMLTextAreaElement).selectionStart,
+    (el as HTMLTextAreaElement).selectionEnd,
+  ]);
+}
+// Scroll the document so `target` starts `below` px under the toolbar, and
+// return that toolbar's bottom.
+async function showBelowToolbar(target: Locator, below: number) {
+  return target.evaluate((el, below) => {
+    let area = el.parentElement;
+    while (area && !/auto|scroll/.test(getComputedStyle(area).overflowY))
+      area = area.parentElement;
+    const toolbar = el
+      .closest(".task-document")!
+      .querySelector(".document-rich-tools")!
+      .getBoundingClientRect().bottom;
+    area!.scrollTop += el.getBoundingClientRect().top - (toolbar + below);
+    return toolbar;
+  }, below);
+}
+const longDocument = Array.from({ length: 60 }, (_, index) =>
+  (index + 1) % 10
+    ? `문단 ${index + 1} **굵게 ${index + 1}** 끝`
+    : `## 제목 ${index + 1}`,
+).join("\n\n");
+
+test("원문과 리치 문서를 오가도 커서와 그 줄의 화면 위치를 유지한다", async ({
+  page,
+}) => {
+  await save(page, taskIds[0], longDocument);
+  await open(page);
+  const bold = (n: number) =>
+    rich(page).locator("strong", { hasText: new RegExp(`^굵게 ${n}$`) });
+  await bold(35).scrollIntoViewIfNeeded();
+  // Between "굵" and "게".
+  const box = (await bold(35).boundingBox())!;
+  await page.mouse.click(box.x + box.width * 0.25, box.y + box.height / 2);
+  await settleRichSelection(page);
+  await raw(page);
+  const [start, end] = await sourceSelection(page);
+  expect(start).toBe(longDocument.indexOf("**굵게 35**") + 3);
+  expect(end).toBe(start);
+  const line = await sourceLine(page, start);
+  expect(line.text).toBe("문단 35 **굵게 35** 끝");
+  expect(Math.abs(line.top - box.y)).toBeLessThan(line.height);
+  // The click on the switch leaves the keyboard caret there: typing goes on.
+  await expect(source(page)).toBeFocused();
+  await page.keyboard.insertText("Y");
+  await expect(source(page)).toHaveValue(/\*\*굵Y게 35\*\*/);
+
+  // Back in the rich view at another place in the source.
+  const offset = longDocument.indexOf("**굵게 33**") + 4;
+  await source(page).evaluate(
+    (el, offset) =>
+      (el as HTMLTextAreaElement).setSelectionRange(offset, offset),
+    offset,
+  );
+  const shown = await sourceLine(page, offset);
+  await richMode(page);
+  await expect
+    .poll(async () => (await bold(33).boundingBox())?.y ?? NaN)
+    .toBeGreaterThan(shown.top - shown.height);
+  expect((await bold(33).boundingBox())!.y).toBeLessThan(
+    shown.top + shown.height,
+  );
+  // The keyboard caret is in the editor at that offset.
+  await expect(rich(page)).toBeFocused();
+  await page.keyboard.insertText("X");
+  await expect
+    .poll(
+      async () =>
+        (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
+    )
+    .toContain("**굵게X 33**");
+});
+
+for (const [name, before, typed] of [
+  ["제목 글자 사이", "# 제", "# 제X목 하나"],
+  // The start of bold text is also the end of the text before it, whose
+  // formatting typing continues.
+  ["굵은 글자 처음", "- 항목 **", "항목 X**굵게**"],
+  // A caret inside a marker moves to the nearest text position.
+  ["굵게 표시 기호 사이", "- 항목 *", "항목 X**굵게**"],
+  ["코드 안", "const ", "const Xa = 1;"],
+  // A fence line is between blocks: the nearer edge, the code's start.
+  ["코드 울타리 줄", "```j", "Xconst a = 1;"],
+  ["표 칸의 링크 주소", "[링크](https://exa", "[링크X](https://example.com)"],
+  // Marks beside "&" or a bare address change their escapes; the offset is
+  // compared in each serialization's own text.
+  [
+    "문단 링크 주소",
+    "[가이드](https://b.example.com/gu",
+    "[가이드X](https://b.example.com/guide)",
+  ],
+]) {
+  test(`원문 커서가 ${name}에 있으면 리치 문서도 그 자리에서 이어 쓴다`, async ({
+    page,
+  }) => {
+    const markdown =
+      "# 제목 하나\n\n- 항목 **굵게** 끝\n\n```js\nconst a = 1;\n```\n\n| 머리 | 칸 |\n| --- | --- |\n| 값 | [링크](https://example.com) |\n\n참고 R&D https://a.example.com 그리고 [가이드](https://b.example.com/guide)\n\n마지막 문단";
+    await save(page, taskIds[0], markdown);
+    await open(page);
+    await raw(page);
+    const offset = markdown.indexOf(before) + before.length;
+    await source(page).evaluate(
+      (el, offset) =>
+        (el as HTMLTextAreaElement).setSelectionRange(offset, offset),
+      offset,
+    );
+    await richMode(page);
+    await expect(rich(page)).toBeFocused();
+    await page.keyboard.insertText("X");
+    await expect
+      .poll(
+        async () =>
+          (await get(page, `/tasks/${taskIds[0]}/documents/main`)).markdown,
+      )
+      .toContain(typed);
+    // And the source continues right after the typed letter.
+    await raw(page);
+    const saved = (await get(page, `/tasks/${taskIds[0]}/documents/main`))
+      .markdown as string;
+    const at = saved.indexOf(typed) + typed.indexOf("X") + 1;
+    expect(await sourceSelection(page)).toEqual([at, at]);
+  });
+}
+
+test("긴 문단 중간을 보다가 원문을 오가도 그 문단이 화면 맨 위에 걸쳐 있다", async ({
+  page,
+}) => {
+  await save(
+    page,
+    taskIds[0],
+    Array.from(
+      { length: 30 },
+      (_, index) => `문단 ${index + 1} ${"가나다라마바사 ".repeat(120)}`,
+    ).join("\n\n"),
+  );
+  await open(page);
+  const paragraph = rich(page).locator(":scope > p").nth(14);
+  await rich(page).locator(":scope > p").first().click();
+  await settleRichSelection(page);
+  // The middle of paragraph 15 at the top of the view; the caret is above.
+  const height = (await paragraph.boundingBox())!.height;
+  const top = await showBelowToolbar(paragraph, -height / 2);
+  const before = (await paragraph.boundingBox())!;
+  expect(before.y).toBeLessThan(top);
+  expect(before.y + before.height).toBeGreaterThan(top + 20);
+  await raw(page);
+  await richMode(page);
+  // Back within one line of where it was: the source and the rich view wrap
+  // the paragraph at different letters. Taking the next source line instead,
+  // as whole-line rounding did, moves it by the rest of the paragraph.
+  await expect
+    .poll(async () => Math.abs((await paragraph.boundingBox())!.y - before.y))
+    .toBeLessThan(32);
+});
+
+test("커서가 화면 밖이면 원문·리치 전환 뒤 보던 글이 같은 높이에 남는다", async ({
+  page,
+}) => {
+  await save(page, taskIds[0], longDocument);
+  await open(page);
+  const bold = (n: number) =>
+    rich(page).locator("strong", { hasText: new RegExp(`^굵게 ${n}$`) });
+  // The caret stays at the start while the view moves to paragraph 45.
+  await bold(2).click();
+  await settleRichSelection(page);
+  await showBelowToolbar(bold(45), 100);
+  const box = (await bold(45).boundingBox())!;
+  await raw(page);
+  const [start] = await sourceSelection(page);
+  expect((await sourceLine(page, start)).text).toBe("문단 2 **굵게 2** 끝");
+  // The text at the top of the view stays there, so paragraph 45 is shown.
+  const line = await sourceLine(page, longDocument.indexOf("문단 45"));
+  const area = (await source(page).boundingBox())!;
+  expect(line.top).toBeGreaterThan(area.y);
+  expect(line.top + line.height).toBeLessThan(area.y + area.height);
+  await richMode(page);
+  // Back without moving: paragraph 45 returns to its height.
+  await expect
+    .poll(async () => (await bold(45).boundingBox())?.y ?? NaN)
+    .toBeGreaterThan(box.y - line.height * 2);
+  expect((await bold(45).boundingBox())!.y).toBeLessThan(
+    box.y + line.height * 2,
+  );
+});
+
 test("복사한 일반 텍스트는 Markdown이며 HTML 없이 붙여도 다른 문서에서 서식이 살아난다", async ({
   page,
 }) => {
