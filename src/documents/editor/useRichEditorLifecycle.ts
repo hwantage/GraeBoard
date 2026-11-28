@@ -4,7 +4,7 @@ import { configureDocumentInputRules } from "./DocumentInputRules";
 import { documentLinkTitle } from "./DocumentLinkTitle";
 import { useEffect, useRef, useState } from "react";
 import { scrollAround, visibleBounds } from "../document-scroll-anchor";
-import { documentPosition, markdownOffsets } from "./document-source-position";
+import { documentPositions, markdownOffsets } from "./document-source-position";
 
 import { parseDocumentLinkPath } from "../../../shared/documents/document-links.js";
 import { DocumentLinkTitles, documentLinkTarget } from "../document-links";
@@ -85,7 +85,8 @@ const dropIndicator = $prose(() =>
 // Continue typing in the paragraph below, creating it when needed.
 
 // The caret when it is on screen, otherwise the text at the top of the view,
-// and its viewport height.
+// and its viewport height. A tall block, such as an image, starting above the
+// view counts from the view's top.
 function shownPosition(view: EditorView) {
   const { head } = view.state.selection;
   const { top, bottom } = visibleBounds(view.dom);
@@ -98,7 +99,7 @@ function shownPosition(view: EditorView) {
       left: box.left + Math.min(40, box.width / 2),
       top: Math.max(top, box.top) + 1,
     })?.pos ?? head;
-  return { pos, top: view.coordsAtPos(pos).top };
+  return { pos, top: Math.max(top, view.coordsAtPos(pos).top) };
 }
 
 export default function useRichEditorLifecycle(
@@ -355,19 +356,18 @@ export default function useRichEditorLifecycle(
               .setMeta("addToHistory", false);
             // Continue where the Markdown source was.
             const place = latest.current.initialPlace;
-            const markdown = latest.current.initialMarkdown;
-            const at = (offset: number) =>
-              documentPosition(ctx, doc, markdown, offset);
-            const anchor = place && at(place.anchor);
-            const head =
-              place && (place.head === place.anchor ? anchor : at(place.head));
-            if (anchor != null && head != null)
-              tr.setSelection(TextSelection.create(tr.doc, anchor, head));
-            const shown =
-              place &&
-              (place.view.offset === place.head ? head : at(place.view.offset));
-            if (place && shown != null)
-              shownAt.current = { pos: shown, top: place.view.top };
+            if (place) {
+              const [anchor, head, shown] = documentPositions(
+                ctx,
+                doc,
+                latest.current.initialMarkdown,
+                [place.anchor, place.head, place.view.offset],
+              );
+              if (anchor != null && head != null)
+                tr.setSelection(TextSelection.create(tr.doc, anchor, head));
+              if (shown != null)
+                shownAt.current = { pos: shown, top: place.view.top };
+            }
             view.dispatch(tr);
           });
           editorRef.current = editor;

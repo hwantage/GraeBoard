@@ -2120,10 +2120,11 @@ for (const [name, before, typed] of [
   // The start of bold text is also the end of the text before it, whose
   // formatting typing continues.
   ["굵은 글자 처음", "- 항목 **", "항목 X**굵게**"],
-  // A caret inside a marker moves to the end of its line.
-  ["굵게 표시 기호 사이", "- 항목 *", "** 끝X"],
+  // A caret inside a marker moves to the nearest text position.
+  ["굵게 표시 기호 사이", "- 항목 *", "항목 X**굵게**"],
   ["코드 안", "const ", "const Xa = 1;"],
-  ["코드 울타리 줄", "```j", "const a = 1;X"],
+  // A fence line is between blocks: the nearer edge, the code's start.
+  ["코드 울타리 줄", "```j", "Xconst a = 1;"],
   ["표 칸의 링크 주소", "[링크](https://exa", "[링크X](https://example.com)"],
 ]) {
   test(`원문 커서가 ${name}에 있으면 리치 문서도 그 자리에서 이어 쓴다`, async ({

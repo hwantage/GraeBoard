@@ -15,20 +15,45 @@ export function scrollContainer(element: Element): Element {
   return document.scrollingElement || document.documentElement;
 }
 
-// The part of the viewport where `element` can show text.
+// The tab row, mode row and toolbar stay pinned at the top of the scroll
+// area. Its text shows below the lowest of them. `shell` is the rich editor
+// whose toolbar counts; other editors' toolbars in the area do not.
+export function pinnedHeight(area: Element | null, shell: Element | null) {
+  let height = 0;
+  for (const bar of (area ?? document).querySelectorAll<HTMLElement>(
+    ".document-tabs, .document-mode-bar, .document-rich-tools",
+  )) {
+    const owner = bar.closest(".rich-document");
+    if (!bar.offsetHeight || (owner && owner !== shell)) continue;
+    const style = getComputedStyle(bar);
+    if (style.position === "sticky")
+      height = Math.max(
+        height,
+        (parseFloat(style.top) || 0) + bar.offsetHeight,
+      );
+  }
+  return height;
+}
+
+// The part of the viewport where `element` shows text, below pinned bars.
 export function visibleBounds(element: Element) {
   const container = scrollContainer(element);
-  let top = Math.max(0, element.getBoundingClientRect().top);
-  let bottom = Math.min(
-    window.innerHeight,
-    element.getBoundingClientRect().bottom,
-  );
-  if (container !== document.scrollingElement) {
-    const box = container.getBoundingClientRect();
-    top = Math.max(top, box.top);
-    bottom = Math.min(bottom, box.bottom);
-  }
-  return { top, bottom };
+  const box = element.getBoundingClientRect();
+  const page = container === document.scrollingElement;
+  const area = page
+    ? { top: 0, bottom: window.innerHeight }
+    : container.getBoundingClientRect();
+  return {
+    top: Math.max(
+      box.top,
+      area.top +
+        pinnedHeight(
+          page ? null : container,
+          element.closest(".rich-document"),
+        ),
+    ),
+    bottom: Math.min(box.bottom, area.bottom, window.innerHeight),
+  };
 }
 
 // Scroll the area around `element` so what is at `current` moves to `wanted`
@@ -75,7 +100,7 @@ const MIRRORED = [
 // the line holding that offset, from the textarea's border box (px).
 function mirror<T>(
   input: HTMLTextAreaElement,
-  read: (lineTop: (offset: number) => number) => T,
+  read: (lineTop: (offset: number) => number, box: HTMLDivElement) => T,
 ) {
   const style = getComputedStyle(input);
   const box = document.createElement("div");
@@ -103,7 +128,7 @@ function mirror<T>(
       mark.textContent = input.value.slice(offset) || ".";
       box.append(mark);
       return input.clientTop + mark.offsetTop;
-    });
+    }, box);
   } finally {
     box.remove();
   }
@@ -118,17 +143,25 @@ export function sourceLineTop(input: HTMLTextAreaElement, offset: number) {
   );
 }
 
-// The first offset whose line starts at or below viewport `top`.
+// The start of the first source line whose top is at or below viewport
+// `top`. One layout of the copy, with a span per line, measures every line.
 export function sourceOffsetAt(input: HTMLTextAreaElement, top: number) {
-  return mirror(input, (lineTop) => {
+  return mirror(input, (_lineTop, box) => {
     const wanted = top - input.getBoundingClientRect().top + input.scrollTop;
-    let low = 0,
-      high = input.value.length;
-    while (low < high) {
-      const middle = (low + high) >> 1;
-      if (lineTop(middle) < wanted) low = middle + 1;
-      else high = middle;
+    const lines = input.value.split("\n");
+    box.replaceChildren(
+      ...lines.map((line, index) => {
+        const span = document.createElement("span");
+        span.textContent = index < lines.length - 1 ? `${line}\n` : line || ".";
+        return span;
+      }),
+    );
+    let offset = 0;
+    for (const [index, span] of [...box.children].entries()) {
+      if (input.clientTop + (span as HTMLElement).offsetTop >= wanted)
+        return offset;
+      offset += lines[index].length + 1;
     }
-    return low;
+    return input.value.length;
   });
 }
